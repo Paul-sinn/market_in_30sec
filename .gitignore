@@ -1,0 +1,9 @@
+_workspace/
+_workspace_*/
+.env
+.env.*
+__pycache__/
+.venv/
+.DS_Store
+xcuserdata/
+DerivedData/
