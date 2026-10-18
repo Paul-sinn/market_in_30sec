@@ -32,8 +32,8 @@ SECOND_PERSON = re.compile(r"\byou(r|rs|'re|'ll|'d)?\b", re.I)
 FIRST_PERSON_TRADE = re.compile(r"\b(I|I'm|I've|I'll|we|we're)\s+(\w+\s+)?(buy|bought|buying|sell|sold|selling)\b", re.I)
 TRADE_WORD = re.compile(r"\b(buy|bought|buying|sell|sold|selling)\b", re.I)
 NUMBER = re.compile(r"(?<![A-Za-z&])[-−+]?\$?\d[\d,]*(\.\d+)?(%|[BMK]\b)?(?![A-Za-z])")
-# 숫자처럼 보이지만 값이 아닌 것: 지수 이름, 기간 표기(52-week), 날짜(10/15)
-NOT_A_VALUE = re.compile(r"S&P 500|\b\d+-(day|week|month|year)\b|\b\d{1,2}/\d{1,2}\b", re.I)
+# 숫자처럼 보이지만 값이 아닌 것: 지수 이름, 기간 표기(52-week), 날짜(10/15), 시각(7:30)
+NOT_A_VALUE = re.compile(r"S&P 500|\b\d+-(day|week|month|year)\b|\b\d{1,2}/\d{1,2}\b|\b\d{1,2}:\d{2}\b", re.I)
 
 MAX_WORDS = 15
 

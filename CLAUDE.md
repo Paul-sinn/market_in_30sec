@@ -12,7 +12,15 @@
 | 날짜 | 변경 내용 | 대상 | 사유 |
 | --- | --- | --- | --- |
 | 2026-10-17 | Harness v2로 처음 구성 | 전체 | - |
+| 2026-10-18 | codex 리뷰·엣지 케이스·보안 결정을 conventions 스킬에 반영, 원격 Supabase 규칙 추가 | backend-conventions, ios-conventions, card-copy-rules, CLAUDE.md | 스펙 #1 개정 |
 | 2026-10-17 | 에이전트 5명 로드 확인. copy-reviewer에 "항목 판정 먼저, 요약은 나중" 규칙 추가, 시뮬레이터 이름 수정, GLOSSARY 세 번째 줄 잠금 문구 명확화 | copy-reviewer, ios-conventions, GLOSSARY | 스모크 테스트에서 요약 숫자 오류, 없는 시뮬레이터 이름, 정의 모호함 발견 |
+
+## 원격 Supabase 규칙
+
+- 읽기 조회(테이블·로그·보안 어드바이저)는 묻지 않고 해도 된다
+- 스키마 변경은 마이그레이션 파일로 만들고, 로컬 Supabase 테스트를 통과한 뒤, 사용자 확인을 받고 원격에 적용한다
+- 데이터 수정·삭제 SQL은 항상 사용자 확인 후 실행한다
+- 자동 테스트는 로컬 Supabase에서만 돈다. 원격은 실데이터 실험용이다
 
 ## 실수 기록
 

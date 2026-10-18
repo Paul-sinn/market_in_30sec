@@ -19,13 +19,26 @@ description: "30초 종목 리포트 앱에 나가는 문장의 규칙. 첫 번�
 5. 전문용어를 쓰지 않는다
 6. 중립 동사만 쓴다: rose, fell, announced, reported, filed. soars/plunges 같은 감정 동사는 쓰지 않는다
 7. 끝에 출처 꼬리표를 단다: `(Company)`, `(SEC filing)` 등
-8. 소식이 없으면 AI를 부르지 않고 템플릿 `No major news today.`를 쓴다
+8. 소식이 없으면 AI를 부르지 않고 데이터 상태 문구를 쓴다(아래 "데이터 상태 문구")
+
+### 데이터 상태 문구
+"확인 못 함"을 "아무 일 없음"으로 쓰지 않는다. 사용자는 이 카드를 보고 뉴스를 따로 안 찾아보기 때문에, 확인 범위를 넘는 단정은 신뢰를 깬다.
+
+| 상태 | 첫 번째 줄 | 두 번째 줄 |
+| --- | --- | --- |
+| 확인함·없음 | `No new SEC filings found` | `No confirmed events found` |
+| 지연·실패 | `Update delayed` | `Update delayed` |
+| 미지원 | `Not covered yet` | `Not covered yet` |
+
+- 카드 하단에 확인 시각·출처 범위: `Checked 7:30 AM ET · SEC filings`
+- 출처가 늘면 "없음" 문구를 그 범위에 맞게 바꾼다. 확인하지 않은 출처를 문구에 넣지 않는다
+- 휴장일: `Market closed today`
 
 ### 지수 표기
 지수 값 대신 ETF 가격을 쓰고 `S&P 500 (SPY)`, `Nasdaq (QQQ)`로 표기한다. 지수 데이터는 라이선스가 따로 필요할 수 있다.
 
 ### 두 번째 줄 (EventLine, 코드 템플릿)
-`Earnings Thu 10/15 after close (D-2)` / 추정일이면 `(est.)` / `Ex-dividend 12/21 · $0.70/share` / `No events in next 2 weeks`
+`Earnings Thu 10/15 after close (D-2)` / 추정일이면 `(est.)` / `Ex-dividend 12/21 · $0.70/share`
 
 ### 세 번째 줄 (PriceFactLine, 코드 템플릿)
 - 시가·고가·저가·종가로만 계산한 과거 사실 하나: `Up 5 days in a row`, `8% below 52-week high`
