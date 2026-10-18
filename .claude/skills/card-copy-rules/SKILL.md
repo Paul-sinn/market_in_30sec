@@ -74,6 +74,20 @@ python3 .claude/skills/card-copy-rules/scripts/check_copy.py --mode card  _works
 python3 .claude/skills/card-copy-rules/scripts/check_copy.py --mode arena _workspace/talk.txt
 ```
 
+### 새 고정 문구를 만들 때
+
+템플릿·상태 문구·업셀 문구처럼 코드에 고정되는 문장을 새로 만들거나 바꾸면, 그 자리에서 검사기를 돌린다.
+
+- 정상 문구가 위반으로 잡히면(오탐) **문구를 비틀지 말고 검사기를 고친다.** 그리고 그 문구를 `scripts/examples_pass.txt`에 추가한다. 이유: 오탐을 피하려고 문구를 바꾸면 규칙이 아니라 검사기의 빈틈이 문장을 정하게 되고, 같은 오탐이 다음 문구에서 또 난다(실제로 숫자 표기·buyback·시각에서 세 번 반복됐다).
+- 위반 문구가 통과하면(미탐) 검사기를 고치고 그 문구를 `scripts/examples_block.txt`에 추가한다.
+- 검사기를 고친 뒤에는 두 예시 파일을 다시 돌려 기존 판정이 깨지지 않았는지 확인한다:
+
+```bash
+cd .claude/skills/card-copy-rules/scripts
+python3 check_copy.py --mode card examples_pass.txt     # 위반 0줄이어야 함
+python3 check_copy.py --mode card examples_block.txt    # 모든 줄이 위반이어야 함
+```
+
 스크립트가 잡지 못하는 항목은 사람이나 copy-reviewer가 판정한다:
 - 사실인가, 예측인가 ("expected to rise"는 예측)
 - 숫자가 계산 원본과 같은가

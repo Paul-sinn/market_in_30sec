@@ -8,12 +8,16 @@
 
 **호출 조건:** 이 앱의 기능 구현·수정·다음 개발 단계 진행을 요청받으면 `m30-dev` 스킬을 사용한다. 단순 질문이나 문서 수정에는 직접 답해도 된다.
 
+**전체 흐름:** 결정(`/grill-with-docs`) → 스펙(`/mattpocock-skills:to-spec`, GitHub 이슈) → 티켓(`/mattpocock-skills:to-tickets`, 하위 이슈 + 선행 관계) → 구현(`m30-dev #N`). to-spec·to-tickets는 모델이 부를 수 없어 사용자가 직접 입력한다. 스펙·티켓 단계도 이 하네스의 앞단이다.
+
 **변경 이력:**
 | 날짜 | 변경 내용 | 대상 | 사유 |
 | --- | --- | --- | --- |
 | 2026-10-17 | Harness v2로 처음 구성 | 전체 | - |
-| 2026-10-18 | codex 리뷰·엣지 케이스·보안 결정을 conventions 스킬에 반영, 원격 Supabase 규칙 추가 | backend-conventions, ios-conventions, card-copy-rules, CLAUDE.md | 스펙 #1 개정 |
 | 2026-10-17 | 에이전트 5명 로드 확인. copy-reviewer에 "항목 판정 먼저, 요약은 나중" 규칙 추가, 시뮬레이터 이름 수정, GLOSSARY 세 번째 줄 잠금 문구 명확화 | copy-reviewer, ios-conventions, GLOSSARY | 스모크 테스트에서 요약 숫자 오류, 없는 시뮬레이터 이름, 정의 모호함 발견 |
+| 2026-10-18 | 티켓 기반 흐름으로 변경: m30-dev가 GitHub 티켓을 입력으로 받고 선행 티켓·라벨을 확인, 산출물은 `_workspace/issue-{N}/`. backend-dev는 TDD(스펙 #1의 테스트 입구 2곳), qa는 완료 기준 대조·최신 경계 사례·보안 확인 추가, architect는 티켓 범위만 | m30-dev, backend-dev, qa, architect | 스펙 #1·티켓 #2~#20 생성 후 하네스가 옛 흐름(스펙부터 새로 작성)에 머물러 있었음 |
+| 2026-10-18 | codex 리뷰·엣지 케이스·보안 결정을 conventions 스킬에 반영, 원격 Supabase 규칙 추가 | backend-conventions, ios-conventions, card-copy-rules, CLAUDE.md | 스펙 #1 개정 |
+| 2026-10-18 | 회고(harness:evolve): ① CLAUDE.md에 결정→스펙→티켓→구현 전체 흐름 ② m30-dev 0단계에 "결정 문서가 하네스보다 새로우면 점검 제안" 확인 ③ card-copy-rules에 새 고정 문구 절차 + 통과·차단 예시 파일 ④ m30-dev에 사용자 설명 방식(단계마다 무엇·왜, 용어 풀기) | CLAUDE.md, m30-dev, card-copy-rules | 하네스 존재를 사용자가 두 번 물음, 결정 변경 후 하네스가 옛 기준에 머묾, 금지어 검사 오탐 3회 반복, "p0 이뭐야"·"각 단계 뭘 왜 하는지 설명해줘" 요청 |
 
 ## 원격 Supabase 규칙
 

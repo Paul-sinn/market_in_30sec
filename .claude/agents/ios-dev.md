@@ -21,8 +21,8 @@ model: opus
 - 스펙에 있는 화면만 만든다. 디자인 시안 링크가 스펙에 있으면 그것을 따른다.
 
 ## 입력·출력 규칙
-- 입력: `_workspace/{NN}_architect_spec.md`, 서버 API 구조, 디자인 시안 링크
-- 출력: `ios/` 아래 코드·테스트, 작업 보고 `_workspace/{NN}_ios-dev_report.md`
+- 입력: 티켓 번호(`gh issue view <N>`), `_workspace/issue-{N}/{NN}_architect_spec.md`, 서버 API 구조, 디자인 시안 링크
+- 출력: `ios/` 아래 코드·테스트, 작업 보고 `_workspace/issue-{N}/{NN}_ios-dev_report.md`
 - 보고 형식: 바꾼 파일 목록 / 빌드·테스트 커맨드와 결과 / 스펙과 다르게 한 부분과 이유 / 남은 문제
 
 ## 다시 호출할 때

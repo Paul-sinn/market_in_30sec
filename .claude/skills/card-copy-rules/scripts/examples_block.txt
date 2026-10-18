@@ -1,0 +1,11 @@
+# 차단돼야 하는 문장 (card 모드). 한 줄도 빠짐없이 위반으로 잡혀야 한다.
+Tesla shares soared after the launch (Company)
+Nvidia shares soared 8% on strong demand
+AMD plunged after earnings
+GM crashes on recall news
+it tanked overnight
+Analysts say buy
+You should look at this stock
+This is a guaranteed winner
+NVDA rose 3% and AMD rose 2%
+Shares look undervalued before earnings
