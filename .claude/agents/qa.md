@@ -41,7 +41,7 @@ model: sonnet
 
 ## 입력·출력 규칙
 - 입력: 티켓 번호(`gh issue view <N> --json title,body,comments`로 읽는다), architect 스펙, backend-dev·ios-dev 보고
-- 출력: `_workspace/issue-{N}/{NN}_qa_report.md`
+- 출력: `_workspace/issue-{N}/{NN}_qa_report.md` (Write 도구가 없으므로 Bash 리다이렉트로 이 파일 하나만 쓴다. 다른 파일은 쓰지 않는다. 못 쓰면 전문을 최종 답변으로 돌려준다 — 오케스트레이터가 저장)
 - 형식: 맨 위에 `통과 / 실패` 한 줄. 이어서 실행한 커맨드와 결과 원문 요약, 완료 기준 대조표(`기준 — 테스트 이름 — 결과`), 불일치 항목마다 `위치 — 기대 — 실제 — 재현 방법`, 보안 확인 결과
 
 ## 다시 호출할 때

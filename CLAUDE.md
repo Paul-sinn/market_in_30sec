@@ -19,6 +19,8 @@
 | 2026-10-18 | codex 리뷰·엣지 케이스·보안 결정을 conventions 스킬에 반영, 원격 Supabase 규칙 추가 | backend-conventions, ios-conventions, card-copy-rules, CLAUDE.md | 스펙 #1 개정 |
 | 2026-10-18 | 회고(harness:evolve): ① CLAUDE.md에 결정→스펙→티켓→구현 전체 흐름 ② m30-dev 0단계에 "결정 문서가 하네스보다 새로우면 점검 제안" 확인 ③ card-copy-rules에 새 고정 문구 절차 + 통과·차단 예시 파일 ④ m30-dev에 사용자 설명 방식(단계마다 무엇·왜, 용어 풀기) | CLAUDE.md, m30-dev, card-copy-rules | 하네스 존재를 사용자가 두 번 물음, 결정 변경 후 하네스가 옛 기준에 머묾, 금지어 검사 오탐 3회 반복, "p0 이뭐야"·"각 단계 뭘 왜 하는지 설명해줘" 요청 |
 | 2026-10-18 | 테스트 입구에 "프로세스 출력"(보안 규칙 전용) 추가, DB 연결 실패 시 비밀번호 없는 예외 규칙 | backend-dev, backend-conventions | #2 qa에서 연결 실패 시 pytest 출력에 비밀번호 노출 발견, 이 규칙은 기존 입구 2곳으로 검사 불가 |
+| 2026-10-18 | 금지어 검사 기준을 서버(`m30.copy_rules` + TOML)로 한 벌만 두고 스킬 스크립트는 실행기로. 예시 파일은 `backend/tests/copy_examples/`, 회귀 확인은 pytest. 프로세스 출력 입구에 "외부 패키지 없이 도는 스킬 실행기" 추가 | card-copy-rules, backend-conventions, backend-dev | #3 구현. 사용자 결정(입구 확장): copy-reviewer가 시스템 python3로 실행기를 부르므로 서버 의존 import가 섞이는 회귀를 자동으로 잡기 위해 |
+| 2026-10-18 | 읽기 전용 에이전트 보고서 저장 규칙: Bash로 지정 파일 하나만 쓰고, 못 쓰면 답변 전문 → 메인이 그대로 저장 | qa, copy-reviewer, m30-dev | #3에서 qa가 "보고서 파일 작성 금지"로 판단해 파일을 안 씀(Write 도구 없음). 다음 단계는 파일 경로로 읽으므로 보고서가 빠질 뻔함 |
 
 ## 원격 Supabase 규칙
 

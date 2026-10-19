@@ -18,7 +18,7 @@ description: "30초 종목 리포트 앱에 나가는 문장의 규칙. 첫 번�
 4. 숫자는 줄당 하나, **코드가 계산한 값만** 쓴다. LLM이 숫자를 만들거나 바꾸지 않는다
 5. 전문용어를 쓰지 않는다
 6. 중립 동사만 쓴다: rose, fell, announced, reported, filed. soars/plunges 같은 감정 동사는 쓰지 않는다
-7. 끝에 출처 꼬리표를 단다: `(Company)`, `(SEC filing)` 등
+7. 끝에 출처 꼬리표를 단다: `(Company)`, `(SEC filing)` 등. `+N more`가 있으면 그 뒤에 단다(`… +2 more (SEC filing)`). 검사기는 줄 끝 꼬리표만 단어 수에서 뺀다
 8. 소식이 없으면 AI를 부르지 않고 데이터 상태 문구를 쓴다(아래 "데이터 상태 문구")
 
 ### 데이터 상태 문구
@@ -45,7 +45,7 @@ description: "30초 종목 리포트 앱에 나가는 문장의 규칙. 첫 번�
 - 줄을 숨기지 않는다. 해당 사실이 없으면 `No notable price moves`, 무료 유저에게는 `Price facts in Plus` 잠금 표시(서버가 결정)
 
 ### 금지어 (카드·시장 한눈에·아침 알림)
-buy, sell, should, bullish, bearish, likely to rise, upside, downside, opportunity, undervalued, overvalued, momentum, breakout, rally ahead. 감정 동사 soars, plunges, skyrockets, crashes, tanks.
+buy, sell, should, bullish, bearish, likely to rise, upside, downside, opportunity, undervalued, overvalued, momentum, breakout, rally ahead. 감정 동사 soars, plunges, skyrockets, crashes, tanks. 검사 기준 목록은 `backend/src/m30/copy_rules/card.toml`·`arena.toml`이다. 목록을 바꾸면 이 문단도 같이 바꾼다.
 
 - 메인 카드에 "Buy" 같은 등급 이름을 쓰지 않는다
 - 2인칭(you, your)을 쓰지 않는다
@@ -74,18 +74,18 @@ python3 .claude/skills/card-copy-rules/scripts/check_copy.py --mode card  _works
 python3 .claude/skills/card-copy-rules/scripts/check_copy.py --mode arena _workspace/talk.txt
 ```
 
+스크립트는 서버 패키지 `backend/src/m30/copy_rules/`를 불러 쓰는 실행기다. 규칙은 서버에 한 벌만 있다. 표준 라이브러리만 쓰므로 uv 없이 `python3`(3.13 이상)로 돈다. 종료 코드 1은 "위반 있음"과 "실행 오류"(데이터 파일 깨짐 등) 둘 다다. 출력 끝에 `위반 N줄`이 없으면 오류로 본다.
+
 ### 새 고정 문구를 만들 때
 
 템플릿·상태 문구·업셀 문구처럼 코드에 고정되는 문장을 새로 만들거나 바꾸면, 그 자리에서 검사기를 돌린다.
 
-- 정상 문구가 위반으로 잡히면(오탐) **문구를 비틀지 말고 검사기를 고친다.** 그리고 그 문구를 `scripts/examples_pass.txt`에 추가한다. 이유: 오탐을 피하려고 문구를 바꾸면 규칙이 아니라 검사기의 빈틈이 문장을 정하게 되고, 같은 오탐이 다음 문구에서 또 난다(실제로 숫자 표기·buyback·시각에서 세 번 반복됐다).
-- 위반 문구가 통과하면(미탐) 검사기를 고치고 그 문구를 `scripts/examples_block.txt`에 추가한다.
-- 검사기를 고친 뒤에는 두 예시 파일을 다시 돌려 기존 판정이 깨지지 않았는지 확인한다:
+- 정상 문구가 위반으로 잡히면(오탐) **문구를 비틀지 말고 검사기를 고친다.** 판정 로직은 `backend/src/m30/copy_rules/__init__.py`, 금지어 목록은 같은 폴더의 `card.toml`(카드·시장 한눈에·아침 알림)·`arena.toml`(어디서나 차단, 카드도 함께 검사)에 있다. `scripts/check_copy.py`는 실행기라 고칠 곳이 아니다. 그리고 그 문구를 `backend/tests/copy_examples/card_pass.txt`에 추가한다. 이유: 오탐을 피하려고 문구를 바꾸면 규칙이 아니라 검사기의 빈틈이 문장을 정하게 되고, 같은 오탐이 다음 문구에서 또 난다(실제로 숫자 표기·buyback·시각에서 세 번 반복됐다).
+- 위반 문구가 통과하면(미탐) 검사기를 고치고 그 문구를 `backend/tests/copy_examples/card_block.txt`에 추가한다.
+- 검사기를 고친 뒤에는 서버 테스트로 기존 판정이 깨지지 않았는지 확인한다(DB 없이 돈다):
 
 ```bash
-cd .claude/skills/card-copy-rules/scripts
-python3 check_copy.py --mode card examples_pass.txt     # 위반 0줄이어야 함
-python3 check_copy.py --mode card examples_block.txt    # 모든 줄이 위반이어야 함
+cd backend && uv run pytest -q tests/test_copy_rules.py   # 통과 예시는 위반 0, 차단 예시는 전부 위반이어야 통과
 ```
 
 스크립트가 잡지 못하는 항목은 사람이나 copy-reviewer가 판정한다:

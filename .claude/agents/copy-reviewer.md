@@ -22,7 +22,7 @@ model: sonnet
 
 ## 입력·출력 규칙
 - 입력: 티켓 번호, 검수할 문장 파일, 프롬프트 파일 경로, 또는 코드 경로
-- 출력: `_workspace/issue-{N}/{NN}_copy-reviewer_review.md`
+- 출력: `_workspace/issue-{N}/{NN}_copy-reviewer_review.md` (Write 도구가 없으므로 Bash 리다이렉트로 이 파일 하나만 쓴다. 다른 파일은 쓰지 않는다. 못 쓰면 전문을 최종 답변으로 돌려준다 — 오케스트레이터가 저장)
 - 형식: 맨 위에 `통과 N / 위반 N / 보류 N` 요약, 이어서 항목마다 `[판정] 위치 — 문장 — 규칙 — 이유`
 
 ## 다시 호출할 때
