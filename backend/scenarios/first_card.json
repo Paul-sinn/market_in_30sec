@@ -1,0 +1,20 @@
+{
+  "coverage": [
+    {"ticker": "AAPL", "name": "Apple Inc."},
+    {"ticker": "MSFT", "name": "Microsoft Corporation"},
+    {"ticker": "NVDA", "name": "NVIDIA Corporation"}
+  ],
+  "prices": {
+    "AAPL": [
+      {"day": "2026-10-14", "open": 199.00, "high": 201.00, "low": 198.50, "close": 200.00, "volume": 50000000, "adjusted": true},
+      {"day": "2026-10-15", "open": 200.50, "high": 203.00, "low": 200.10, "close": 202.50, "volume": 52000000, "adjusted": true}
+    ],
+    "MSFT": [
+      {"day": "2026-10-14", "open": 301.00, "high": 302.00, "low": 299.00, "close": 300.00, "volume": 20000000, "adjusted": true},
+      {"day": "2026-10-15", "open": 299.50, "high": 300.00, "low": 295.80, "close": 296.25, "volume": 21000000, "adjusted": true}
+    ],
+    "NVDA": [
+      {"day": "2026-10-15", "open": 179.00, "high": 181.00, "low": 178.00, "close": 180.00, "volume": 90000000, "adjusted": true}
+    ]
+  }
+}
