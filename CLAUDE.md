@@ -18,6 +18,7 @@
 | 2026-10-18 | 티켓 기반 흐름으로 변경: m30-dev가 GitHub 티켓을 입력으로 받고 선행 티켓·라벨을 확인, 산출물은 `_workspace/issue-{N}/`. backend-dev는 TDD(스펙 #1의 테스트 입구 2곳), qa는 완료 기준 대조·최신 경계 사례·보안 확인 추가, architect는 티켓 범위만 | m30-dev, backend-dev, qa, architect | 스펙 #1·티켓 #2~#20 생성 후 하네스가 옛 흐름(스펙부터 새로 작성)에 머물러 있었음 |
 | 2026-10-18 | codex 리뷰·엣지 케이스·보안 결정을 conventions 스킬에 반영, 원격 Supabase 규칙 추가 | backend-conventions, ios-conventions, card-copy-rules, CLAUDE.md | 스펙 #1 개정 |
 | 2026-10-18 | 회고(harness:evolve): ① CLAUDE.md에 결정→스펙→티켓→구현 전체 흐름 ② m30-dev 0단계에 "결정 문서가 하네스보다 새로우면 점검 제안" 확인 ③ card-copy-rules에 새 고정 문구 절차 + 통과·차단 예시 파일 ④ m30-dev에 사용자 설명 방식(단계마다 무엇·왜, 용어 풀기) | CLAUDE.md, m30-dev, card-copy-rules | 하네스 존재를 사용자가 두 번 물음, 결정 변경 후 하네스가 옛 기준에 머묾, 금지어 검사 오탐 3회 반복, "p0 이뭐야"·"각 단계 뭘 왜 하는지 설명해줘" 요청 |
+| 2026-10-18 | 테스트 입구에 "프로세스 출력"(보안 규칙 전용) 추가, DB 연결 실패 시 비밀번호 없는 예외 규칙 | backend-dev, backend-conventions | #2 qa에서 연결 실패 시 pytest 출력에 비밀번호 노출 발견, 이 규칙은 기존 입구 2곳으로 검사 불가 |
 
 ## 원격 Supabase 규칙
 
@@ -29,6 +30,9 @@
 ## 실수 기록
 
 실수나 실패가 생기면 한 줄 추가: `날짜 — 증상 → 원인 → 교훈`
+
+- 2026-10-18 — #2 qa가 변이 확인(코드를 일부러 망가뜨려 테스트가 잡는지 보기) 중 되돌리기를 두 번 놓침 → `backend/`가 아직 커밋 전(untracked)이라 `git diff`로 되돌림을 확인할 수 없었음 → 변이 확인은 구현을 커밋(또는 스냅샷)한 뒤에 하고, 끝나면 `git status`가 깨끗한지 확인
+- 2026-10-18 — DB 연결 실패 시 pytest traceback에 비밀번호가 찍힘 → 접속 문자열을 지역 변수로 든 채 예외가 올라감 → 연결 실패는 비밀번호 없는 메시지로 `from None` 재발생(backend-conventions에 규칙화)
 
 ## Agent skills
 
