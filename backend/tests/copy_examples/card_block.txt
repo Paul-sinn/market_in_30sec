@@ -9,3 +9,6 @@ You should look at this stock
 This is a guaranteed winner
 NVDA rose 3% and AMD rose 2%
 Shares look undervalued before earnings
+# 단어 수 경계(16단어)와 카드 2인칭. 각 줄은 이 규칙 하나로만 걸린다
+Apple announced that its board of directors elected a new chair at the annual shareholder meeting (Company)
+Your stock filed a new report (SEC filing)

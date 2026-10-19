@@ -23,3 +23,6 @@ Checked 7:30 AM ET · SEC filings
 Sign in to get today's summary
 Summary arrives tomorrow morning
 Free plan can swap stocks 3 times a day. Plus has no limit.
+# 단어 수 경계: 15단어는 통과, 줄 끝 출처 꼬리표와 +N more는 세지 않는다
+Apple announced its board of directors elected a new chair at the annual shareholder meeting (Company)
+Microsoft announced its board of directors elected a new chair at the annual meeting +2 more (Company)

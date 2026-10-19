@@ -1,0 +1,7 @@
+# arena.toml
+# 아레나 토크 금지어 (HANDOFF 3-5). 캐릭터 말투(bullish, momentum 등)와 1인칭 모의 동작은 허용.
+# always_banned는 어디서든 차단한다. 카드 검사도 이 목록을 쓴다
+always_banned = [
+  "you should", "you must", "guarantee", "risk-free", "can't lose",
+  "cannot lose", "sure thing", "easy money", "get rich", "double your money",
+]

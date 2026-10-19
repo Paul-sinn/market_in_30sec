@@ -1,0 +1,10 @@
+# card.toml
+# 카드 줄·시장 한눈에·아침 알림 금지어 (HANDOFF 3-3).
+# 카드 검사는 arena.toml의 always_banned도 함께 검사한다. 원형을 적는다.
+# 코드는 원형 뒤에 s·es·d·ed·ing이 붙은 형태만 잡는다. plunging·opportunities·bought 같은 형태는 못 잡는다
+banned = [
+  "buy", "sell", "should", "bullish", "bearish", "likely to rise", "upside",
+  "downside", "opportunity", "undervalued", "overvalued", "momentum",
+  "breakout", "rally ahead",
+]
+emotion_verbs = ["soar", "plunge", "skyrocket", "crash", "tank"]
