@@ -12,7 +12,7 @@ class DailyBar:
     low: Decimal
     close: Decimal
     volume: int
-    adjusted: bool  # OHLC가 분할·배당 조정가인지
+    adjusted: bool  # OHLC가 분할 조정가인지(배당 조정은 하지 않은 값). False면 그 종목 등락률·세 번째 줄은 지연
 
 
 class PriceSource(Protocol):

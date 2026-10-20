@@ -38,7 +38,7 @@ REQUIRED_EXAMPLES = {
         "Apple signed a major agreement. (SEC filing)",
         "Apple completed an acquisition or sale. (SEC filing)",
         "Apple filed an 8-K report. (SEC filing)",
-        "No notable price moves",
+        "No additional price highlights",
         "Summary arrives tomorrow morning",
         "No new SEC filings found",
         "No confirmed events found",

@@ -18,6 +18,7 @@ CARD_COLUMNS = (
     "change_pct",
     "change_status",
     *(f"{line}_{attr}" for line in LINES for attr in LINE_ATTRS),
+    "leverage_tag",
 )
 _UPSERT_CARD = (
     f"insert into public.stock_card ({', '.join(CARD_COLUMNS)}) values ({', '.join(['%s'] * len(CARD_COLUMNS))})"
@@ -68,9 +69,9 @@ class CardStore:
     def upsert_coverage(self, rows: Iterable[Coverage]) -> None:
         with self._conn.cursor() as cur:
             cur.executemany(
-                "insert into public.coverage (ticker, name) values (%s, %s)"
-                " on conflict (ticker) do update set name = excluded.name",
-                [(r.ticker, r.name) for r in rows],
+                "insert into public.coverage (ticker, name, leverage) values (%s, %s, %s)"
+                " on conflict (ticker) do update set name = excluded.name, leverage = excluded.leverage",
+                [(r.ticker, r.name, r.leverage) for r in rows],
             )
 
     def upsert_card(self, card: StockCard) -> None:
@@ -84,12 +85,13 @@ class CardStore:
             *_line_values(card.news_line),
             *_line_values(card.event_line),
             *_line_values(card.price_fact_line),
+            card.leverage_tag,
         )
         self._conn.execute(_UPSERT_CARD, values)
 
     def list_coverage(self) -> list[Coverage]:
-        rows = self._conn.execute("select ticker, name from public.coverage order by ticker")
-        return [Coverage(ticker=t, name=n) for t, n in rows]
+        rows = self._conn.execute("select ticker, name, leverage from public.coverage order by ticker")
+        return [Coverage(ticker=t, name=n, leverage=lev) for t, n, lev in rows]
 
     def list_cards(self, trading_day: date) -> list[StockCard]:
         with self._conn.cursor(row_factory=dict_row) as cur:
@@ -108,6 +110,7 @@ class CardStore:
                 news_line=_line(r, "news_line"),
                 event_line=_line(r, "event_line"),
                 price_fact_line=_line(r, "price_fact_line"),
+                leverage_tag=r["leverage_tag"],
                 updated_at=r["updated_at"].astimezone(ET),
             )
             for r in rows

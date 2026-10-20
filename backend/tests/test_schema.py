@@ -39,7 +39,7 @@ CARD_COLUMNS = [
     "news_line_text", "news_line_status", "news_line_checked_at", "news_line_source_scope",
     "event_line_text", "event_line_status", "event_line_checked_at", "event_line_source_scope",
     "price_fact_line_text", "price_fact_line_status", "price_fact_line_checked_at", "price_fact_line_source_scope",
-    "updated_at",
+    "updated_at", "leverage_tag",
 ]
 
 
@@ -55,12 +55,25 @@ def test_카드_컬럼은_정해진_목록뿐이고_방향_의견_필드가_없�
         "select column_name from information_schema.columns"
         " where table_schema = 'public' and table_name = 'stock_card' order by ordinal_position")]
     assert columns == CARD_COLUMNS  # 콜·토크·방향·판정 컬럼은 영원히 없다 (ADR-0001)
-    assert len(columns) == 18
+    assert len(columns) == 19
     assert enum_values(admin, "card_status") == ["normal", "fallback"]
     assert enum_values(admin, "line_status") == ["checked_found", "checked_none", "delayed", "unsupported"]
 
 
 CARD_COLS = "ticker, trading_day, status, change_pct, change_status"
+
+
+@pytest.mark.parametrize("leverage", ["1", "0", "0.5"], ids=["1배", "0", "1_미만_양수"])
+def test_레버리지_배율이_1_이하의_양수나_0이면_커버_범위에_넣을_수_없다(admin, leverage):
+    with pytest.raises(errors.CheckViolation):
+        admin.execute("insert into public.coverage (ticker, name, leverage) values ('TQQQ', 'ProShares UltraPro QQQ', %s)",
+                      (leverage,))
+
+
+def test_빈_레버리지_태그는_DB가_거부한다(aapl):
+    with pytest.raises(errors.CheckViolation):
+        aapl.execute(f"insert into public.stock_card ({CARD_COLS}, leverage_tag)"
+                     " values ('AAPL', '2026-10-16', 'fallback', 1.3, 'checked_found', '')")
 
 
 @pytest.mark.parametrize(

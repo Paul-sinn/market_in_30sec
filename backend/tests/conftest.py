@@ -58,6 +58,12 @@ def lookback_window():
 
 
 @pytest.fixture
+def events_and_tags():
+    """거래일 TUE 2026-10-13 기준 일정·레버리지 태그. 시세는 비어 있다."""
+    return SCENARIOS / "events_and_tags.json"
+
+
+@pytest.fixture
 def full_card():
     """세 줄을 다 채운 정상 카드. 커버 범위에 AAPL이 있어야 저장된다."""
     checked = datetime(2026, 10, 16, 7, 30, tzinfo=ET)

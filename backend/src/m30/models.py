@@ -20,6 +20,7 @@ class CardStatus(StrEnum):
 class Coverage:
     ticker: str
     name: str
+    leverage: Decimal | None = None  # 레버리지·인버스 배율. 부호 = 방향(음수 = 인버스). 일반 종목은 None
 
 
 @dataclass(frozen=True)
@@ -47,4 +48,5 @@ class StockCard:
     news_line: CardLine | None = None  # None = 아직 만들지 않음
     event_line: CardLine | None = None
     price_fact_line: CardLine | None = None
+    leverage_tag: str | None = None  # 예: "3x · resets daily". None = 레버리지 상품 아님
     updated_at: datetime | None = None  # DB가 채움. 저장소에서 읽은 카드에만 있음 (ET)
