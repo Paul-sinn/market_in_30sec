@@ -14,7 +14,8 @@ backend/
 ├── pyproject.toml        # uv
 ├── src/m30/
 │   ├── adapters/         # 외부 데이터: 시세, EDGAR, 지표 일정. 인터페이스 + fake + 실제 구현
-│   ├── pipeline/         # collect / classify / compute / newsline / review / publish
+│   ├── pipeline/         # collect / classify / compute / lines(두·세 번째 줄) / newsline / review / publish
+│   ├── trading_day.py    # 직전 거래일 판단(휴장일 달력은 #16)
 │   ├── arena/            # 콜 생성, 판정, 포트폴리오
 │   ├── copy_rules/       # 문구 규칙 검사. 금지어 목록은 TOML. 표준 라이브러리만(스킬 실행기가 uv 없이 부름)
 │   ├── llm/              # Claude 호출, 프롬프트, 재시도

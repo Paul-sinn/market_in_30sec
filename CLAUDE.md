@@ -21,6 +21,7 @@
 | 2026-10-18 | 테스트 입구에 "프로세스 출력"(보안 규칙 전용) 추가, DB 연결 실패 시 비밀번호 없는 예외 규칙 | backend-dev, backend-conventions | #2 qa에서 연결 실패 시 pytest 출력에 비밀번호 노출 발견, 이 규칙은 기존 입구 2곳으로 검사 불가 |
 | 2026-10-18 | 금지어 검사 기준을 서버(`m30.copy_rules` + TOML)로 한 벌만 두고 스킬 스크립트는 실행기로. 예시 파일은 `backend/tests/copy_examples/`, 회귀 확인은 pytest. 프로세스 출력 입구에 "외부 패키지 없이 도는 스킬 실행기" 추가 | card-copy-rules, backend-conventions, backend-dev | #3 구현. 사용자 결정(입구 확장): copy-reviewer가 시스템 python3로 실행기를 부르므로 서버 의존 import가 섞이는 회귀를 자동으로 잡기 위해 |
 | 2026-10-18 | 읽기 전용 에이전트 보고서 저장 규칙: Bash로 지정 파일 하나만 쓰고, 못 쓰면 답변 전문 → 메인이 그대로 저장 | qa, copy-reviewer, m30-dev | #3에서 qa가 "보고서 파일 작성 금지"로 판단해 파일을 안 씀(Write 도구 없음). 다음 단계는 파일 경로로 읽으므로 보고서가 빠질 뻔함 |
+| 2026-10-18 | 세 번째 줄 기준값·우선순위·% 표기, 사실 없음 문구 `No additional price highlights`(데이터 오류는 지연과 구분), 극소액 배당 `<$0.0001/share`, `pipeline/lines`·`trading_day` 디렉터리 | card-copy-rules, backend-conventions | #4 사용자 결정(U1~U7, copy-reviewer 보류 2건) |
 
 ## 원격 Supabase 규칙
 

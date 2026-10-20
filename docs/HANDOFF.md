@@ -65,6 +65,7 @@
 - ✅ 맨 위 등락률: 전일 종가 기준, 진짜 마이너스(−), 미국식 색(상승 초록·하락 빨강)
 - ✅ 첫 번째 줄 규칙: 사실 하나, 15단어 이내, 주어+동사, 과거형(일정만 미래형), 숫자는 줄당 하나(코드가 계산한 값만), 전문용어 X, 중립 동사만(rose/fell/announced; soars/plunges X), 여러 소식이면 1등만 + "+2 more", 출처 꼬리표 `(Company)` `(SEC filing)` 등
 - ✅ 두 번째 줄 템플릿: `Earnings Thu 10/15 after close (D-2)` / `(est.)` / `Ex-dividend 12/21 · $0.70/share`
+  - (2026-10-18, #4) 기간 제한 없이 출처가 주는 가장 가까운 일정 하나(조회는 1년 앞까지). 실적·배당이 같은 날이면 실적. D-N은 달력일. 주당 금액은 발표값 그대로, 최소 2자리·최대 4자리(`$0.2475`). 0보다 크고 $0.0001 미만이면 `<$0.0001/share`로 표시(원래 값은 그대로 저장, 작다는 이유로 지연하지 않음). 0 이하는 잘못된 값
 - ✅ **데이터 상태** (codex 리뷰 1): "확인 못 함"을 "아무 일 없음"으로 보여주지 않는다. 줄마다 상태를 저장하고 문구를 나눈다
   - 확인함·없음: 첫 번째 줄 `No new SEC filings found` / 두 번째 줄 `No confirmed events found` (확인한 출처 범위만 말함. "No major news today"처럼 단정하지 않음)
   - 지연·실패: `Update delayed` (수집 실패·데이터 날짜 불일치. 조용한 날로 처리하지 않음)
@@ -73,7 +74,9 @@
   - 출처가 늘면(보도자료 RSS, 뉴스 벤더) "없음" 문구도 그 범위에 맞게 바꾼다
 - ✅ 메인 카드에 "Buy" 같은 등급 이름 X. 의견 분포는 상세 화면에만
 - ✅ 금지어: buy, sell, should, bullish, bearish, likely to rise, upside, downside, opportunity, undervalued, overvalued, momentum, breakout, rally ahead (+ 감정 동사 soars, plunges, skyrockets, crashes, tanks)
-- ✅ 세 번째 줄 = 가격 사실 (코드 템플릿, OHLC로만 계산): 예 "Up 5 days in a row", "8% below 52-week high". 가장 눈에 띄는 과거 사실 하나, 중립 표현. 줄은 숨기지 않음: Plus는 해당 사실이 없으면 "No notable price moves", 무료는 "Price facts in Plus" 잠금 표시. 거래량 비교("Volume 2x the 30-day average")는 벤더 권한 확인 후 추가. SEC Form 4 내부자 거래는 v2
+- ✅ 세 번째 줄 = 가격 사실 (코드 템플릿, OHLC로만 계산): 예 "Up 5 days in a row", "8.0% below 52-week high". 가장 눈에 띄는 과거 사실 하나, 중립 표현. 줄은 숨기지 않음: Plus는 가격 데이터가 정상인데 표시 조건에 맞는 사실이 없으면 "No additional price highlights"(2026-10-18 변경, 옛 문구 "No notable price moves"는 맨 위 큰 등락률과 모순돼 보여 폐기. 데이터 누락·오류는 "Update delayed"), 무료는 "Price facts in Plus" 잠금 표시. 거래량 비교("Volume 2x the 30-day average")는 벤더 권한 확인 후 추가. SEC Form 4 내부자 거래는 v2
+  - (2026-10-18, #4) 사실 기준: 연속 상승·하락 3일 이상(보합 0.0%인 날 끊김), 52주 고점·저점(장중 고가·저가) 10% 이내. 우선순위: 52주 고점·저점과 같음(`At 52-week high`) → 연속 → 52주 근처. %는 소수 첫째 자리(`8.0% below 52-week high`). 큰 하루 변동(예: `Largest daily drop since 3/12`) 후보는 별도 개선(#15)
+- ✅ 큰 금액 표기 (2026-10-18, #4): `$94B`, `$1.2M`, `$1.2T`, `$950K`. 단위로 나눈 값을 소수 첫째 자리로 반올림, `.0`은 뺌
 - ✅ 증권사 의견 줄은 MVP 제외. Benzinga 계약되면 다시 검토 (그때 Plus 잠금 대상)
 - ✅ 애널리스트 인용 줄은 AI가 아니라 코드 템플릿으로
 - ✅ 3줄은 기본 가이드, 기준은 "30초 안에 읽히는가"
@@ -182,6 +185,7 @@
 - Plan B로 못 하는 것: 증권사 의견, 추정 실적일, ETF 분배금 일정(일부), 기자 뉴스
 - ✅ **실데이터 실험 시세** (2026-10-18): Marketstack Basic($9.99/월, 가격표에 "Commercial use")부터. 구독 전 확인: 분할·배당 조정가, APILayer 약관의 내부 상업 이용, HTTPS, TQQQ 포함, 1년 이력, 장 마감 후 업데이트 시각. 하나라도 안 맞으면 Tiingo Power Internal Commercial($50/월, 내부 상업 이용 명시, 월결제 해지 가능)
   - 무료 티어는 쓰지 않음: 확인한 무료 티어(Tiingo·Twelve Data·Massive·Marketstack 무료 등)는 거의 전부 개인·비상업 전용
+  - 예외 (2026-10-18 사용자 결정): **구독 전 성능 검사만** 무료 API로 한다(데이터가 잘 오는지: 응답 시간, 누락, 조정가, 업데이트 시각). 검사 결과 수치만 문서로 남기고, 받은 시세는 원격 Supabase·실험(#20)·앱 표시에 쓰지 않는다. 어느 무료 API로 할지는 #18 시작 때 정한다(같은 API를 미리 보려면 Marketstack 무료 플랜이 가장 직접적)
   - "내부 이용"은 데이터를 남에게 보여주지 않는 범위. 실험 카드는 Paul만 봄
 - ⏳ **앱 표시용 시세 벤더** (앱 표시 + **파생값 표시** 권한 필수, 2026-10-18 각 사 가격 페이지 기준, 법률 검토 아님):
   - Twelve Data Venture — 외부 표시 명시. 사업자 가격 페이지 기준 $499/월(연결제 시 $414). 이전 기록 $149는 다른 페이지 표기로 불일치, 구매 전 확인

@@ -38,11 +38,11 @@ description: "30초 종목 리포트 앱에 나가는 문장의 규칙. 첫 번�
 지수 값 대신 ETF 가격을 쓰고 `S&P 500 (SPY)`, `Nasdaq (QQQ)`로 표기한다. 지수 데이터는 라이선스가 따로 필요할 수 있다.
 
 ### 두 번째 줄 (EventLine, 코드 템플릿)
-`Earnings Thu 10/15 after close (D-2)` / 추정일이면 `(est.)` / `Ex-dividend 12/21 · $0.70/share`
+`Earnings Thu 10/15 after close (D-2)` / 추정일이면 `(est.)` / `Ex-dividend 12/21 · $0.70/share` / 0보다 크고 $0.0001 미만이면 `<$0.0001/share`
 
 ### 세 번째 줄 (PriceFactLine, 코드 템플릿)
-- 시가·고가·저가·종가로만 계산한 과거 사실 하나: `Up 5 days in a row`, `8% below 52-week high`
-- 줄을 숨기지 않는다. 해당 사실이 없으면 `No notable price moves`, 무료 유저에게는 `Price facts in Plus` 잠금 표시(서버가 결정)
+- 시가·고가·저가·종가로만 계산한 과거 사실 하나: `Up 5 days in a row`, `8.0% below 52-week high`, `At 52-week high`. 기준값·우선순위는 HANDOFF 3-3(연속 3일 이상, 52주 고점·저점 10% 이내). %는 소수 첫째 자리
+- 줄을 숨기지 않는다. 가격 데이터가 정상인데 표시 조건에 맞는 사실이 없으면 `No additional price highlights`(데이터 누락·오류는 `Update delayed`로 구분), 무료 유저에게는 `Price facts in Plus` 잠금 표시(서버가 결정)
 
 ### 금지어 (카드·시장 한눈에·아침 알림)
 buy, sell, should, bullish, bearish, likely to rise, upside, downside, opportunity, undervalued, overvalued, momentum, breakout, rally ahead. 감정 동사 soars, plunges, skyrockets, crashes, tanks. 검사 기준 목록은 `backend/src/m30/copy_rules/card.toml`·`arena.toml`이다. 목록을 바꾸면 이 문단도 같이 바꾼다.
