@@ -21,6 +21,62 @@ class Coverage:
     ticker: str
     name: str
     leverage: Decimal | None = None  # 레버리지·인버스 배율. 부호 = 방향(음수 = 인버스). 일반 종목은 None
+    cik: str | None = None  # 공시 제출 회사 SEC CIK(10자리). 같은 회사의 여러 티커는 같은 값. None = 공시 출처 미지원
+
+
+class NewsKind(StrEnum):
+    """소식 종류(U1 = A). 카드에 직접 보이지 않는다: #6 문장 틀 고르기, #20 놓친 소식 분석. 바꾸면 마이그레이션 CHECK도 같이."""
+
+    EARNINGS = "earnings"
+    GUIDANCE = "guidance"
+    DEAL = "deal"
+    LEADERSHIP = "leadership"
+    CAPITAL_RETURN = "capital_return"
+    FINANCING = "financing"
+    LEGAL = "legal"
+    RESTRUCTURING = "restructuring"
+    PRODUCT = "product"
+    OTHER = "other"
+
+
+IMPORTANCE_MAX = 5  # U2 = B. 내부 중요도 1~5, 클수록 중요. 바꾸면 마이그레이션 CHECK도 같이
+
+
+class UnclassifiedReason(StrEnum):
+    BATCH_FAILED = "batch_failed"  # 묶음 전체 실패(JSON 2회 깨짐, LLM 호출 실패, 호출 상한)
+    MISSING = "missing"  # 응답에 그 공시가 없음(부분 응답)
+    UNKNOWN_TICKER = "unknown_ticker"  # 입력에 없던 티커를 붙임 → 버림
+    INVALID = "invalid"  # 종류·중요도·의견글 값이 틀림, 같은 id 중복
+
+
+@dataclass(frozen=True)
+class Classification:
+    """filing_classification 한 행(공시 × 연결 티커). 분류됨(종류·중요도·의견글) 또는 미분류(사유) 한쪽만."""
+
+    accession: str
+    ticker: str
+    kind: NewsKind | None = None
+    importance: int | None = None
+    is_opinion: bool | None = None
+    unclassified: UnclassifiedReason | None = None
+
+
+@dataclass(frozen=True)
+class NewsCandidate:
+    """첫 번째 줄 후보 하나(분류됨, 의견글 아님)."""
+
+    accession: str
+    kind: NewsKind
+    importance: int
+    amended: bool  # 8-K/A (정정 공시)
+
+
+@dataclass(frozen=True)
+class TickerNews:
+    """종목 하나의 첫 번째 줄 데이터 상태와 후보. 상태는 #5가, 문구는 #6이 정한다."""
+
+    status: LineStatus
+    candidates: tuple[NewsCandidate, ...] = ()  # 중요도 높은 순 → 접수 시각 늦은 순 → 접수번호
 
 
 @dataclass(frozen=True)

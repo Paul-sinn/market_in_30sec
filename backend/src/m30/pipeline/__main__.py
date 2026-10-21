@@ -6,14 +6,21 @@ from collections.abc import Sequence
 from datetime import date
 from pathlib import Path
 
-from m30.adapters.fake import FakeEventSource, FakePriceSource, load_scenario
+from m30.adapters.fake import (
+    FakeEventSource,
+    FakeFilingSource,
+    FakeIndicatorSource,
+    FakeLLM,
+    FakePriceSource,
+    load_scenario,
+)
 from m30.config import DB_URL_VAR, ConfigError, is_local_db, load_settings
 from m30.db.store import CardStore, connect
 from m30.pipeline.morning import MorningPipeline
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="python -m m30.pipeline", description="가짜 시세·일정 시나리오로 아침 파이프라인 실행")
+    parser = argparse.ArgumentParser(prog="python -m m30.pipeline", description="가짜 시세·일정·공시·지표·LLM 시나리오로 아침 파이프라인 실행")
     parser.add_argument("trading_day", type=date.fromisoformat, help="거래일 YYYY-MM-DD (동부 기준)")
     parser.add_argument("--scenario", type=Path, required=True, help="시나리오 JSON 경로")
     args = parser.parse_args(argv)
@@ -33,10 +40,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         store = CardStore(conn)
         store.upsert_coverage(scenario.coverage)
         summary = MorningPipeline(
-            prices=FakePriceSource(scenario), events=FakeEventSource(scenario), store=store
+            prices=FakePriceSource(scenario),
+            events=FakeEventSource(scenario),
+            filings=FakeFilingSource(scenario),
+            indicators=FakeIndicatorSource(scenario),
+            llm=FakeLLM(scenario),
+            store=store,
         ).run(args.trading_day)
+    # 예외 메시지·URL·키는 찍지 않는다. 401·403은 맨 위(터미널 강조·Discord는 #17)
+    if summary.access_denied:
+        print(f"ACCESS DENIED (not retried): {', '.join(summary.access_denied)}")
     delayed = ", ".join(summary.change_delayed) or "-"
     print(f"{summary.trading_day} cards_saved={summary.cards_saved} change_delayed={delayed}")
+    skipped = ", ".join(f"{b.number}:{b.reason}" for b in summary.skipped_batches) or "-"
+    print(
+        f"filings={summary.filings_collected} unclassified={summary.filings_unclassified}"
+        f" batches={summary.classify_batches} skipped={skipped} llm_calls={summary.llm_calls}/{summary.llm_call_limit}"
+    )
+    print("news: " + " ".join(f"{ticker}={n.status}" for ticker, n in summary.news.items()))
+    if summary.failures:
+        print("failed: " + ", ".join(
+            f"{f.source}/{f.subject}={f.reason}" if f.subject else f"{f.source}={f.reason}" for f in summary.failures
+        ))
     return 0
 
 

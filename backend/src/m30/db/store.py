@@ -6,8 +6,10 @@ from datetime import date
 import psycopg
 from psycopg.rows import dict_row
 
+from m30.adapters.filings import Filing
+from m30.adapters.indicators import IndicatorRelease
 from m30.config import DB_URL_VAR, ET, Settings
-from m30.models import CardLine, CardStatus, Coverage, LineStatus, StockCard
+from m30.models import CardLine, CardStatus, Classification, Coverage, LineStatus, NewsKind, StockCard, UnclassifiedReason
 
 LINES = ("news_line", "event_line", "price_fact_line")
 LINE_ATTRS = ("text", "status", "checked_at", "source_scope")
@@ -69,9 +71,9 @@ class CardStore:
     def upsert_coverage(self, rows: Iterable[Coverage]) -> None:
         with self._conn.cursor() as cur:
             cur.executemany(
-                "insert into public.coverage (ticker, name, leverage) values (%s, %s, %s)"
-                " on conflict (ticker) do update set name = excluded.name, leverage = excluded.leverage",
-                [(r.ticker, r.name, r.leverage) for r in rows],
+                "insert into public.coverage (ticker, name, leverage, cik) values (%s, %s, %s, %s)"
+                " on conflict (ticker) do update set name = excluded.name, leverage = excluded.leverage, cik = excluded.cik",
+                [(r.ticker, r.name, r.leverage, r.cik) for r in rows],
             )
 
     def upsert_card(self, card: StockCard) -> None:
@@ -90,8 +92,81 @@ class CardStore:
         self._conn.execute(_UPSERT_CARD, values)
 
     def list_coverage(self) -> list[Coverage]:
-        rows = self._conn.execute("select ticker, name, leverage from public.coverage order by ticker")
-        return [Coverage(ticker=t, name=n, leverage=lev) for t, n, lev in rows]
+        rows = self._conn.execute("select ticker, name, leverage, cik from public.coverage order by ticker")
+        return [Coverage(ticker=t, name=n, leverage=lev, cik=cik) for t, n, lev, cik in rows]
+
+    def save_filings(self, trading_day: date, filings: Iterable[Filing]) -> frozenset[str]:
+        """공시 원본 저장. 이미 있는 접수번호는 건드리지 않는다(처음 받은 원본·거래일 유지).
+        돌려주는 값: 넘긴 접수번호 중 처음 받은 거래일이 trading_day인 것 = 이번 카드의 새 소식."""
+        rows = [(f.accession, f.cik, f.form.value, f.accepted_at, list(f.items), trading_day, f.raw) for f in filings]
+        if not rows:
+            return frozenset()
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                "insert into public.sec_filing (accession, cik, form, accepted_at, items, trading_day, payload)"
+                " values (%s, %s, %s, %s, %s, %s, %s) on conflict (accession) do nothing",
+                rows,
+            )
+            found = cur.execute(
+                "select accession from public.sec_filing where accession = any(%s) and trading_day = %s",
+                ([r[0] for r in rows], trading_day),
+            ).fetchall()
+        return frozenset(r[0] for r in found)
+
+    def save_indicator_releases(self, trading_day: date, releases: Iterable[IndicatorRelease]) -> None:
+        """(이름, 발표 시각)으로 중복 제거. 이미 있는 원본은 건드리지 않는다."""
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                "insert into public.indicator_release (name, released_at, trading_day, payload)"
+                " values (%s, %s, %s, %s) on conflict (name, released_at) do nothing",
+                [(r.name, r.released_at, trading_day, r.raw) for r in releases],
+            )
+
+    def replace_classifications(self, trading_day: date, rows: Iterable[Classification]) -> None:
+        """한 트랜잭션: trading_day 공시(처음 받은 거래일 기준)의 분류 행을 지우고 rows를 넣는다."""
+        values = [
+            (r.accession, r.ticker, r.kind and r.kind.value, r.importance, r.is_opinion, r.unclassified and r.unclassified.value)
+            for r in rows
+        ]
+        with self._conn.transaction(), self._conn.cursor() as cur:
+            cur.execute(
+                "delete from public.filing_classification c using public.sec_filing f"
+                " where f.accession = c.accession and f.trading_day = %s",
+                (trading_day,),
+            )
+            cur.executemany(
+                "insert into public.filing_classification (accession, ticker, kind, importance, is_opinion, unclassified)"
+                " values (%s, %s, %s, %s, %s, %s)",
+                values,
+            )
+
+    def list_classifications(self, trading_day: date) -> list[Classification]:
+        """trading_day 공시의 분류 행, (접수번호, 티커) 순."""
+        rows = self._conn.execute(
+            "select c.accession, c.ticker, c.kind, c.importance, c.is_opinion, c.unclassified::text"
+            " from public.filing_classification c join public.sec_filing f on f.accession = c.accession"
+            " where f.trading_day = %s order by c.accession, c.ticker",
+            (trading_day,),
+        )
+        return [
+            Classification(acc, ticker, kind and NewsKind(kind), importance, is_opinion, reason and UnclassifiedReason(reason))
+            for acc, ticker, kind, importance, is_opinion, reason in rows
+        ]
+
+    def list_raw_filings(self, trading_day: date) -> dict[str, str]:
+        """접수번호 → payload (처음 받은 거래일이 trading_day인 공시)."""
+        rows = self._conn.execute(
+            "select accession, payload from public.sec_filing where trading_day = %s order by accession", (trading_day,)
+        )
+        return dict(rows.fetchall())
+
+    def list_raw_indicators(self, trading_day: date) -> list[str]:
+        """payload 목록, (발표 시각, 이름) 순."""
+        rows = self._conn.execute(
+            "select payload from public.indicator_release where trading_day = %s order by released_at, name",
+            (trading_day,),
+        )
+        return [r[0] for r in rows]
 
     def list_cards(self, trading_day: date) -> list[StockCard]:
         with self._conn.cursor(row_factory=dict_row) as cur:

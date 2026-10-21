@@ -7,7 +7,7 @@ import pytest
 
 from m30.adapters.events import Earnings, EarningsTiming, ExDividend
 from m30.adapters.prices import DailyBar
-from m30.config import ET, ConfigError, is_local_db, load_settings
+from m30.config import ET, ConfigError, is_local_db, load_llm_settings, load_settings
 from m30.models import CardLine, LineStatus
 from m30.pipeline.compute import change_pct, format_per_share, format_usd, round_pct, streak
 from m30.pipeline.lines import EVENT_WINDOW, event_line, leverage_tag, price_fact_line
@@ -24,6 +24,16 @@ def test_DB_주소가_없으면_변수_이름만_알려주고_멈춘다():
 def test_설정을_출력해도_DB_비밀번호가_보이지_않는다():
     settings = load_settings({"SUPABASE_DB_URL": "postgresql://u:s3cret@127.0.0.1:54322/postgres"})
     assert "s3cret" not in repr(settings)
+
+
+@pytest.mark.parametrize("env", [{}, {"ANTHROPIC_API_KEY": ""}], ids=["없음", "빈_값"])
+def test_Anthropic_키가_없으면_변수_이름만_알려주고_멈춘다(env):
+    with pytest.raises(ConfigError, match="^ANTHROPIC_API_KEY is not set$"):
+        load_llm_settings(env)
+
+
+def test_설정을_출력해도_Anthropic_키가_보이지_않는다():
+    assert "sk-test-canary" not in repr(load_llm_settings({"ANTHROPIC_API_KEY": "sk-test-canary"}))
 
 
 @pytest.mark.parametrize(

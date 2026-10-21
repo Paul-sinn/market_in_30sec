@@ -6,7 +6,15 @@ from decimal import Decimal
 import pytest
 
 from m30.adapters.events import Earnings, EarningsTiming
-from m30.adapters.fake import FakeEventSource, FakePriceSource, Scenario, load_scenario
+from m30.adapters.fake import (
+    FakeEventSource,
+    FakeFilingSource,
+    FakeIndicatorSource,
+    FakeLLM,
+    FakePriceSource,
+    Scenario,
+    load_scenario,
+)
 from m30.adapters.prices import DailyBar
 from m30.config import ET
 from m30.models import CardStatus, Coverage, LineStatus
@@ -22,7 +30,15 @@ def run(store, scenario, day=FRI):
     if not isinstance(scenario, Scenario):
         scenario = load_scenario(scenario)
     store.upsert_coverage(scenario.coverage)
-    return MorningPipeline(prices=FakePriceSource(scenario), events=FakeEventSource(scenario), store=store).run(day)
+    return MorningPipeline(
+        prices=FakePriceSource(scenario),
+        events=FakeEventSource(scenario),
+        filings=FakeFilingSource(scenario),
+        indicators=FakeIndicatorSource(scenario),
+        llm=FakeLLM(scenario),
+        store=store,
+        sleep=lambda seconds: None,  # 실제로 기다리지 않는다
+    ).run(day)
 
 
 def cards_by_ticker(store, day):

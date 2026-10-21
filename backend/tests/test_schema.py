@@ -3,7 +3,7 @@
 import pytest
 from psycopg import errors
 
-from m30.models import Coverage
+from m30.models import IMPORTANCE_MAX, Coverage, NewsKind
 
 CARD_SQL = (
     "insert into public.stock_card (ticker, trading_day, status, change_pct, change_status)"
@@ -109,7 +109,8 @@ def test_RLS가_꺼진_테이블이_없다(admin):
     rls_off = [r[0] for r in admin.execute(
         "select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace"
         " where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity")]
-    assert {"coverage", "stock_card"} <= set(public_tables(admin))  # 검사 대상이 비어서 통과하는 것을 막는다
+    tables = {"coverage", "stock_card", "sec_filing", "indicator_release", "filing_classification"}
+    assert tables <= set(public_tables(admin))  # 검사 대상이 비어서 통과하는 것을 막는다
     assert rls_off == []
 
 
@@ -202,3 +203,71 @@ def test_시간대_없는_시각_컬럼이_없다(admin):
         "select table_name, column_name from information_schema.columns"
         " where table_schema = 'public' and data_type = 'timestamp without time zone'").fetchall()
     assert naive == []
+
+
+FILING_SQL = (
+    "insert into public.sec_filing (accession, cik, form, accepted_at, items, trading_day, payload)"
+    " values (%s, %s, '8-K', '2026-10-15 16:31-04', '{2.02}', '2026-10-16', '{}')"
+)
+ACCESSION = "0000320193-26-000101"
+
+
+def test_같은_접수번호의_공시_원본은_DB가_하나만_받는다(admin):
+    admin.execute(FILING_SQL, (ACCESSION, "0000320193"))
+    with pytest.raises(errors.UniqueViolation):
+        admin.execute(FILING_SQL, (ACCESSION, "0000320193"))
+
+
+@pytest.mark.parametrize(
+    "sql, params",
+    [
+        (FILING_SQL, ("0000320193-26-101", "0000320193")),
+        (FILING_SQL, ("", "0000320193")),
+        (FILING_SQL, (ACCESSION, "320193")),
+        ("insert into public.coverage (ticker, name, cik) values ('AAPL', 'Apple Inc.', %s)", ("320193",)),
+        ("insert into public.coverage (ticker, name, cik) values ('AAPL', 'Apple Inc.', %s)", ("000032019A",)),
+    ],
+    ids=["접수번호_자릿수", "빈_접수번호", "공시_CIK_0_채움_없음", "커버_범위_CIK_0_채움_없음", "커버_범위_CIK_문자"],
+)
+def test_접수번호·CIK_형식이_아니면_DB가_거부한다(admin, sql, params):
+    with pytest.raises(errors.CheckViolation):
+        admin.execute(sql, params)
+
+
+@pytest.fixture
+def aapl_filing(aapl):
+    aapl.execute(FILING_SQL, (ACCESSION, "0000320193"))
+    return aapl
+
+
+def classify_row(conn, kind="other", importance=1, is_opinion=False, unclassified=None):
+    with conn.transaction(force_rollback=True):
+        conn.execute(
+            "insert into public.filing_classification (accession, ticker, kind, importance, is_opinion, unclassified)"
+            " values (%s, 'AAPL', %s, %s, %s, %s)",
+            (ACCESSION, kind, importance, is_opinion, unclassified),
+        )
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        {"kind": None, "importance": None, "is_opinion": None},
+        {"importance": None, "is_opinion": None},
+        {"unclassified": "missing"},
+    ],
+    ids=["다_비움", "종류만", "분류됨_더하기_사유"],
+)
+def test_분류_행은_분류됨이나_미분류_한쪽만_채울_수_있다(aapl_filing, row):
+    with pytest.raises(errors.CheckViolation):
+        classify_row(aapl_filing, **row)
+
+
+def test_분류_종류와_중요도_범위는_코드와_DB가_같다(aapl_filing):
+    for kind in NewsKind:  # U1
+        classify_row(aapl_filing, kind=kind.value)
+    for importance in (1, IMPORTANCE_MAX):  # U2
+        classify_row(aapl_filing, importance=importance)
+    for bad in ({"kind": "rumor"}, {"importance": 0}, {"importance": IMPORTANCE_MAX + 1}):
+        with pytest.raises(errors.CheckViolation):
+            classify_row(aapl_filing, **bad)

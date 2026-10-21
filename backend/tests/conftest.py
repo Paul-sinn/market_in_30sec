@@ -64,6 +64,12 @@ def events_and_tags():
 
 
 @pytest.fixture
+def filings_day():
+    """거래일 FRI 2026-10-16 공시·지표 일정·분류 응답. 공시 기간 [10-15 04:00, 10-16 04:00) ET. 시세는 비어 있다."""
+    return SCENARIOS / "filings_day.json"
+
+
+@pytest.fixture
 def full_card():
     """세 줄을 다 채운 정상 카드. 커버 범위에 AAPL이 있어야 저장된다."""
     checked = datetime(2026, 10, 16, 7, 30, tzinfo=ET)
