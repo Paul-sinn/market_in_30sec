@@ -62,7 +62,7 @@ def test_시나리오로_실행하면_종목·거래일마다_카드가_하나_�
     cards = store.list_cards(FRI)
     assert [(c.ticker, c.trading_day) for c in cards] == [("AAPL", FRI), ("MSFT", FRI), ("NVDA", FRI)]
     assert {c.ticker: c.change_pct for c in cards} == {"AAPL": Decimal("1.3"), "MSFT": Decimal("-1.3"), "NVDA": None}
-    assert all(c.status is CardStatus.FALLBACK for c in cards)
+    assert all(c.status is CardStatus.NORMAL for c in cards)  # 공시 출처가 없는 종목(CIK 없음)은 첫 번째 줄이 문구로 채워진다
     assert summary.cards_saved == 3
 
 
@@ -86,7 +86,7 @@ def test_봉이_모자라면_등락률은_지연이고_없음으로_저장되지
     nvda = {c.ticker: c for c in store.list_cards(FRI)}["NVDA"]
     assert nvda.change_pct is None
     assert nvda.change_status is LineStatus.DELAYED
-    assert nvda.news_line is None
+    assert (nvda.news_line.text, nvda.news_line.status) == ("Not covered yet", LineStatus.UNSUPPORTED)  # CIK 없음
     assert (nvda.event_line.text, nvda.event_line.status) == ("Not covered yet", LineStatus.UNSUPPORTED)  # 시나리오에 일정 없음
     assert nvda.price_fact_line.status is LineStatus.DELAYED  # 사실 없음(checked_none)이 아니다
     assert summary.change_delayed == ("NVDA",)

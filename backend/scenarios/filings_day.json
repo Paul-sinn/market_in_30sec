@@ -36,6 +36,8 @@
       {"id": 1, "ticker": "GOOGL", "kind": "leadership", "importance": 3, "opinion": false},
       {"id": 2, "ticker": "MSFT", "kind": "other", "importance": 1, "opinion": false},
       {"id": 3, "ticker": "AAPL", "kind": "earnings", "importance": 5, "opinion": false}
-    ]}
+    ]},
+    {"sentence": "Apple reported Q4 revenue of $102.5B"},
+    {"sentence": "Alphabet updated an earlier report on its new finance chief's pay"}
   ]
 }

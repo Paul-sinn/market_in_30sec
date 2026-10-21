@@ -12,7 +12,7 @@ from m30.adapters.indicators import IndicatorSource
 from m30.adapters.prices import PriceSource
 from m30.config import ET
 from m30.db.store import CardStore
-from m30.llm import LLM, LLMBudget
+from m30.llm import LLM, LLMBudget, LLMRequest
 from m30.models import CardLine, CardStatus, Classification, Coverage, LineStatus, NewsCandidate, StockCard, TickerNews
 from m30.pipeline.classify import Classified, FilingItem, SkippedBatch, batch_count, classify
 from m30.pipeline.collect import (
@@ -32,8 +32,10 @@ from m30.pipeline.lines import (
     delayed_line,
     event_line,
     leverage_tag,
+    news_template_line,
     price_fact_line,
 )
+from m30.pipeline.newsline import NewsDraft, write_news_drafts
 
 LOOKBACK = timedelta(weeks=53)  # 52주 이력 + 52주 전 날이 휴장일이어도 거래일이 들어가는 1주
 
@@ -52,6 +54,7 @@ class RunSummary:
     llm_calls: int  # 보낸 LLM 요청 수(재시도 포함)
     llm_call_limit: int  # 실행당 LLM 호출 상한
     news: dict[str, TickerNews]  # 커버 범위 티커 → 첫 번째 줄 상태·후보 (#6의 입력)
+    drafts: dict[str, NewsDraft]  # 소식 있는 종목 → 첫 번째 줄 초안. 검수(#7) 전이라 카드·DB·CLI에 문장을 내보내지 않는다
 
 
 class MorningPipeline:
@@ -85,13 +88,15 @@ class MorningPipeline:
         items, failed_ciks = self._collect_filings(coverage, trading_day, calls)
         self._collect_indicators(trading_day, calls)
         budget = LLMBudget(self._llm, len(coverage) * 4 + batch_count(items))  # 생성 대상 = 커버 범위 전체(#8 전)
-        outcomes, skipped = classify(
-            items, trading_day, lambda n, request: calls.call(
-                Source.LLM, str(n), lambda: budget.complete(request), lambda text: isinstance(text, str)
-            )
-        )
+
+        def send(subject: str, request: LLMRequest) -> str:
+            """LLM 호출 창구 하나: 분류(묶음 번호)·첫 번째 줄(접수번호)이 같은 상한·재시도·차단을 쓴다."""
+            return calls.call(Source.LLM, subject, lambda: budget.complete(request), lambda text: isinstance(text, str))
+
+        outcomes, skipped = classify(items, trading_day, lambda n, request: send(str(n), request))
         self._store.replace_classifications(trading_day, _classification_rows(items, outcomes))
         news = {cov.ticker: _ticker_news(cov, failed_ciks, items, outcomes) for cov in coverage}
+        drafts = write_news_drafts(news, {i.filing.accession: i for i in items}, trading_day, send)
         saved = 0
         delayed = []
         for cov in coverage:
@@ -107,13 +112,15 @@ class MorningPipeline:
             usable = bars_usable(bars, trading_day)  # 지난 카드 값은 읽지 않는다. 그날 받은 봉으로만
             pct = change_pct(bars) if usable else None
             price_fact = price_fact_line(bars, checked_at) if usable else delayed_line(PRICE_SCOPE, checked_at)
+            news_line = news_template_line(news[cov.ticker], checked_at)  # LLM 초안은 검수(#7) 전에 카드에 쓰지 않는다
             self._store.upsert_card(
                 StockCard(
                     ticker=cov.ticker,
                     trading_day=trading_day,
-                    status=CardStatus.FALLBACK,  # 이번 티켓은 첫 번째 줄을 만들지 않는다
+                    status=CardStatus.FALLBACK if news_line is None else CardStatus.NORMAL,  # 축소판 = 소식 있음, 검수 대기
                     change_pct=pct,
                     change_status=LineStatus.DELAYED if pct is None else LineStatus.CHECKED_FOUND,
+                    news_line=news_line,
                     event_line=self._event_line(cov.ticker, trading_day, checked_at, calls),
                     price_fact_line=price_fact,
                     leverage_tag=leverage_tag(cov.leverage),
@@ -135,6 +142,7 @@ class MorningPipeline:
             llm_calls=budget.calls,
             llm_call_limit=budget.limit,
             news=news,
+            drafts=drafts,
         )
 
     def _collect_filings(

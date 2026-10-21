@@ -1,16 +1,21 @@
 """순수 함수 경계값. DB 없이 돈다."""
 
+import re
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 import pytest
 
+from m30.adapters import AccessDeniedError, SourceError, TransientSourceError
 from m30.adapters.events import Earnings, EarningsTiming, ExDividend
 from m30.adapters.prices import DailyBar
 from m30.config import ET, ConfigError, is_local_db, load_llm_settings, load_settings
+from m30.copy_rules import CARD_BANNED, SOURCE_TAG
+from m30.llm.anthropic import AnthropicLLM, error_for_status
 from m30.models import CardLine, LineStatus
-from m30.pipeline.compute import change_pct, format_per_share, format_usd, round_pct, streak
+from m30.pipeline.compute import card_numbers, change_pct, format_per_share, format_usd, round_pct, streak
 from m30.pipeline.lines import EVENT_WINDOW, event_line, leverage_tag, price_fact_line
+from m30.pipeline.newsline import NEWS_TAG, NEWSLINE_SYSTEM
 from m30.trading_day import previous_trading_day
 
 CHECKED = datetime(2026, 10, 16, 7, 30, tzinfo=ET)
@@ -266,3 +271,98 @@ def test_큰_금액은_단위로_축약하고_소수_첫째_자리까지_쓴다(
 def test_음수_금액이나_0_이하_주당_금액은_표기하지_않는다(fmt, amount):
     with pytest.raises(ValueError):
         fmt(Decimal(amount))
+
+
+@pytest.mark.parametrize(
+    "text, shown, numbers",
+    [
+        ("$94.0 billion", "$94B", ("$94B",)),
+        ("$1.2bn", "$1.2B", ("$1.2B",)),
+        ("$3 thousand", "$3K", ("$3K",)),
+        ("$7 mm", "$7M", ("$7M",)),
+        ("US$5 million", "US$5M", ("$5M",)),
+        ("$0.5 billion", "$500M", ("$500M",)),
+        ("$1,500 million", "$1.5B", ("$1.5B",)),
+        ("$0.2475 per share", "$0.2475 per share", ("$0.2475",)),
+        ("$0.26 a share", "$0.26 a share", ("$0.26",)),
+        ("$0.00 per share", "#", ()),
+        ("$ 102,466 $ 94,930", "# #", ()),  # "(In millions)" 표: 단위를 모르면 1,000배 틀린 값이 된다
+        ("$25.5 to $26.0 billion", "$25.5B to $26B", ("$25.5B", "$26B")),
+        ("between $90 and $93 billion", "between $90B and $93B", ("$90B", "$93B")),
+        ("$1.0-1.2 billion", "$1B-$1.2B", ("$1B", "$1.2B")),
+        ("1.25%", "1.3%", ("1.3%",)),
+        ("12 percent", "12.0%", ("12.0%",)),
+        ("5 to 7%", "5.0% to 7.0%", ("5.0%", "7.0%")),
+        ("5-7%", "5.0%-7.0%", ("5.0%", "7.0%")),
+        ("in 2025 to 8%", "in # to 8.0%", ("8.0%",)),  # 정수 부분 4자리는 범위의 앞값이 아니다
+        ("5 and 7%", "# and 7.0%", ("7.0%",)),
+        ("Item 2.02 - 5%", "Item # - 5.0%", ("5.0%",)),  # 공백 낀 대시는 연결어가 아니다
+        ("-8%", "-8.0%", ("8.0%",)),
+        ("FY2026", "FY#", ()),
+        ("Q3", "Q3", ()),
+        ("3.5x", "#x", ()),
+        ("October 15, 2026", "October #, #", ()),
+        ("Form 8-K", "Form #-K", ()),
+        ("$5 billion and $5.0 billion", "$5B and $5B", ("$5B",)),
+        ("8% then $2 billion", "8.0% then $2B", ("8.0%", "$2B")),
+    ],
+)
+def test_원문_금액·퍼센트는_카드_표기로_바꾸고_나머지_숫자는_가린다(text, shown, numbers):
+    assert card_numbers(text, 4000) == (shown, False, numbers)
+
+
+@pytest.mark.parametrize(
+    "text, shown, numbers",
+    [
+        ("$" + "9" * 23 + " million", "#", ()),
+        ("$" + "9" * 17 + " trillion", "#", ()),
+        ("$" + "9" * 25 + " per share", "#", ()),
+        ("9" * 28 + "%", "#", ()),
+        ("9" * 28 + " percent", "#", ()),
+        ("$1 to $" + "9" * 20 + " billion", "$1B to #", ("$1B",)),  # 표기할 수 있는 쪽만 계산된 값
+    ],
+    ids=["백만_23자리", "조_17자리", "주당_25자리", "퍼센트_28자리", "percent_28자리", "범위_한쪽"],
+)
+def test_표기할_수_없을_만큼_긴_숫자는_예외_없이_가린다(text, shown, numbers):
+    assert card_numbers(text, 4000) == (shown, False, numbers)  # Decimal 정밀도(28자리)를 넘으면 반올림할 수 없다
+
+
+@pytest.mark.parametrize(
+    "max_chars, result",
+    [
+        (15, ("Revenue was ", True, ())),  # 15자는 $102.5B(12~19자) 가운데: 값의 시작에서 자른다
+        (19, ("Revenue was $102.5B", True, ("$102.5B",))),
+        (24, ("Revenue was $102.5B toda", True, ("$102.5B",))),
+        (25, ("Revenue was $102.5B today", False, ("$102.5B",))),
+    ],
+)
+def test_자를_때_바꾼_숫자를_쪼개지_않고_잘린_값은_목록에서_뺀다(max_chars, result):
+    # 바꾼 뒤 길이로 잰다: 원문을 먼저 자르면 $102.5 billion이 단위 없는 $102.5로 남는다
+    assert card_numbers("Revenue was $102.5 billion today", max_chars) == result
+
+
+def test_첫_번째_줄_출처_꼬리표는_문구_검사기의_꼬리표_목록에_있다():
+    assert SOURCE_TAG.search(f"x ({NEWS_TAG})")  # 목록 밖이면 검사기가 꼬리표를 단어 수에 센다
+
+
+def test_첫_번째_줄_지시문이_이름_붙인_금지어는_카드_금지어_목록에_있다():
+    found = re.search(r"Do not use the words (.+?), even when the filing does\.", NEWSLINE_SYSTEM)
+    assert found, "지시문에 금지어 문장이 없다"
+    words = re.split(r", (?:or )?", found[1])
+    assert words and set(words) <= set(CARD_BANNED)  # card.toml에서 빠진 단어를 지시문만 계속 막지 않게
+
+
+@pytest.mark.parametrize(
+    "status, error",
+    [(401, AccessDeniedError), (403, AccessDeniedError), (429, TransientSourceError), (500, TransientSourceError),
+     (503, TransientSourceError), (529, TransientSourceError), (400, SourceError), (404, SourceError)],
+)
+def test_Anthropic_HTTP_상태는_재시도·차단·기타_실패로_나뉜다(status, error):
+    raised = error_for_status(status)
+    assert type(raised) is error  # 400·404는 SourceError 그 자체: 재시도도 차단도 하지 않는다
+    assert str(raised) == f"anthropic http {status}"  # 상태만. 응답 본문·헤더·URL 없음
+
+
+def test_Anthropic_클라이언트는_HTTPS_주소만_받는다():
+    with pytest.raises(ValueError, match="https"):
+        AnthropicLLM(load_llm_settings({"ANTHROPIC_API_KEY": "k"}), url="http://api.anthropic.com/v1/messages")

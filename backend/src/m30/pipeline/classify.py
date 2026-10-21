@@ -9,7 +9,7 @@ from enum import StrEnum
 from m30.adapters import SourceError
 from m30.adapters.filings import Filing
 from m30.config import CLASSIFY_MODEL
-from m30.llm import LLMCallLimitReached, LLMRequest
+from m30.llm import LLMCallLimitReached, LLMRequest, data_json, unfenced
 from m30.models import IMPORTANCE_MAX, NewsKind, UnclassifiedReason
 
 BATCH_SIZE = 20  # 묶음 하나 = LLM 요청 하나
@@ -97,13 +97,20 @@ class SkippedBatch:
     reason: SkipReason
 
 
-def filing_excerpt(filing: Filing) -> tuple[str | None, bool]:
-    """(프롬프트에 넣을 앞부분, 잘렸는지). Exhibit 99 → 8-K 본문 순으로 공백을 한 칸으로 모아 빈 문자열이 아닌 첫 텍스트,
-    EXCERPT_CHARS자까지. 둘 다 없으면 (None, False) = 항목 번호만."""
+def filing_text(filing: Filing) -> str | None:
+    """Exhibit 99 → 8-K 본문 순으로 공백을 한 칸으로 모아 빈 문자열이 아닌 첫 텍스트. 자르지 않는다. 둘 다 없으면 None."""
     for text in (filing.exhibit99, filing.body):
         if text is not None and (text := " ".join(text.split())):
-            return text[:EXCERPT_CHARS], len(text) > EXCERPT_CHARS
-    return None, False
+            return text
+    return None
+
+
+def filing_excerpt(filing: Filing) -> tuple[str | None, bool]:
+    """(프롬프트에 넣을 앞부분, 잘렸는지). filing_text를 EXCERPT_CHARS자까지. 본문이 없으면 (None, False) = 항목 번호만."""
+    text = filing_text(filing)
+    if text is None:
+        return None, False
+    return text[:EXCERPT_CHARS], len(text) > EXCERPT_CHARS
 
 
 def classify_request(batch: Sequence[FilingItem], trading_day: date) -> LLMRequest:
@@ -119,19 +126,17 @@ def classify_request(batch: Sequence[FilingItem], trading_day: date) -> LLMReque
             "text": text,
             "truncated": truncated,
         })
-    # < > & 를 JSON 이스케이프로: 원문에 </filings>가 있어도 블록이 닫히지 않고, JSON으로 읽으면 원문 그대로다
-    data = json.dumps(rows, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
     return LLMRequest(
         model=CLASSIFY_MODEL,
         system=CLASSIFY_SYSTEM,
-        user=CLASSIFY_USER.format(trading_day=trading_day.isoformat(), filings=data),
+        user=CLASSIFY_USER.format(trading_day=trading_day.isoformat(), filings=data_json(rows)),
         max_tokens=CLASSIFY_MAX_TOKENS,
     )
 
 
 def parse_classification(text: str, batch: Sequence[FilingItem]) -> dict[str, Outcome] | None:
     """None = JSON 깨짐(재시도 대상). 아니면 batch의 모든 접수번호 → Classified 또는 미분류 사유."""
-    text = _unfenced(text.strip())
+    text = unfenced(text.strip())
     try:
         data = json.loads(text)
     except (ValueError, RecursionError):  # 아주 깊게 중첩된 응답은 RecursionError다. 실행을 멈추지 않고 깨짐으로 본다
@@ -148,14 +153,6 @@ def parse_classification(text: str, batch: Sequence[FilingItem]) -> dict[str, Ou
         # 같은 id가 두 번이면 어느 쪽도 믿지 않는다
         outcomes[accession] = UnclassifiedReason.INVALID if accession in outcomes else _outcome(entry, by_id[n])
     return {i.filing.accession: outcomes.get(i.filing.accession, UnclassifiedReason.MISSING) for i in batch}
-
-
-def _unfenced(text: str) -> str:
-    """```json … ``` 로 감싼 응답이면 안쪽만. Haiku가 지시와 달리 펜스로 감싸는 일이 흔하고, 그때마다 재시도하면 호출만 쓴다.
-    정규식을 쓰지 않는다: 겹치는 \\s*가 펜스 뒤 긴 공백에서 백트래킹해 실행이 멈춘다. 안쪽 앞뒤 공백은 json.loads가 무시한다."""
-    if len(text) < 6 or not (text.startswith("```") and text.endswith("```")):
-        return text
-    return text[3:-3].removeprefix("json")
 
 
 def _outcome(entry: dict, item: FilingItem) -> Outcome:

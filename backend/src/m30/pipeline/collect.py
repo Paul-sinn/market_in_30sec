@@ -38,7 +38,7 @@ class FailureReason(StrEnum):
 @dataclass(frozen=True, order=True)
 class SourceFailure:
     source: Source
-    subject: str | None  # 티커(시세·일정), CIK(공시), 묶음 번호(LLM), None(지표)
+    subject: str | None  # 티커(시세·일정), CIK(공시), 묶음 번호(LLM 분류)·접수번호(LLM 첫 번째 줄), None(지표)
     reason: FailureReason
 
 

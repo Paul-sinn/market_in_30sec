@@ -1,4 +1,4 @@
-"""카드에 나가는 코드 줄(두 번째·세 번째 줄)과 고정 문구. 화면 문구는 이 파일에만 둔다(copy-reviewer 검수 대상)."""
+"""카드에 나가는 코드 줄(첫 번째 줄의 데이터 상태 문구, 두 번째·세 번째 줄)과 고정 문구. 화면 문구는 이 파일에만 둔다(copy-reviewer 검수 대상)."""
 
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
@@ -6,16 +6,18 @@ from decimal import Decimal
 
 from m30.adapters.events import CorporateEvent, Earnings, EarningsTiming
 from m30.adapters.prices import DailyBar
-from m30.models import CardLine, LineStatus
+from m30.models import CardLine, LineStatus, TickerNews
 from m30.pipeline.compute import format_per_share, streak, week52_gaps
 
 # 데이터 상태 문구 (card-copy-rules "데이터 상태 문구")
+NO_FILINGS = "No new SEC filings found"
 NO_EVENTS = "No confirmed events found"
 NO_PRICE_FACTS = "No additional price highlights"  # 가격 데이터가 정상인데 표시 조건에 맞는 사실이 없음
 UPDATE_DELAYED = "Update delayed"
 NOT_COVERED = "Not covered yet"
 
 # 출처 범위 (카드 하단 "Checked 7:30 AM ET · …"에 쓰인다)
+NEWS_SCOPE = "SEC filings"
 EVENT_SCOPE = "Earnings and dividend calendar"
 PRICE_SCOPE = "Daily prices"
 
@@ -26,6 +28,18 @@ NEAR_52W_PCT = Decimal("10.0")  # U4 = B: 52주 고점·저점 10% 이내
 
 WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # 고정 튜플: 서버 로캘이 바뀌어도 요일 표기가 같다
 TIMING_TEXT = {EarningsTiming.BEFORE_OPEN: "before open", EarningsTiming.AFTER_CLOSE: "after close"}
+
+
+def news_template_line(news: TickerNews, checked_at: datetime) -> CardLine | None:
+    """LLM 없이 정해지는 첫 번째 줄(스펙 #6 D2 표). None = 후보가 있다 → 초안·검수(#7)를 기다리는 축소판."""
+    if news.status is LineStatus.UNSUPPORTED:
+        return CardLine(NOT_COVERED, LineStatus.UNSUPPORTED, checked_at, None)
+    if news.status is LineStatus.CHECKED_NONE:
+        return CardLine(NO_FILINGS, LineStatus.CHECKED_NONE, checked_at, NEWS_SCOPE)
+    if news.status is LineStatus.DELAYED or not news.candidates:
+        # U4 = A: 공시가 있는데 후보가 없으면(전부 의견글 = 회사 공시라 분류 오류) "없음"으로 단정하지 않는다
+        return delayed_line(NEWS_SCOPE, checked_at)
+    return None
 
 
 def event_line(events: Sequence[CorporateEvent] | None, trading_day: date, checked_at: datetime) -> CardLine:

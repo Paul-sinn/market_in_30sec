@@ -1,5 +1,6 @@
 """숫자 계산·표기. 프로젝트의 %·금액 반올림은 여기 한 곳뿐이다."""
 
+import re
 from collections.abc import Sequence
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
@@ -93,3 +94,79 @@ def format_per_share(amount: Decimal) -> str:
     if shown.as_tuple().exponent > -2:  # 발표값 자릿수는 살리되 센트 자리까지는 채운다
         shown = shown.quantize(Decimal("0.01"))
     return f"${shown:f}"
+
+
+# 원문 숫자 → 카드 표기(스펙 #6 D3 표). 대안 순서 = 표 순서, 왼쪽부터 finditer. 겹치는 \s* 반복 없이 공백은 " ?"만
+_NUM = r"\d+(?:,\d{3})*(?:\.\d+)?"
+_UNIT = r"(?i:thousand|million|billion|trillion|mn|mm|bn|[kmbt])\b"
+_PER_SHARE = r" (?:per (?:diluted |basic )?share|a share)\b"
+_PCT = r" ?(?:%|(?i:percent|per cent)\b)"
+_CARD_NUMBER = re.compile(
+    rf"\$ ?(?P<ra>{_NUM})(?P<rc> to | and | through | ?[-–] ?)\$? ?(?P<rb>{_NUM})(?: ?(?P<ru>{_UNIT})|(?P<rs>{_PER_SHARE}))"
+    rf"|\$ ?(?P<un>{_NUM}) ?(?P<uu>{_UNIT})"
+    rf"|\$ ?(?P<sn>{_NUM})(?P<ss>{_PER_SHARE})"
+    rf"|\$ ?{_NUM}"  # 단위 없는 금액: 단위를 모르면 1,000배 틀린 값이 "계산된 값"이 된다
+    rf"|(?P<pa>\d{{1,3}}(?:\.\d+)?)(?P<pc> to |[-–])(?P<pb>{_NUM}){_PCT}"
+    rf"|(?P<pn>{_NUM}){_PCT}"
+    r"|(?P<q>\bQ[1-4]\b)"
+    r"|\d+(?:[.,]\d+)*"
+)
+_UNIT_SIZE = {"thousand": 3, "k": 3, "million": 6, "m": 6, "mn": 6, "mm": 6, "billion": 9, "b": 9, "bn": 9,
+              "trillion": 12, "t": 12}
+
+
+def _num(text: str) -> Decimal:
+    return Decimal(text.replace(",", ""))
+
+
+def _money(number: str, unit: str | None) -> tuple[str, bool]:
+    """(표기, 목록에 넣나). 단위 없음 = 주당 금액. 주당 0과 표기할 수 없는 값은 가린다."""
+    try:
+        if unit is not None:
+            return format_usd(_num(number) * 10 ** _UNIT_SIZE[unit.lower()]), True
+        return (format_per_share(_num(number)), True) if _num(number) > 0 else ("#", False)
+    except ArithmeticError:  # Decimal 정밀도(28자리)를 넘으면 반올림이 InvalidOperation: 공시 하나가 실행을 멈추지 않게 가린다
+        return "#", False
+
+
+def _pct(number: str) -> tuple[str, bool]:
+    try:
+        return f"{round_pct(_num(number))}%", True
+    except ArithmeticError:  # _money와 같은 이유
+        return "#", False
+
+
+def _pieces(m: re.Match) -> list[tuple[str, bool]]:
+    if m["ra"]:
+        a, b = _money(m["ra"], m["ru"]), _money(m["rb"], m["ru"])
+        return [a, (m["rc"], False), b, *([(m["rs"], False)] if m["rs"] and b[1] else [])]
+    if m["un"]:
+        return [_money(m["un"], m["uu"])]
+    if m["sn"]:
+        shown = _money(m["sn"], None)
+        return [shown, *([(m["ss"], False)] if shown[1] else [])]
+    if m["pa"]:
+        return [_pct(m["pa"]), (m["pc"], False), _pct(m["pb"])]
+    if m["pn"]:
+        return [_pct(m["pn"])]
+    return [(m[0], False) if m["q"] else ("#", False)]
+
+
+def card_numbers(text: str, max_chars: int) -> tuple[str, bool, tuple[str, ...]]:
+    """원문 속 금액·%를 카드 표기(format_usd·format_per_share·round_pct)로 바꾸고 나머지 숫자는 '#'으로 가린 뒤
+    max_chars자까지 자른다(바꾼 값은 쪼개지 않는다). 규칙은 스펙 #6 D3 표.
+    (바꾼 텍스트, 잘렸는지, 남은 텍스트에 통째로 있는 바꾼 값 — 처음 나온 순서, 중복 없음)."""
+    out: list[str] = []
+    values: list[tuple[int, int, str]] = []  # (시작, 끝, 값) — 바꾼 텍스트 안 위치
+    size = pos = 0
+    for m in _CARD_NUMBER.finditer(text):
+        for piece, listed in [(text[pos : m.start()], False), *_pieces(m)]:
+            if listed:
+                values.append((size, size + len(piece), piece))
+            out.append(piece)
+            size += len(piece)
+        pos = m.end()
+    full = "".join(out) + text[pos:]
+    cut = min(len(full), max_chars)
+    cut = next((start for start, end, _ in values if start < cut < end), cut)
+    return full[:cut], len(full) > max_chars, tuple(dict.fromkeys(v for _, end, v in values if end <= cut))
