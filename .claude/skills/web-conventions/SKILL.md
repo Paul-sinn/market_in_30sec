@@ -24,7 +24,7 @@ description: "30초 종목 리포트 웹 SaaS(web/, Next.js App Router)의 구�
 | 모든 페이지 하단에 `Not investment advice` | HANDOFF 3-3 |
 | 1단계는 비공개 대시보드다. 배포 보호 없이 공개 배포하지 않는다. 로그인·무료/Plus 잠금은 2단계(#8, #9) | 실데이터 품질·데이터 표시 권한 확인 전이다 |
 | 무료 시세 API 데이터는 화면에 그리지 않는다 | HANDOFF 4장: 구독 전 성능 검사용 |
-| 디자인: 화면을 만들기 전 `ui-ux-pro-max` 스킬로 디자인 시스템을 정한다(`--design-system --persist -p "market_in_30sec" --output-dir web`), 구현 세부는 `--stack nextjs`. 색·글꼴·간격은 그 결과를 Tailwind 테마 토큰으로 옮겨 쓰고 컴포넌트에 hex를 직접 쓰지 않는다 | 사용자 지시(2026-10-20). 토큰 한 곳이면 디자인 변경이 한 파일이다 |
+| 디자인 기준은 사용자 시안 `web/design-system/user-mockup/landing.dc.html`(2026-10-20, #27). 어두운 테마 하나, 색·글꼴(Inter)·간격·라벨 스타일은 시안 값을 Tailwind 테마 토큰으로 옮겨 쓰고 컴포넌트에 hex를 직접 쓰지 않는다. 시안에 없는 화면은 시안의 토큰·패턴으로 만든다. `ui-ux-pro-max` 스킬은 접근성·UX 점검(대비, 포커스, 터치 크기, 모바일 레이아웃)에 쓴다(`--stack nextjs`) | 사용자 지시: 디자인은 사용자 시안, UI/UX 점검은 ui-ux-pro-max. 토큰 한 곳이면 디자인 변경이 한 파일이다 |
 | 모바일 우선. 가로 스크롤 없음, 본문 16px 이상, 대비 4.5:1, 다크 모드 | 기준은 "폰에서 30초 안에 읽히는가" |
 
 ## 2. 디렉터리

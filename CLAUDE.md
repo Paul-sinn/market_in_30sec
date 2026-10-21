@@ -40,6 +40,8 @@
 - 2026-10-18 — DB 연결 실패 시 pytest traceback에 비밀번호가 찍힘 → 접속 문자열을 지역 변수로 든 채 예외가 올라감 → 연결 실패는 비밀번호 없는 메시지로 `from None` 재발생(backend-conventions에 규칙화)
 - 2026-10-20 — #5 qa 확인 스크립트가 환경 변수 전체(세션 토큰 포함)를 출력 → 키 노출 검사를 "전부 찍어 보기"로 함 → 검사도 비밀값을 찍지 않는다: 이름·설정 여부만, 노출 검사는 canary 값 grep(qa 정의에 규칙화)
 - 2026-10-20 — 변이가 적용 안 된 채 테스트 통과로 나옴 → 같은 크기 변이가 `.pyc` 캐시에 가려짐 → 변이 복사본은 `PYTHONDONTWRITEBYTECODE=1` + `__pycache__` 삭제(qa 정의에 규칙화)
+- 2026-10-20 — #24 커밋 전 비밀값 grep이 2건을 냈는데 커밋·push가 그대로 진행됨(둘 다 오탐: README의 `--override-name auth.service_role_key=…` 옵션, package-lock의 sha512 해시) → 검사와 커밋을 `;`로 이어 검사 결과가 커밋을 막지 못함 → 비밀값 검사는 `[ "$(… | grep -c …)" -eq 0 ] && git commit`처럼 0건일 때만 커밋이 실행되게 묶는다
+- 2026-10-20 — #6 backend-dev가 다른 에이전트의 변이 스크립트를 실행·삭제함(레포 파일 변경 없음) → 동시에 도는 에이전트가 scratchpad 한 폴더를 같이 씀 → 에이전트마다 scratchpad 하위 폴더 하나(m30-dev 데이터 전달에 규칙화)
 
 ## Agent skills
 
