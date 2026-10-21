@@ -1,0 +1,48 @@
+@import "tailwindcss";
+
+/*
+ * 디자인 토큰(design-system/market_in_30sec/MASTER.md, pages/dashboard.md). 컴포넌트는 아래 이름만 쓴다.
+ * 대비(WCAG): 본문·상태 글자는 surface·background 위 4.5:1 이상. border는 장식용.
+ */
+:root {
+  color-scheme: light dark;
+  --bg: #f8fafc;
+  --surface: #ffffff;
+  --fg: #0f172a;
+  --muted: #475569;
+  --line: #cbd5e1;
+  --up: #15803d;
+  --down: #b91c1c;
+  --warn: #b45309;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #020617;
+    --surface: #0e1223;
+    --fg: #f8fafc;
+    --muted: #94a3b8;
+    --line: #334155;
+    --up: #22c55e;
+    --down: #f87171;
+    --warn: #fbbf24;
+  }
+}
+
+@theme inline {
+  /* Tailwind 기본 색·글꼴을 지워 토큰 밖 색(text-slate-500 등)이 생기지 않게 한다 */
+  --color-*: initial;
+  --font-*: initial;
+
+  --color-background: var(--bg);
+  --color-surface: var(--surface);
+  --color-foreground: var(--fg);
+  --color-muted: var(--muted);
+  --color-border: var(--line);
+  --color-up: var(--up);
+  --color-down: var(--down);
+  --color-warning: var(--warn);
+
+  --font-sans: var(--font-fira-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-fira-code), ui-monospace, monospace;
+}
