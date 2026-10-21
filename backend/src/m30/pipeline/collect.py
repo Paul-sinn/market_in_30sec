@@ -38,7 +38,7 @@ class FailureReason(StrEnum):
 @dataclass(frozen=True, order=True)
 class SourceFailure:
     source: Source
-    subject: str | None  # 티커(시세·일정), CIK(공시), 묶음 번호(LLM 분류)·접수번호(LLM 첫 번째 줄), None(지표)
+    subject: str | None  # 티커(시세·일정), CIK(공시), 묶음 번호(LLM 분류)·접수번호(LLM 첫 번째 줄·판정), None(지표)
     reason: FailureReason
 
 
@@ -139,6 +139,7 @@ def valid_filings(filings: object, cik: str) -> bool:
         and all(text is None or _is_text(text) for text in (f.body, f.exhibit99))
         and _is_text(f.raw)
         and f.raw != ""
+        and (f.report_date is None or _is_day(f.report_date))
         for f in filings
     )
 

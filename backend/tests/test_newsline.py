@@ -14,12 +14,13 @@ from m30.adapters.fake import FailurePlan
 from m30.models import CardStatus, Coverage, LineStatus
 from m30.pipeline.collect import FailureReason, SourceFailure
 from m30.pipeline.newsline import NEWSLINE_SYSTEM, REVIEW_FAILURES, DraftProblem, NewsDraft
-from test_collect_classify import AAPL, AAPL_CIK, FRI, MSFT, MSFT_CIK, THU, filing, label, reply, run, scenario
+from test_collect_classify import AAPL, AAPL_CIK, FACT, FRI, MSFT, MSFT_CIK, THU, filing, label, reply, run, scenario
 
 BACKEND = Path(__file__).resolve().parent.parent
 SPY = Coverage("SPY", "SPDR S&P 500 ETF Trust")
 AAPL_FILING = f"{AAPL_CIK}-26-000001"
 CFO = "Apple named a new CFO"
+REPLACEMENT = "Apple filed a company update (SEC filing)"  # filing() 기본 items 8.01의 대체 줄
 
 
 def cards(store, day=FRI):
@@ -87,7 +88,7 @@ def test_LLM에는_계산된_금액·퍼센트만_넘어가고_나머지_숫자�
     exhibit = ("On October 15, 2026, Apple reported revenue of $102.5 billion, up 8 percent, and EPS of $1.64 per diluted"
                " share. Net sales $ 102,466. Item 2.02 of Form 8-K. Q4 results.")
     ran = run(store, scenario([AAPL], [filing(1, exhibit99=exhibit)],
-                              [reply(label(1, kind="earnings", importance=5)), sentence("Apple reported Q4 revenue of $102.5B")]))
+                              [reply(label(1, kind="earnings", importance=5)), sentence("Apple reported Q4 revenue of $102.5B"), FACT]))
 
     [request] = line_requests(ran)
     data = news_block(request)
@@ -105,7 +106,7 @@ def test_표기할_수_없는_긴_숫자가_든_공시가_있어도_실행은_�
     filings = [filing(1, body="Apple reported revenue of $" + "9" * 30 + " trillion."),
                filing(2, cik=MSFT_CIK, body="Microsoft signed a cloud agreement.")]
     ran = run(store, scenario([AAPL, MSFT], filings,
-                              [reply(label(1), label(2, "MSFT")), sentence(CFO), sentence("Microsoft signed a deal")]))
+                              [reply(label(1), label(2, "MSFT")), sentence(CFO), sentence("Microsoft signed a deal"), FACT, FACT]))
 
     aapl = news_block(line_requests(ran)[0])
     assert (aapl["text"], aapl["numbers"]) == ("Apple reported revenue of #.", [])  # 계산할 수 없는 값은 가린다
@@ -135,7 +136,7 @@ def test_첫_번째_줄_요청은_고정_지시문이_앞이고_날짜와_데이
 
 @pytest.mark.parametrize("length, truncated", [(4000, False), (4001, True)], ids=["상한과_같음", "한_글자_넘음"])
 def test_첫_번째_줄에_넣는_본문은_앞_4000자까지이고_넘으면_잘렸다고_알린다(store, length, truncated):
-    ran = run(store, one_filing(sentence(CFO), body="x" * length))
+    ran = run(store, one_filing(sentence(CFO), FACT, body="x" * length))
 
     data = news_block(line_requests(ran)[0])
     assert (data["text"], data["truncated"]) == ("x" * 4000, truncated)  # HANDOFF 3-10: AI에 넣는 본문은 앞 4,000자까지
@@ -144,8 +145,8 @@ def test_첫_번째_줄에_넣는_본문은_앞_4000자까지이고_넘으면_�
 def test_첫_번째_줄_지시문은_날짜·회사와_관계없이_같다(store):
     both = [filing(1, "2026-10-14T16:00:00-04:00", exhibit99="Apple named a new CFO."),
             filing(2, "2026-10-15T10:00:00-04:00", cik=MSFT_CIK, exhibit99="Microsoft signed a cloud agreement.")]
-    thu = run(store, scenario([AAPL, MSFT], both, [reply(label(1)), sentence(CFO)]), THU)
-    fri = run(store, scenario([AAPL, MSFT], both, [reply(label(1, "MSFT")), sentence("Microsoft signed a cloud deal")]), FRI)
+    thu = run(store, scenario([AAPL, MSFT], both, [reply(label(1)), sentence(CFO), FACT]), THU)
+    fri = run(store, scenario([AAPL, MSFT], both, [reply(label(1, "MSFT")), sentence("Microsoft signed a cloud deal"), FACT]), FRI)
 
     [thu_request], [fri_request] = line_requests(thu), line_requests(fri)
     assert (news_block(thu_request)["company"], news_block(fri_request)["company"]) == ("Apple Inc.", "Microsoft Corporation")
@@ -182,22 +183,7 @@ def test_첫_번째_줄_지시문이_문구_규칙을_지시한다(store, filing
         assert rule in system  # 문장 해석은 copy-reviewer가 지시문 전문으로 검수한다
 
 
-def test_소식이_있는_종목은_LLM_문장을_카드에_쓰지_않고_축소판으로_둔다(store, admin, filings_day):
-    ran = run(store, filings_day)
-
-    saved = cards(store)
-    assert {t: (c.status, c.news_line) for t, c in saved.items() if t != "SPY"} == {
-        t: (CardStatus.FALLBACK, None) for t in ("AAPL", "GOOG", "GOOGL", "MSFT")
-    }
-    assert saved["SPY"].status is CardStatus.NORMAL
-    assert {t for t, c in saved.items() if c.status is CardStatus.FALLBACK} == set(ran.summary.drafts)  # 축소판 = 검수 대기뿐
-    assert ran.summary.drafts["AAPL"].line == "Apple reported Q4 revenue of $102.5B (SEC filing)"
-    tables = [r[0] for r in admin.execute("select format('%I.%I', schemaname, tablename) from pg_tables where schemaname = 'public'")]
-    stored = " ".join(row[0] for table in tables for row in admin.execute(f"select t::text from {table} t"))
-    assert "Apple reported Q4 revenue" not in stored and "finance chief" not in stored  # 검수(#7) 전 문장은 DB 어디에도 없다
-
-
-def test_CLI는_첫_번째_줄_초안의_결과_코드만_찍고_문장은_찍지_않는다(admin, filings_day):
+def test_CLI는_첫_번째_줄_초안·검수의_결과_코드만_찍고_문장은_찍지_않는다(admin, filings_day):
     # 입구 3: CLI를 하위 프로세스로 실제로 돌려 출력 전체를 본다(로컬 DB, admin이 먼저 비운다)
     r = subprocess.run([sys.executable, "-m", "m30.pipeline", "2026-10-16", "--scenario", str(filings_day)],
                        cwd=BACKEND, capture_output=True, text=True, timeout=60)
@@ -205,13 +191,34 @@ def test_CLI는_첫_번째_줄_초안의_결과_코드만_찍고_문장은_찍�
 
     assert r.returncode == 0
     assert "drafts: AAPL=ok GOOG=ok GOOGL=ok MSFT=no_text" in out.splitlines()
-    assert "Apple reported Q4 revenue" not in out and "finance chief" not in out  # 검수(#7) 전 문장은 출력에도 없다
+    assert "review: AAPL=pass GOOG=pass GOOGL=pass MSFT=hold:draft" in out.splitlines()
+    assert "Apple reported Q4 revenue" not in out and "finance chief" not in out  # 문장은 카드에 있다. CLI는 코드만
+
+
+def test_CLI는_호출_상한에_막혀_재생성하지_못했으면_retry를_찍지_않는다(admin, tmp_path):
+    # 상한 1 × 4 + 1 = 5: 분류 깨짐·분류·초안 깨짐·초안·판정(forecast) → 재생성 자리에서 상한. 대기 없음(일시 실패를 쓰지 않는다)
+    path = tmp_path / "limit_at_retry.json"
+    path.write_text(json.dumps({
+        "coverage": [{"ticker": "AAPL", "name": "Apple Inc.", "cik": AAPL_CIK}],
+        "prices": {},
+        "filings": {AAPL_CIK: [{"accession": AAPL_FILING, "form": "8-K", "accepted_at": "2026-10-15T10:00:00-04:00",
+                                "items": ["2.02"], "body": None,
+                                "exhibit99": "Apple raised its full-year revenue forecast to $400 billion."}]},
+        "llm_replies": ["x", {"items": [label(1, kind="guidance", importance=4)]}, "x",
+                        {"sentence": "Apple raised its full-year revenue forecast to $400B"}, {"label": "forecast"}],
+    }))
+    r = subprocess.run([sys.executable, "-m", "m30.pipeline", "2026-10-16", "--scenario", str(path)],
+                       cwd=BACKEND, capture_output=True, text=True, timeout=60)
+
+    assert r.returncode == 0, r.stderr
+    assert "review: AAPL=hold:draft" in r.stdout.splitlines()  # 재생성 요청이 나가지 않았다
+    assert "llm_calls=5/5" in r.stdout
 
 
 def test_소식이_여러_개면_가장_중요한_하나만_LLM에_넘기고_N_more를_붙인다(store):
     filings = [filing(n, body=text) for n, text in enumerate(["Lead text", "Second", "Third", "Column", "Missing"], 1)]
     labels = [label(1, importance=5), label(2, importance=3), label(3, importance=2), label(4, opinion=True)]  # 5는 응답에서 빠짐
-    ran = run(store, scenario([AAPL], filings, [reply(*labels), sentence(CFO)]))
+    ran = run(store, scenario([AAPL], filings, [reply(*labels), sentence(CFO), FACT]))
 
     [request] = line_requests(ran)
     assert news_block(request)["text"] == "Lead text"
@@ -225,7 +232,7 @@ def test_한_회사의_여러_티커는_같은_공시로_LLM을_한_번만_부�
 
     assert [news_block(r)["company"] for r in line_requests(ran)].count("Alphabet Inc.") == 1
     assert ran.summary.drafts["GOOG"] == ran.summary.drafts["GOOGL"]
-    assert ran.summary.llm_calls == 3  # 분류 1 + AAPL 1 + GOOG 1
+    assert ran.summary.llm_calls == 5  # 분류 1 + 초안 AAPL·GOOG 2 + 판정 AAPL·GOOG 2
 
 
 def test_본문을_못_읽은_공시는_LLM을_부르지_않는다(store, filings_day):
@@ -233,7 +240,8 @@ def test_본문을_못_읽은_공시는_LLM을_부르지_않는다(store, filing
 
     assert ran.summary.drafts["MSFT"] == NewsDraft("0000789019-26-000045", None, (), 0, DraftProblem.NO_TEXT)
     assert all(news_block(r)["company"] != "Microsoft Corporation" for r in line_requests(ran))
-    assert cards(store)["MSFT"].status is CardStatus.FALLBACK
+    assert news_line(cards(store)["MSFT"]) == ("Microsoft filed a company update (SEC filing)", LineStatus.CHECKED_FOUND,
+                                               "SEC filings", CardStatus.NORMAL)  # 대체 줄 + 보류함(U1 = A)
 
 
 SIXTEEN = "Apple announced that its board of directors elected a new chair at the annual shareholder meeting"
@@ -259,12 +267,13 @@ SIXTEEN = "Apple announced that its board of directors elected a new chair at th
     ids=["빈_응답", "빈_문장", "공백_문장", "거절", "두_문장", "줄바꿈", "Inc_마침표", "16단어", "가린_숫자", "중간_N_more"],
 )
 def test_빈_응답·거절·두_문장_이상·15단어_초과는_검수_실패로_표시한다(store, line_reply, problem, text):
-    ran = run(store, one_filing(line_reply))
+    ran = run(store, one_filing(line_reply, line_reply))  # 재생성도 같은 응답
 
     draft = ran.summary.drafts["AAPL"]
-    assert (draft.problem, draft.sentence, len(line_requests(ran))) == (problem, text, 1)  # 형식은 맞아 재시도하지 않는다
-    assert draft.problem in REVIEW_FAILURES  # #7이 이유를 넣어 1회 재생성하는 대상
-    assert cards(store)["AAPL"].status is CardStatus.FALLBACK
+    assert (draft.problem, draft.sentence) == (problem, text)
+    assert len(line_requests(ran)) == 2  # 형식은 맞아 같은 요청 재시도는 없고, 검수가 이유를 넣어 1회 재생성한다
+    assert draft.problem in REVIEW_FAILURES
+    assert news_line(cards(store)["AAPL"]) == (REPLACEMENT, LineStatus.CHECKED_FOUND, "SEC filings", CardStatus.NORMAL)
     assert ran.summary.failures == ()
 
 
@@ -285,7 +294,7 @@ def test_빈_응답·거절·두_문장_이상·15단어_초과는_검수_실패
          "N_more_뒤_꼬리표"],
 )
 def test_15단어·약어_마침표·끝_마침표와_꼬리표는_검수_실패가_아니다(store, text, cleaned):
-    ran = run(store, one_filing(sentence(text)))
+    ran = run(store, one_filing(sentence(text), FACT))
 
     draft = ran.summary.drafts["AAPL"]
     assert (draft.problem, draft.sentence) == (None, cleaned or text)
@@ -293,7 +302,7 @@ def test_15단어·약어_마침표·끝_마침표와_꼬리표는_검수_실패
 
 
 def test_첫_번째_줄_JSON이_깨지면_같은_요청으로_한_번_더_부른다(store):
-    ran = run(store, one_filing("not json", sentence(CFO)))
+    ran = run(store, one_filing("not json", sentence(CFO), FACT))
 
     first, second = line_requests(ran)
     assert first == second  # 지시문을 바꾸면 캐싱 접두가 갈라진다
@@ -309,11 +318,11 @@ def test_첫_번째_줄_JSON이_두_번_깨지면_문장_없이_건너뛴다(sto
     assert len(line_requests(ran)) == 2
     draft = ran.summary.drafts["AAPL"]
     assert (draft.problem, draft.sentence) == (DraftProblem.JSON_INVALID, None)
-    assert cards(store)["AAPL"].status is CardStatus.FALLBACK
+    assert news_line(cards(store)["AAPL"])[0] == REPLACEMENT
 
 
 def test_코드_펜스로_감싼_첫_번째_줄_JSON은_깨진_것으로_보지_않는다(store):
-    ran = run(store, one_filing(f"```json\n{sentence(CFO)}\n```"))
+    ran = run(store, one_filing(f"```json\n{sentence(CFO)}\n```", FACT))
 
     assert len(line_requests(ran)) == 1
     assert (ran.summary.drafts["AAPL"].problem, ran.summary.drafts["AAPL"].sentence) == (None, CFO)
@@ -321,12 +330,13 @@ def test_코드_펜스로_감싼_첫_번째_줄_JSON은_깨진_것으로_보지_
 
 def test_첫_번째_줄_LLM_호출이_실패해도_다른_종목과_카드_저장은_계속한다(store):
     filings = [filing(1, body="Apple named a new CFO."), filing(2, cik=MSFT_CIK, body="Microsoft signed a cloud agreement.")]
-    ran = run(store, scenario([AAPL, MSFT], filings, [reply(label(1), label(2, "MSFT")), None, sentence("Microsoft signed a deal")]))
+    ran = run(store, scenario([AAPL, MSFT], filings, [reply(label(1), label(2, "MSFT")), None, sentence("Microsoft signed a deal"), FACT]))
 
     drafts = ran.summary.drafts
     assert (drafts["AAPL"].problem, drafts["MSFT"].problem) == (DraftProblem.LLM_FAILED, None)  # 이상한 값(None) = 그 공시만
     assert ran.summary.failures == (SourceFailure(Source.LLM, AAPL_FILING, FailureReason.INVALID_DATA),)  # 접수번호로 남는다
-    assert {t: c.status for t, c in cards(store).items()} == {"AAPL": CardStatus.FALLBACK, "MSFT": CardStatus.FALLBACK}
+    assert {t: news_line(c)[0] for t, c in cards(store).items()} == {
+        "AAPL": REPLACEMENT, "MSFT": "Microsoft signed a deal (SEC filing)"}
 
 
 def test_첫_번째_줄_호출도_실행당_LLM_호출_상한에_센다(store):
@@ -338,7 +348,7 @@ def test_첫_번째_줄_호출도_실행당_LLM_호출_상한에_센다(store):
     assert ran.summary.drafts["AAPL"].problem is DraftProblem.CALL_LIMIT
     assert ran.summary.llm_calls == ran.summary.llm_call_limit == 5
     assert ran.summary.failures == ()  # 상한은 출처 실패가 아니다
-    assert cards(store)["AAPL"].status is CardStatus.FALLBACK
+    assert news_line(cards(store)["AAPL"])[0] == REPLACEMENT
 
 
 def first_lines(store):
@@ -354,3 +364,4 @@ def test_같은_거래일로_다시_실행해도_첫_번째_줄과_초안이_같
 
     assert first_lines(store) == before and len(before) == 5
     assert second.summary.drafts == first.summary.drafts
+    assert second.summary.reviews == first.summary.reviews

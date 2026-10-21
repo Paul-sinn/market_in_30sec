@@ -58,9 +58,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         f" batches={summary.classify_batches} skipped={skipped} llm_calls={summary.llm_calls}/{summary.llm_call_limit}"
     )
     print("news: " + " ".join(f"{ticker}={n.status}" for ticker, n in summary.news.items()))
-    # 초안 문장은 검수(#7) 전이라 찍지 않는다. 종목별 결과 코드만
+    # 문장은 찍지 않는다(통과한 줄은 카드에, 걸린 줄은 보류함에 있다). 종목별 결과 코드만
     drafts = " ".join(f"{ticker}={d.problem or 'ok'}" for ticker, d in summary.drafts.items()) or "-"
     print(f"drafts: {drafts}")
+    reviews = " ".join(
+        f"{ticker}={'pass' if r.stage is None else f'hold:{r.stage}'}{'+retry' if r.retried else ''}"
+        for ticker, r in summary.reviews.items()
+    ) or "-"
+    print(f"review: {reviews}")
     if summary.failures:
         print("failed: " + ", ".join(
             f"{f.source}/{f.subject}={f.reason}" if f.subject else f"{f.source}={f.reason}" for f in summary.failures

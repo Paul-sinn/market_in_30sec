@@ -21,6 +21,7 @@ BAR_KEYS = {f.name for f in fields(DailyBar)}
 PRICE_KEYS = {"open", "high", "low", "close"}
 EVENT_KEYS = {"earnings": {"kind", "day", "confirmed", "timing"}, "ex_dividend": {"kind", "day", "amount"}}
 FILING_KEYS = {"accession", "form", "accepted_at", "items", "body", "exhibit99"}
+FILING_OPTIONAL_KEYS = {"report_date"}  # "YYYY-MM-DD" 또는 null
 INDICATOR_KEYS = {"name", "released_at"}
 FAILURE_KEYS = {"source", "subject", "error", "times"}
 FAILURE_ERRORS = {"transient": TransientSourceError, "access_denied": AccessDeniedError, "error": SourceError}
@@ -110,8 +111,11 @@ def _aware(path: Path, where: str, value: object) -> datetime:
 
 
 def _filing(path: Path, cik: str, row: dict) -> Filing:
-    if set(row) != FILING_KEYS:
-        raise ValueError(f"{path.name}: filing of {cik} keys must be {sorted(FILING_KEYS)}, got {sorted(row)}")
+    if not FILING_KEYS <= set(row) <= FILING_KEYS | FILING_OPTIONAL_KEYS:
+        raise ValueError(
+            f"{path.name}: filing of {cik} keys must be {sorted(FILING_KEYS)} plus optional {sorted(FILING_OPTIONAL_KEYS)},"
+            f" got {sorted(row)}"
+        )
     where = f"filing {row['accession']} of {cik}"
     if row["form"] not in tuple(FilingForm):
         raise ValueError(f"{path.name}: {where} key 'form' must be one of {[f.value for f in FilingForm]}")
@@ -120,6 +124,11 @@ def _filing(path: Path, cik: str, row: dict) -> Filing:
     for key in ("accession", "body", "exhibit99"):
         if not isinstance(row[key], str) and (key == "accession" or row[key] is not None):
             raise ValueError(f"{path.name}: {where} key '{key}' must be a string" + ("" if key == "accession" else " or null"))
+    report_date = row.get("report_date")
+    try:
+        report_date = None if report_date is None else date.fromisoformat(report_date)
+    except (TypeError, ValueError):
+        raise ValueError(f"{path.name}: {where} key 'report_date' must be a YYYY-MM-DD date or null") from None
     return Filing(
         accession=row["accession"],
         cik=cik,
@@ -129,6 +138,7 @@ def _filing(path: Path, cik: str, row: dict) -> Filing:
         body=row["body"],
         exhibit99=row["exhibit99"],
         raw=json.dumps(row, ensure_ascii=False, sort_keys=True),
+        report_date=report_date,
     )
 
 

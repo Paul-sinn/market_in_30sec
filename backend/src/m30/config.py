@@ -13,6 +13,7 @@ LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 # 모델 ID는 이 파일에만 둔다. 개발 중엔 전부 haiku. #6·#7·#11이 여기에 상수를 더한다
 CLASSIFY_MODEL = "claude-haiku-5-5"
 NEWSLINE_MODEL = "claude-haiku-5-5"  # 첫 번째 줄. 출시 전 claude-sonnet-5-5 (HANDOFF 3-6)
+REVIEW_MODEL = "claude-haiku-5-5"  # 사실/예측 판정. 출시 전 claude-sonnet-5-5 (HANDOFF 3-6)
 LLM_KEY_VAR = "ANTHROPIC_API_KEY"  # Anthropic 키는 이 환경 변수에서만 읽는다
 
 

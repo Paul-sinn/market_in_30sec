@@ -1,9 +1,9 @@
 """첫 번째 줄 초안: 종목별 1등 공시 하나 → LLM 문장 + 코드가 붙이는 +N more·꼬리표.
-프롬프트 문자열은 이 파일에만 둔다(copy-reviewer 검수 대상). 초안은 검수(#7) 전에 카드·DB에 쓰지 않는다."""
+프롬프트 문자열은 이 파일에만 둔다(copy-reviewer 검수 대상). 초안은 review.review_drafts를 통과한 것만 카드에 간다."""
 
 import json
 import re
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
 from enum import StrEnum
@@ -50,6 +50,28 @@ If "text" has no fact you can state under these rules, reply with {"sentence": n
 
 NEWSLINE_USER = "Trading day: {trading_day}\n\n<news>\n{news}\n</news>"
 
+# 재생성: 원래 user 끝(</news> 뒤)에 걸린 이유만 붙인다. system은 그대로(캐싱). 이유는 전부 우리 코드의 고정 문장·검사기 문자열
+RETRY_NOTE = "\n\nYour last line was not accepted:\n{reasons}\nWrite the line again by the same rules."
+RETRY_REASONS = {  # 키: DraftProblem 값(REVIEW_FAILURES) + "numbers" + FactLabel 값(forecast, opinion)
+    "empty": "The reply had no line.",
+    "refusal": 'The reply was {"sentence": null}. If "text" states a fact you can write under the rules, write it. If it does not, reply with {"sentence": null} again.',
+    "leftover": "The line had a # sign or a count such as +2 more. Write neither.",
+    "multiple_sentences": "The line had more than one sentence. A period inside the line, such as in Inc. or Corp., also ends a sentence. Write one sentence.",
+    "too_long": "The line had more than 15 words.",
+    "numbers": 'The line had a number that is not in "numbers". Years, dates, counts, and form names such as 8-K count as numbers. Copy one value from "numbers" exactly, or write no number.',
+    "forecast": 'The line stated a forecast or used a number from one. Write only what the company did, such as raised, lowered, kept, or issued its forecast, with no forecast numbers, or state another fact from "text".',
+    "opinion": "The line judged the news or the company. State only what happened.",
+}
+# 금지어 검사(check_card) 위반 → 영어 이유. 검사기 문자열은 한국어라 그대로 보내지 않는다(보류함 rules에는 원문 그대로)
+RETRY_COPY_WORD = "The word '{word}' is not allowed. State the same fact with a neutral word."  # word = 우리 금지어 목록 값
+RETRY_COPY_OTHER = {  # check_card 위반 문자열의 앞머리 → 이유
+    "2인칭": 'The line used "you" or "your". Do not write them.',
+    "숫자": "The line had more than one number. Use at most one.",
+}
+RETRY_COPY_DEFAULT = "The line broke a wording rule. State one plain fact in neutral words."  # 모르는 모양·한국어 금지어
+_COPY_WORD = re.compile(r"(?:금지어|감정 동사) '(.+)'")
+_HANGUL = re.compile(r"[가-힣ㄱ-ㅎㅏ-ㅣ]")
+
 
 class DraftProblem(StrEnum):
     EMPTY = "empty"  # 빈 응답 또는 빈 문장
@@ -71,34 +93,50 @@ REVIEW_FAILURES = frozenset({
 _INITIAL = r"(?<!\b[A-Z])"  # 단어 경계의 대문자 한 글자 뒤 마침표(U.S.)는 문장 끝이 아니다
 _SENTENCE_BREAK = re.compile(_INITIAL + r"[.!?]\s")
 _MORE = re.compile(r"\+\d+ more")
-# 지시와 달리 LLM이 붙이는 끝 장식: 마침표, 출처 꼬리표, +N more(개수는 코드가 센 값만 쓴다)
-_SUFFIXES = (re.compile(_INITIAL + r"\.$"), SOURCE_TAG, re.compile(_MORE.pattern + "$"))
+# 지시와 달리 LLM이 붙이는 끝 장식: 마침표, 출처 꼬리표(대소문자 무시: (SEC Filing)이 남으면 카드에 꼬리표가 둘), +N more(개수는 코드가 센 값만 쓴다)
+_SUFFIXES = (re.compile(_INITIAL + r"\.$"), re.compile(SOURCE_TAG.pattern, re.I), re.compile(_MORE.pattern + "$"))
 
 
 @dataclass(frozen=True)
 class NewsDraft:
-    """종목 하나의 첫 번째 줄 초안. 검수(#7) 전이라 카드에 쓰지 않는다."""
+    """종목 하나의 첫 번째 줄 초안(검수 전). 카드에는 review_drafts를 통과한 줄만 간다."""
 
     accession: str  # 쓴 공시 = candidates[0]
     sentence: str | None  # 정리한 LLM 문장(끝 꼬리표·+N more 없음). EMPTY·REFUSAL·JSON_INVALID·LLM_FAILED·CALL_LIMIT·NO_TEXT면 None
-    numbers: tuple[str, ...]  # LLM에 넘긴 계산된 숫자 = #7 숫자 대조 원본. NO_TEXT면 ()
+    numbers: tuple[str, ...]  # LLM에 넘긴 계산된 숫자 = 검수 숫자 대조 원본. NO_TEXT면 ()
     more: int  # 나머지 후보 수 (+N more)
-    problem: DraftProblem | None  # None = 형식 규칙 통과(검수는 #7)
+    problem: DraftProblem | None  # None = 형식 규칙 통과(내용 검수는 review)
 
     @property
     def line(self) -> str | None:
-        """문장 + " +N more"(N > 0) + " (SEC filing)". 문장이 없으면 None."""
-        if self.sentence is None:
-            return None
-        more = f" +{self.more} more" if self.more else ""
-        return f"{self.sentence}{more} ({NEWS_TAG})"
+        """news_text(문장, more). 문장이 없으면 None."""
+        return None if self.sentence is None else news_text(self.sentence, self.more)
+
+
+def news_text(sentence: str, more: int) -> str:
+    """문장 + " +N more"(N > 0) + " (SEC filing)". LLM 줄과 대체 줄이 같이 쓴다(꼬리표·+N more 순서가 어긋나지 않게)."""
+    count = f" +{more} more" if more else ""
+    return f"{sentence}{count} ({NEWS_TAG})"
+
+
+def copy_retry_reasons(issues: Sequence[str]) -> list[str]:
+    """check_card 위반 문자열마다 재생성 이유 하나(영어). 모르는 모양은 RETRY_COPY_DEFAULT: 검사기 문자열이 늘어도 한국어가 새지 않게."""
+    reasons = []
+    for issue in issues:
+        word = _COPY_WORD.fullmatch(issue)
+        if word and not _HANGUL.search(word[1]):
+            reasons.append(RETRY_COPY_WORD.format(word=word[1]))
+        else:
+            reasons.append(next((r for prefix, r in RETRY_COPY_OTHER.items() if issue.startswith(prefix)), RETRY_COPY_DEFAULT))
+    return reasons
 
 
 def newsline_request(
-    item: FilingItem, candidate: NewsCandidate, trading_day: date
+    item: FilingItem, candidate: NewsCandidate, trading_day: date, reasons: Sequence[str] = ()
 ) -> tuple[LLMRequest, tuple[str, ...]] | None:
     """None = 본문 없음(LLM을 부르지 않는다: 본문 없이 부르면 기억으로 내용을 지어낼 수 있다).
-    아니면 (요청, 데이터 블록의 numbers). 데이터 블록: 회사·종류·정정 여부·숫자를 바꾸거나 가린 본문·숫자만(항목 번호·티커 없음)."""
+    아니면 (요청, 데이터 블록의 numbers). 데이터 블록: 회사·종류·정정 여부·숫자를 바꾸거나 가린 본문·숫자만(항목 번호·티커 없음).
+    reasons(재생성)가 있으면 user 끝에 RETRY_NOTE. system·model·max_tokens는 그대로(캐싱 접두가 갈라지지 않게)."""
     text = filing_text(item.filing)
     if text is None:
         return None
@@ -111,12 +149,10 @@ def newsline_request(
         "truncated": truncated,
         "numbers": list(numbers),
     }
-    request = LLMRequest(
-        model=NEWSLINE_MODEL,
-        system=NEWSLINE_SYSTEM,
-        user=NEWSLINE_USER.format(trading_day=trading_day.isoformat(), news=data_json(data)),
-        max_tokens=NEWSLINE_MAX_TOKENS,
-    )
+    user = NEWSLINE_USER.format(trading_day=trading_day.isoformat(), news=data_json(data))
+    if reasons:
+        user += RETRY_NOTE.format(reasons="\n".join(f"- {r}" for r in reasons))
+    request = LLMRequest(model=NEWSLINE_MODEL, system=NEWSLINE_SYSTEM, user=user, max_tokens=NEWSLINE_MAX_TOKENS)
     return request, numbers
 
 
@@ -171,17 +207,22 @@ def write_news_drafts(
             continue
         lead = n.candidates[0]
         if lead.accession not in written:
-            written[lead.accession] = _write(items[lead.accession], lead, trading_day, send)
+            written[lead.accession] = write_news(items[lead.accession], lead, trading_day, send)
         sentence, numbers, problem = written[lead.accession]
         drafts[ticker] = NewsDraft(lead.accession, sentence, numbers, len(n.candidates) - 1, problem)
     return drafts
 
 
-def _write(
-    item: FilingItem, candidate: NewsCandidate, trading_day: date, send: Callable[[str, LLMRequest], str]
+def write_news(
+    item: FilingItem,
+    candidate: NewsCandidate,
+    trading_day: date,
+    send: Callable[[str, LLMRequest], str],
+    reasons: Sequence[str] = (),
 ) -> tuple[str | None, tuple[str, ...], DraftProblem | None]:
-    """(문장, 숫자, 문제). 형식이 깨지면 같은 요청으로 1회 더(지시문을 바꾸면 캐싱 접두가 갈라진다)."""
-    built = newsline_request(item, candidate, trading_day)
+    """(문장, 숫자, 문제). 형식이 깨지면 같은 요청으로 1회 더(지시문을 바꾸면 캐싱 접두가 갈라진다).
+    초안과 재생성(reasons = 걸린 이유)이 같은 길을 쓴다."""
+    built = newsline_request(item, candidate, trading_day, reasons)
     if built is None:
         return None, (), DraftProblem.NO_TEXT
     request, numbers = built

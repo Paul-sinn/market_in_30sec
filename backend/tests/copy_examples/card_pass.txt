@@ -45,6 +45,14 @@ Daily prices
 # 첫 번째 줄 출처 범위, 코드가 조립한 첫 번째 줄 모양(문장 + +N more + 꼬리표) (#6)
 SEC filings
 Apple reported Q4 revenue of $102.5B +2 more (SEC filing)
+# 대체 줄(검수 실패 시 8-K 항목 구절, 끝 마침표 없음), 후보가 여럿이면 +N more (#7)
+Apple reported quarterly results (SEC filing)
+Apple announced a leadership update (SEC filing)
+Apple signed a major agreement (SEC filing)
+Apple completed an acquisition or sale (SEC filing)
+Apple filed a company update (SEC filing)
+Apple updated an earlier report (SEC filing)
+Apple reported quarterly results +2 more (SEC filing)
 # ---- 카드 문장이 아닌 검사기 경계 예시 ----
 # 아래 줄은 출처 꼬리표·전문용어 규칙과 관계없이 검사기의 단어 경계·값 표기 판정만 확인한다. 카드 문구 예시로 쓰지 않는다
 # 금지어와 비슷한 다른 단어(seller)
