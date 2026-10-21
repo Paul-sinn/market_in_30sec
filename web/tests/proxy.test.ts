@@ -74,9 +74,16 @@ test("형식이 깨진 헤더 → 401", async () => {
   }
 });
 
+test("랜딩(/)과 카드 대시보드(/cards) 둘 다 인증 없으면 401(#27)", async () => {
+  for (const path of ["/", "/cards", "/cards/"]) {
+    await expectDenied(mod.proxy(new NextRequest(`https://example.test${path}`)));
+    expect(mod.proxy(new NextRequest(`https://example.test${path}`, { headers: { authorization: basic(`${USER}:${PASSWORD}`) } })).status).toBe(200);
+  }
+});
+
 test("matcher로 빠지는 경로 없음(정적 파일·데이터 경로 포함 모든 요청)", () => {
   const config = (mod as { config?: Parameters<typeof unstable_doesMiddlewareMatch>[0]["config"] }).config ?? {};
-  for (const url of ["/", "/any/page", "/_next/static/chunks/a.js", "/_next/data/x.json", "/favicon.ico", "/api/x"]) {
+  for (const url of ["/", "/cards", "/any/page", "/_next/static/chunks/a.js", "/_next/data/x.json", "/favicon.ico", "/api/x"]) {
     expect(unstable_doesMiddlewareMatch({ config, url }), url).toBe(true);
   }
 });

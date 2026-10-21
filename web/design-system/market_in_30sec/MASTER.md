@@ -1,3 +1,7 @@
+> **2026-10-20 #27 — 이 파일은 더 이상 기준이 아니다.** 디자인 기준은 사용자 시안 `../user-mockup/landing.dc.html`(인라인 값)이고,
+> 그 값을 옮긴 토큰은 `web/src/app/globals.css` 한 곳이다(어두운 테마 하나, Inter, 각진 모서리, 11px 대문자 라벨).
+> 아래 내용(Fira, 라이트/다크 팔레트)은 #24 기록으로만 남긴다. ui-ux-pro-max는 접근성·UX 점검에만 쓴다.
+
 # Design System Master File
 
 > **LOGIC:** When building a specific page, first check `design-system/pages/[page-name].md`.

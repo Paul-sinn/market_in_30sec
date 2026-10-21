@@ -34,14 +34,24 @@ test('"use client" 파일은 서버 모듈을 import하지 않는다', () => {
   expect(client.filter((f) => /from ["']@\/server/.test(f.code)).map((f) => f.path)).toEqual([]);
 });
 
-test("등락률 토큰: up은 초록, down은 빨강(라이트·다크 모두)", () => {
+test("등락률 토큰: up은 초록, down은 빨강(어두운 테마 하나, #27)", () => {
   const css = readFileSync(join(SRC, "app", "globals.css"), "utf8");
   const rgb = (name: string) =>
-    [...css.matchAll(new RegExp(`--${name}: #([0-9a-f]{6});`, "gi"))].map((m) => m[1].match(/../g)!.map((h) => parseInt(h, 16)));
-  expect(css).toContain("--color-up: var(--up);");
-  expect(css).toContain("--color-down: var(--down);");
-  expect(rgb("up")).toHaveLength(2);
-  expect(rgb("down")).toHaveLength(2);
+    [...css.matchAll(new RegExp(`--color-${name}: #([0-9a-f]{6});`, "gi"))].map((m) => m[1].match(/../g)!.map((h) => parseInt(h, 16)));
+  expect(rgb("up")).toHaveLength(1);
+  expect(rgb("down")).toHaveLength(1);
   for (const [r, g, b] of rgb("up")) expect(g > r && g > b).toBe(true);
   for (const [r, g, b] of rgb("down")) expect(r > g && r > b).toBe(true);
+});
+
+test("키보드 포커스 링: 모든 링크·버튼에 2px 외곽선, 지우는 클래스 없음(#27 qa N4)", () => {
+  const css = readFileSync(join(SRC, "app", "globals.css"), "utf8");
+  expect(css).toMatch(/:where\(a, button\):focus-visible \{\s*outline: 2px solid var\(--color-foreground\);\s*outline-offset: 2px;\s*\}/);
+  expect(files.filter((f) => /\boutline-(none|hidden|0)\b/.test(f.code)).map((f) => f.path)).toEqual([]);
+});
+
+test("랜딩(/)은 DB를 읽지 않는다(정적 페이지, 카드 읽기는 /cards만)", () => {
+  const landing = files.find((f) => f.path === join("app", "page.tsx"));
+  expect(landing).toBeDefined();
+  expect(landing!.code).not.toMatch(/@\/server|connection\(/);
 });

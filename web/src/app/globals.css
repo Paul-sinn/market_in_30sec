@@ -1,48 +1,84 @@
 @import "tailwindcss";
 
 /*
- * 디자인 토큰(design-system/market_in_30sec/MASTER.md, pages/dashboard.md). 컴포넌트는 아래 이름만 쓴다.
- * 대비(WCAG): 본문·상태 글자는 surface·background 위 4.5:1 이상. border는 장식용.
+ * 디자인 토큰. 기준은 사용자 시안 design-system/user-mockup/landing.dc.html(#27)의 인라인 값이다.
+ * 컴포넌트는 아래 이름만 쓴다(hex·임의 값 클래스 금지, tests/guards.test.ts). 어두운 테마 하나.
+ * 대비(WCAG): muted는 surface 위 5.2:1, dim은 background 위 6.0:1이지만 surface 위 4.46:1이라 background에만 쓴다.
  */
-:root {
-  color-scheme: light dark;
-  --bg: #f8fafc;
-  --surface: #ffffff;
-  --fg: #0f172a;
-  --muted: #475569;
-  --line: #cbd5e1;
-  --up: #15803d;
-  --down: #b91c1c;
-  --warn: #b45309;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #020617;
-    --surface: #0e1223;
-    --fg: #f8fafc;
-    --muted: #94a3b8;
-    --line: #334155;
-    --up: #22c55e;
-    --down: #f87171;
-    --warn: #fbbf24;
-  }
-}
-
-@theme inline {
-  /* Tailwind 기본 색·글꼴을 지워 토큰 밖 색(text-slate-500 등)이 생기지 않게 한다 */
+@theme {
+  /* Tailwind 기본 색·글꼴·글자 크기를 지워 토큰 밖 값(text-slate-500, text-2xl 등)이 생기지 않게 한다 */
   --color-*: initial;
   --font-*: initial;
+  --text-*: initial;
 
-  --color-background: var(--bg);
-  --color-surface: var(--surface);
-  --color-foreground: var(--fg);
-  --color-muted: var(--muted);
-  --color-border: var(--line);
-  --color-up: var(--up);
-  --color-down: var(--down);
-  --color-warning: var(--warn);
+  --color-background: #181818; /* 페이지 */
+  --color-surface: #303030; /* 카드·패널. background 위 구분선(border-surface)도 이 색 */
+  --color-border: #484848; /* surface 안 구분선 */
+  --color-foreground: #ffffff; /* 본문. 밝은 섹션(요금)의 배경 */
+  --color-muted: #a3a3a3; /* 보조 글자(surface·background 둘 다) */
+  --color-dim: #969696; /* 보조 글자(background 위만) */
+  --color-accent: #da291c; /* 브랜드 빨강. 흰 글자 4.9:1 */
+  --color-up: #3dc07d; /* 상승. surface 위 5.7:1 */
+  --color-down: #f47c7c; /* 하락. surface 위 5.0:1 */
+  --color-hover: #d2d2d2; /* 메뉴 링크 hover, 밝은 섹션의 카드 테두리 */
+  --color-ink-muted: #666666; /* 밝은 섹션의 보조 글자(흰 바탕 5.7:1) */
+  --color-ink-line: #ebebeb; /* 밝은 섹션의 줄 구분선·알약 배경 */
+  --color-black: #030303; /* 첫 화면 그라데이션 끝, 폰 테두리 */
+  --color-graphite: #3c3c3c; /* 첫 화면 그라데이션 시작 */
+  --color-dusk-1: #1b2240; /* 잠금화면 목업 배경 */
+  --color-dusk-2: #474c82;
+  --color-dusk-3: #d49671;
+  --color-push-meta: #4a4a4a; /* 알림 목업의 앱 이름·시각 */
+  --color-agent-a: #ff8a3d; /* 아레나 공격형 아바타 */
+  --color-agent-a-ink: #2b1300;
+  --color-agent-s: #5aa9ff; /* 아레나 안정형 아바타 */
+  --color-agent-s-ink: #00172e;
 
-  --font-sans: var(--font-fira-sans), ui-sans-serif, system-ui, sans-serif;
-  --font-mono: var(--font-fira-code), ui-monospace, monospace;
+  --font-sans: var(--font-inter), -apple-system, system-ui, sans-serif;
+
+  /* 줄 높이를 따로 적지 않은 크기는 body의 1.5를 물려받는다(시안 기본값) */
+  --text-micro: 0.5rem; /* 8px 알림 목업 앱 아이콘 */
+  --text-label: 0.6875rem; /* 11px 대문자 라벨(tracking-widest = 1.1px) */
+  --text-xs: 0.75rem; /* 12px */
+  --text-nav: 0.8125rem; /* 13px 메뉴·번호(tracking-wider = 0.65px) */
+  --text-sm: 0.875rem; /* 14px 본문 기본 */
+  --text-md: 0.9375rem; /* 15px */
+  --text-base: 1rem; /* 16px */
+  --text-lg: 1.125rem; /* 18px */
+  --text-xl: 1.25rem; /* 20px */
+  --text-mark: 0.75rem; /* 12px "30s" 로고 */
+  --text-mark--letter-spacing: 0.4px;
+  --text-h2: 2.25rem; /* 36px */
+  --text-h2--line-height: 1.2;
+  --text-h2--letter-spacing: -0.01em;
+  --text-price: 3.5rem; /* 56px */
+  --text-price--line-height: 1.1;
+  --text-price--letter-spacing: -0.02em;
+  --text-clock: 4.5rem; /* 72px */
+  --text-clock--line-height: 1;
+  --text-clock--letter-spacing: -2px;
+  --text-stat: 5rem; /* 80px */
+  --text-stat--line-height: 1;
+  --text-stat--letter-spacing: -0.02em;
+  --text-display: clamp(2.5rem, 6vw, 5rem); /* 40~80px 첫 화면 제목 */
+  --text-display--line-height: 1.05;
+  --text-display--letter-spacing: -1.6px;
+
+  --leading-heading: 1.2;
+
+  --radius-icon: 5px;
+  --radius-push: 20px;
+  --radius-phone: 44px;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+
+  /* 키보드 포커스: 모든 링크·버튼에 2px 외곽선. 흰 바탕(요금 섹션)에서는 focus-visible:outline-background로 덮어쓴다 */
+  :where(a, button):focus-visible {
+    outline: 2px solid var(--color-foreground);
+    outline-offset: 2px;
+  }
 }
