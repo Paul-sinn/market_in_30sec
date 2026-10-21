@@ -171,3 +171,20 @@ test("DB 읽기 실패 화면: 고정 문구 + 다시 시도. 에러 내용은 �
   expect(html).toMatch(/<button[^>]*type="button"[^>]*>Try again<\/button>/);
   expect(html).not.toMatch(/canary-secret|127\.0\.0\.1|stock_card/);
 });
+
+test("Try again을 누르면 retry가 불린다(#24 qa G1)", () => {
+  // DOM 없이: 돌려받은 엘리먼트 트리에서 버튼을 찾아 클릭 핸들러를 부른다
+  const retry = vi.fn();
+  type El = { type: unknown; props: { children?: unknown; onClick?: () => void } };
+  const find = (n: unknown): El | undefined => {
+    if (Array.isArray(n)) return n.map(find).find(Boolean);
+    const el = n as El | null;
+    if (!el || typeof el !== "object" || !("props" in el)) return undefined;
+    return el.type === "button" ? el : find(el.props.children);
+  };
+  const button = find(ErrorPage({ error: new Error("x"), retry }));
+  expect(button?.props.children).toBe("Try again");
+  expect(retry).not.toHaveBeenCalled();
+  button!.props.onClick!();
+  expect(retry).toHaveBeenCalledTimes(1);
+});

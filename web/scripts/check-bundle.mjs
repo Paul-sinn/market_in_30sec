@@ -8,7 +8,7 @@ import { join } from "node:path";
 const canary = `canary-${randomUUID()}`;
 const build = spawnSync("npx", ["next", "build"], {
   stdio: "inherit",
-  env: { ...process.env, SUPABASE_URL: "http://127.0.0.1:54321", SUPABASE_SERVICE_ROLE_KEY: canary },
+  env: { ...process.env, SUPABASE_URL: "http://127.0.0.1:54321", SUPABASE_SERVICE_ROLE_KEY: canary, DASHBOARD_PASSWORD: canary },
 });
 if (build.status !== 0) process.exit(build.status ?? 1);
 

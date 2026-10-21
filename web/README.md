@@ -30,13 +30,25 @@ uv run python -m m30.pipeline 2026-10-16 --scenario scenarios/first_card.json   
 cd ../web
 
 npm install
-npm run dev                               # http://localhost:3000 (운영 빌드 확인: npm run build && npm start)
+# 배포 보호(아래 "배포 보호" 절). 없으면 모든 요청이 401이다. 비밀번호는 화면에 안 보이게 입력받는다(셸 기록에도 안 남는다)
+export DASHBOARD_USER=owner
+printf 'Dashboard password: '; read -rs DASHBOARD_PASSWORD; echo; export DASHBOARD_PASSWORD
+npm run dev                               # http://localhost:3000 → 브라우저 로그인 창에 위 아이디·비밀번호 (운영 빌드 확인: npm run build && npm start)
 ```
 
 - 화면은 DB에서 가장 최근 거래일의 카드만 보여준다. 위 두 줄을 다 돌리면 2026-10-16 카드가 보이고, 첫 줄만 돌리면 2026-10-13 카드가 보인다.
 - 지금 파이프라인은 첫 번째 줄을 만들지 않아(#6·#7 전) 모든 카드가 축소판이다. 첫 번째 줄은 `Update delayed`로 보인다.
 - 백엔드 `uv run pytest`는 로컬 DB의 `public` 테이블을 전부 비운다. 돌린 뒤에는 위 파이프라인 줄로 다시 채운다.
 - `SUPABASE_URL`·`SUPABASE_SERVICE_ROLE_KEY`가 없으면 페이지가 에러를 낸다. 값은 위 `eval` 줄로만 넣는다. `NEXT_PUBLIC_` 접두사를 붙이지 않는다(브라우저 번들에 들어간다).
+
+## 배포 보호 (#25)
+
+`src/proxy.ts`가 모든 요청(정적 파일 포함) 앞에서 HTTP Basic Auth를 확인한다. 아이디·비밀번호는 서버 환경 변수 `DASHBOARD_USER`·`DASHBOARD_PASSWORD`에서 요청 때마다 읽는다(빌드에 박히지 않는다). 둘 중 하나라도 없거나 비면 맞는 값을 보내도 전부 401이다(닫힌 쪽). 401 응답에는 `WWW-Authenticate: Basic realm="market_in_30sec"`와 `Authentication required`만 있고 비밀값·환경 변수 이름은 없다.
+
+- 로컬: 위 "로컬에서 띄우기"처럼 셸에서 `export`한다. `.env*` 파일을 만들지 않는다. `NEXT_PUBLIC_` 접두사를 붙이지 않는다(브라우저 번들에 들어간다).
+- 확인: `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000/` → `401`.
+- **Vercel(사용자 조치)**: 프로젝트 Settings → Environment Variables에 `DASHBOARD_USER`·`DASHBOARD_PASSWORD`를 **Sensitive**로, Production·Preview 둘 다에 **사용자가 직접** 넣는다(채팅·레포·로그에 값을 남기지 않는다). 값을 넣거나 바꾼 뒤에는 재배포해야 반영된다. 넣기 전 배포는 전부 401이라 공개되지 않는다.
+- Basic Auth는 HTTPS 위에서만 안전하다(Vercel 도메인은 HTTPS). 로그아웃 버튼은 없다. 브라우저를 닫거나 비밀번호를 바꾸면 끊긴다.
 
 ## 검사
 
@@ -45,8 +57,9 @@ cd web && npm run lint && npm test && npm run build
 ```
 
 - `npm test`의 `tests/cards.db.test.ts`는 위 `eval` 줄의 환경 변수가 있어야 돌고, 로컬 주소(127.0.0.1·localhost)가 아니면 멈춘다. 2099-12-31 거래일과 `ZZW*` 테스트 티커만 넣고 끝나면 지운다(시드한 카드는 그대로).
+- `tests/proxy.test.ts`는 배포 보호(인증 없음·틀린 값·형식 깨짐·환경 변수 미설정 → 401, 맞는 값 → 통과, 응답에 비밀번호 없음, matcher로 빠지는 경로 없음)를 DB 없이 본다.
 - `tests/cards.read.test.ts`는 DB 없이 supabase-js 응답을 흉내 내 읽기 실패·1,000행 가드를 본다.
-- 번들 노출 검사: 가짜 canary 키로 빌드하고 `.next/static`에서 canary와 `supabase-js|postgrest`를 찾는다. 둘 다 0건이 아니면 실패(exit 1). 값은 출력하지 않는다.
+- 번들 노출 검사: 가짜 canary 키(`SUPABASE_SERVICE_ROLE_KEY`·`DASHBOARD_PASSWORD`)로 빌드하고 `.next/static`에서 canary와 `supabase-js|postgrest`를 찾는다. 둘 다 0건이 아니면 실패(exit 1). 값은 출력하지 않는다.
 
 ```bash
 npm run check:bundle    # bundle check: N files in .next/static, canary=0, supabase-js|postgrest=0

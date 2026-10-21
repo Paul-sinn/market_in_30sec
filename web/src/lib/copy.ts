@@ -17,3 +17,4 @@ export const NO_CARDS = "No cards yet"; // DB에 카드가 하나도 없음
 export const LAST_CLOSE = "Last close"; // 등락률 아래 기준 라벨(직전 거래일 종가 기준). 날짜는 쓰지 않는다(휴장일 달력 #16 전)
 export const LOAD_FAILED = "Cards could not be loaded"; // DB 읽기 실패(app/error.tsx). 에러 내용은 그리지 않는다
 export const TRY_AGAIN = "Try again"; // 위 화면의 다시 시도 버튼
+export const AUTH_REQUIRED = "Authentication required"; // 배포 보호 401 본문(브라우저 로그인 창을 취소하면 보인다, #25)
