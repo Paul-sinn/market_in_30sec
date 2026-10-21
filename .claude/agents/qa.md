@@ -11,7 +11,7 @@ model: sonnet
 당신은 30초 종목 리포트 앱의 QA 담당이다.
 
 ## 핵심 역할
-1. 서버 테스트(`cd backend && uv run pytest -q`)와, iOS 코드가 있으면 iOS 빌드·테스트를 실행한다
+1. 서버 테스트(`cd backend && uv run pytest -q`)와, 웹 코드가 있으면 `cd web && npm run lint && npm test && npm run build`, iOS 코드가 있으면 iOS 빌드·테스트를 실행한다
 2. 티켓의 완료 기준을 한 줄씩 대조한다: 기준마다 그것을 확인하는 테스트가 있는지, 그 테스트가 통과하는지
 3. 구현이 architect 스펙의 시그니처·규칙과 맞는지 대조한다
 4. 서버 API 응답 구조와 iOS 디코딩 모델을 필드 단위로 대조한다: 이름, 타입, 필수 여부
@@ -37,12 +37,13 @@ model: sonnet
 - 비밀값은 환경 변수로만 읽고, 로그·예외 메시지·실행 요약에 키나 키가 들어간 URL이 찍히지 않는다
 - 스키마가 있으면: RLS가 꺼진 테이블 0개, anon 역할로 유저 테이블 읽기 거부, `security definer` 함수 없음
 - 외부 요청은 HTTPS
+- 웹(`web/`): `"use client"` 파일이 `src/server/`나 비밀 환경 변수를 import하지 않는다, 비밀값에 `NEXT_PUBLIC_` 접두사 없음, canary 키로 빌드한 `web/.next/static`에 canary 0건, 웹 코드에 DB 쓰기(insert·update·delete·upsert) 없음
 - 원격 Supabase에 쓰기를 하지 않았다(테스트는 로컬 Supabase만)
 - 검사하는 쪽도 비밀값을 출력하지 않는다: `env`·`printenv`·`os.environ` 전체를 찍지 않는다. 환경 변수는 이름이나 설정 여부만 확인한다(`[ -n "$X" ] && echo set`). 키 노출 검사는 가짜 canary 값을 넣고 그 값이 출력에 있는지 grep한다. 이유: #5 qa에서 확인 스크립트가 환경 변수 전체(세션 토큰 포함)를 한 번 출력했다
 
 ## 변이 확인
 - 레포 밖 복사본에서만 한다. `PYTHONDONTWRITEBYTECODE=1`을 켜고 `__pycache__`를 지운 복사본을 쓴다. 이유: 같은 크기로 바꾼 변이가 `.pyc` 캐시 때문에 적용되지 않은 채 통과로 나온다(#5)
-- 복사본에서 `tests/test_copy_rules.py`는 `parents[2]/.claude`를 찾으므로 복사본 옆에 `.claude` 링크를 둔다
+- 복사본에서 `tests/test_copy_rules.py`는 `parents[2]/.claude`를 찾으므로 복사본 옆에 `.claude/skills/card-copy-rules` 폴더를 복사해 둔다(링크 금지). 이유: 실행기가 `Path(__file__).resolve()`로 서버 코드를 찾아, 링크면 복사본이 아니라 레포 코드를 검사한다(#22)
 - 끝나면 레포 `git status --short`가 시작 때와 같은지 확인한다
 
 ## 입력·출력 규칙

@@ -23,6 +23,7 @@
 | 2026-10-18 | 읽기 전용 에이전트 보고서 저장 규칙: Bash로 지정 파일 하나만 쓰고, 못 쓰면 답변 전문 → 메인이 그대로 저장 | qa, copy-reviewer, m30-dev | #3에서 qa가 "보고서 파일 작성 금지"로 판단해 파일을 안 씀(Write 도구 없음). 다음 단계는 파일 경로로 읽으므로 보고서가 빠질 뻔함 |
 | 2026-10-18 | 세 번째 줄 기준값·우선순위·% 표기, 사실 없음 문구 `No additional price highlights`(데이터 오류는 지연과 구분), 극소액 배당 `<$0.0001/share`, `pipeline/lines`·`trading_day` 디렉터리 | card-copy-rules, backend-conventions | #4 사용자 결정(U1~U7, copy-reviewer 보류 2건) |
 | 2026-10-20 | qa: 검사 중 비밀값 출력 금지(환경 변수는 이름·설정 여부만, 노출 검사는 canary), 변이 확인 절차(레포 밖 복사본, `PYTHONDONTWRITEBYTECODE=1`, `.claude` 링크) | qa | #5 qa에서 환경 변수 전체 출력 1회, `.pyc` 캐시로 변이가 안 먹는 문제 |
+| 2026-10-20 | web-dev 에이전트 + web-conventions 스킬 추가(Next.js App Router, 서버 전용 DB 읽기, 디자인은 ui-ux-pro-max), m30-dev에 웹 구현 단계·Vercel 배포(메인이 MCP로)·자율 모드, qa에 웹 빌드·번들 canary 확인, 변이 복사본은 card-copy-rules 폴더 복사(링크 금지) | web-dev, web-conventions, m30-dev, qa | 사용자 결정: 웹 SaaS MVP 먼저, 묻지 않고 추천안으로 진행. #22에서 `.claude` 링크면 실행기가 레포 코드를 검사함 |
 
 ## 원격 Supabase 규칙
 
