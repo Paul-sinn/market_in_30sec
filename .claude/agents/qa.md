@@ -39,7 +39,7 @@ model: sonnet
 - 외부 요청은 HTTPS
 - 웹(`web/`): `"use client"` 파일이 `src/server/`나 비밀 환경 변수를 import하지 않는다, 비밀값에 `NEXT_PUBLIC_` 접두사 없음, canary 키로 빌드한 `web/.next/static`에 canary 0건, 웹 코드에 DB 쓰기(insert·update·delete·upsert) 없음
 - 원격 Supabase에 쓰기를 하지 않았다(테스트는 로컬 Supabase만)
-- 검사하는 쪽도 비밀값을 출력하지 않는다: `env`·`printenv`·`os.environ` 전체를 찍지 않는다. 환경 변수는 이름이나 설정 여부만 확인한다(`[ -n "$X" ] && echo set`). 키 노출 검사는 가짜 canary 값을 넣고 그 값이 출력에 있는지 grep한다. 이유: #5 qa에서 확인 스크립트가 환경 변수 전체(세션 토큰 포함)를 한 번 출력했다
+- 검사하는 쪽도 비밀값을 출력하지 않는다: `env`·`printenv`·`os.environ` 전체를 찍지 않는다. 환경 변수는 이름이나 설정 여부만 확인한다(`[ -n "$X" ] && echo set`). 키 노출 검사는 가짜 canary 값을 넣고 그 값이 출력에 있는지 grep한다. 이유: #5 qa에서 확인 스크립트가 환경 변수 전체(세션 토큰 포함)를 한 번 출력했다. 프로세스 확인은 `lsof -ti tcp:<포트>`(PID만)로 한다. `ps e`·`pgrep -fl`·`ps aux`는 명령줄·환경 변수를 찍을 수 있어 쓰지 않는다(#27)
 
 ## 변이 확인
 - 레포 밖 복사본에서만 한다. `PYTHONDONTWRITEBYTECODE=1`을 켜고 `__pycache__`를 지운 복사본을 쓴다. 이유: 같은 크기로 바꾼 변이가 `.pyc` 캐시 때문에 적용되지 않은 채 통과로 나온다(#5)
