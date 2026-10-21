@@ -63,7 +63,7 @@
 
 ### 3-3. 종목 카드·문구
 - ✅ 맨 위 등락률: 전일 종가 기준, 진짜 마이너스(−), 미국식 색(상승 초록·하락 빨강)
-- ✅ 첫 번째 줄 규칙: 사실 하나, 15단어 이내, 주어+동사, 과거형(일정만 미래형), 숫자는 줄당 하나(코드가 계산한 값만), 전문용어 X, 중립 동사만(rose/fell/announced; soars/plunges X), 여러 소식이면 1등만 + "+2 more", 출처 꼬리표 `(Company)` `(SEC filing)` 등
+- ✅ 첫 번째 줄 규칙: 사실 하나, 15단어 이내, 주어+동사, 과거형(일정만 미래형), 숫자는 줄당 하나(코드가 계산한 값만), 전문용어 X, 중립 동사만(rose/fell/announced; soars/plunges X), 여러 소식이면 1등만 + "+2 more", 출처 꼬리표는 `(Company)`·`(SEC filing)`만(2026-10-20 닫힌 목록, 기준은 `backend/src/m30/copy_rules/card.toml` `source_tags`. 출처가 늘면 목록에 추가). 연도는 값으로 센다 — 연도 대신 `Q3`·`full-year`로 쓴다. 공시 서식 이름(`8-K`·`10-Q`·`Item 2.02`)은 값으로 세지 않지만 카드 문장에 쓰지 않는다(전문용어, 출처는 꼬리표로)(2026-10-20)
 - ✅ 두 번째 줄 템플릿: `Earnings Thu 10/15 after close (D-2)` / `(est.)` / `Ex-dividend 12/21 · $0.70/share`
   - (2026-10-18, #4) 기간 제한 없이 출처가 주는 가장 가까운 일정 하나(조회는 1년 앞까지). 실적·배당이 같은 날이면 실적. D-N은 달력일. 주당 금액은 발표값 그대로, 최소 2자리·최대 4자리(`$0.2475`). 0보다 크고 $0.0001 미만이면 `<$0.0001/share`로 표시(원래 값은 그대로 저장, 작다는 이유로 지연하지 않음). 0 이하는 잘못된 값
 - ✅ **데이터 상태** (codex 리뷰 1): "확인 못 함"을 "아무 일 없음"으로 보여주지 않는다. 줄마다 상태를 저장하고 문구를 나눈다
@@ -73,7 +73,7 @@
   - 카드 하단에 확인 시각·출처 범위 표시: 예 `Checked 7:30 AM ET · SEC filings`
   - 출처가 늘면(보도자료 RSS, 뉴스 벤더) "없음" 문구도 그 범위에 맞게 바꾼다
 - ✅ 메인 카드에 "Buy" 같은 등급 이름 X. 의견 분포는 상세 화면에만
-- ✅ 금지어: buy, sell, should, bullish, bearish, likely to rise, upside, downside, opportunity, undervalued, overvalued, momentum, breakout, rally ahead (+ 감정 동사 soars, plunges, skyrockets, crashes, tanks)
+- ✅ 금지어: buy, sell, should, bullish, bearish, likely to rise, upside, downside, opportunity, undervalued, overvalued, momentum, breakout, rally ahead (+ 감정 동사 soars, plunges, skyrockets, crashes, tanks, surges, plummets, rockets, tumbles, slumps, spikes, jumps, rallies, sinks, sank, dives, collapses, explodes, nosedives — 2026-10-20 확대). 어디서든 차단(카드·아레나): you should, you must, guaranteed, risk-free, can't lose, cant lose, cannot lose, sure thing, easy money, get rich, double your money, 한국어 권유(목록 기준은 `backend/src/m30/copy_rules/arena.toml` `always_banned`)
 - ✅ 세 번째 줄 = 가격 사실 (코드 템플릿, OHLC로만 계산): 예 "Up 5 days in a row", "8.0% below 52-week high". 가장 눈에 띄는 과거 사실 하나, 중립 표현. 줄은 숨기지 않음: Plus는 가격 데이터가 정상인데 표시 조건에 맞는 사실이 없으면 "No additional price highlights"(2026-10-18 변경, 옛 문구 "No notable price moves"는 맨 위 큰 등락률과 모순돼 보여 폐기. 데이터 누락·오류는 "Update delayed"), 무료는 "Price facts in Plus" 잠금 표시. 거래량 비교("Volume 2x the 30-day average")는 벤더 권한 확인 후 추가. SEC Form 4 내부자 거래는 v2
   - (2026-10-18, #4) 사실 기준: 연속 상승·하락 3일 이상(보합 0.0%인 날 끊김), 52주 고점·저점(장중 고가·저가) 10% 이내. 우선순위: 52주 고점·저점과 같음(`At 52-week high`) → 연속 → 52주 근처. %는 소수 첫째 자리(`8.0% below 52-week high`). 큰 하루 변동(예: `Largest daily drop since 3/12`) 후보는 별도 개선(#15)
 - ✅ 큰 금액 표기 (2026-10-18, #4): `$94B`, `$1.2M`, `$1.2T`, `$950K`. 단위로 나눈 값을 소수 첫째 자리로 반올림, `.0`은 뺌
@@ -229,6 +229,8 @@
 ## 7. 개발 순서 (2026-10-18 개정, codex 리뷰 합의 순서)
 
 먼저 증명할 것: "이 카드만 봐도 안심하고, 다음 날 또 본다". 그 전까지는 리포트의 신뢰성과 반복 사용에 집중한다.
+
+- ✅ **(2026-10-20 사용자 결정) 웹 SaaS MVP 먼저, iOS 앱은 그다음.** 이유: 앱은 확인하기 불편하고, 빠르게 MVP를 만들어 직접 테스트하기 위해. 웹 화면 디자인은 `ui-ux-pro-max` 스킬을 쓴다. 배포는 Vercel(MCP). ADR-0003은 웹에도 그대로: 브라우저는 DB를 직접 읽지 않고, 웹 서버 코드(서버 전용)만 DB에 접근한다. 진행 방식: 이 단계부터 오케스트레이터가 추천안으로 결정하고 묻지 않는다(키·구독 등 사용자만 할 수 있는 일만 요청). 계획은 `tasks/todo.md`
 
 1. ✅ 레포 셋업 → `/setup-matt-pocock-skills` → `/grill-with-docs`, GLOSSARY.md·ADR 생성 (2026-10-17)
 2. **실제 자료로 카드 품질·데이터 확보 가능성 검증** (스펙 #1): 백엔드 골격(가짜 어댑터 + Supabase 스키마) → 첫 번째 줄 파이프라인(수집 → 분류 → 계산 → 첫 번째 줄 → 검수 → 보류함) → EDGAR + 시세 실제 연결 → 15종목 10거래일 실험

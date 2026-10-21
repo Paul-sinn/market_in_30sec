@@ -2,6 +2,11 @@
 # 아레나 토크 금지어 (HANDOFF 3-5). 캐릭터 말투(bullish, momentum 등)와 1인칭 모의 동작은 허용.
 # always_banned는 어디서든 차단한다. 카드 검사도 이 목록을 쓴다
 always_banned = [
-  "you should", "you must", "guarantee", "risk-free", "can't lose",
+  "you should", "you must", "guarantee", "risk-free", "can't lose", "cant lose",
   "cannot lose", "sure thing", "easy money", "get rich", "double your money",
+  # 한국어 권유: 어미까지 붙인 완성형으로 적는다(어미가 단어에 붙어 영어식 s·ed·ing 규칙이 맞지 않는다).
+  # 앞뒤에 다른 한글 음절이 붙지 않을 때만 잡는다(의사세요·너도 사랑해 통과).
+  # shortcut: 목록에 없는 어미(사요·사 둬)와 붙여 쓴 형태(지금사세요)는 못 잡는다, 한국어 문장이 실제로 나가는 곳이 생기면 목록을 늘린다
+  "너도 사", "사세요", "파세요", "매수하세요", "매도하세요", "팔아라",
+  "너도 사라", "너도 사봐", "매수하라", "매도하라", "매수해라", "매도해라", "손절하세요",
 ]

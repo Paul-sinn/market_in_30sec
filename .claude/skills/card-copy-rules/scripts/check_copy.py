@@ -33,7 +33,7 @@ def main() -> int:
     violations = 0
     for num, raw in enumerate(stream, 1):
         line = raw.strip()
-        if not line or line.startswith("#"):
+        if not line or line.startswith("# "):  # "#NVDA ..." 같은 해시태그 문장은 검사한다
             continue
         issues = check(line)
         if issues:
