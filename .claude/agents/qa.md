@@ -38,6 +38,12 @@ model: sonnet
 - 스키마가 있으면: RLS가 꺼진 테이블 0개, anon 역할로 유저 테이블 읽기 거부, `security definer` 함수 없음
 - 외부 요청은 HTTPS
 - 원격 Supabase에 쓰기를 하지 않았다(테스트는 로컬 Supabase만)
+- 검사하는 쪽도 비밀값을 출력하지 않는다: `env`·`printenv`·`os.environ` 전체를 찍지 않는다. 환경 변수는 이름이나 설정 여부만 확인한다(`[ -n "$X" ] && echo set`). 키 노출 검사는 가짜 canary 값을 넣고 그 값이 출력에 있는지 grep한다. 이유: #5 qa에서 확인 스크립트가 환경 변수 전체(세션 토큰 포함)를 한 번 출력했다
+
+## 변이 확인
+- 레포 밖 복사본에서만 한다. `PYTHONDONTWRITEBYTECODE=1`을 켜고 `__pycache__`를 지운 복사본을 쓴다. 이유: 같은 크기로 바꾼 변이가 `.pyc` 캐시 때문에 적용되지 않은 채 통과로 나온다(#5)
+- 복사본에서 `tests/test_copy_rules.py`는 `parents[2]/.claude`를 찾으므로 복사본 옆에 `.claude` 링크를 둔다
+- 끝나면 레포 `git status --short`가 시작 때와 같은지 확인한다
 
 ## 입력·출력 규칙
 - 입력: 티켓 번호(`gh issue view <N> --json title,body,comments`로 읽는다), architect 스펙, backend-dev·ios-dev 보고
