@@ -1,0 +1,61 @@
+# 통과해야 하는 문장 (card 모드). 오탐이 났던 문구는 반드시 여기 추가한다.
+Apple reported Q3 revenue of $94B (Company)
+Microsoft announced a $60B share buyback (SEC filing)
+8.0% below 52-week high
+S&P 500 (SPY) rose 1.2% yesterday
+Earnings Thu 10/15 after close (D-2)
+Ex-dividend 12/21 · $0.70/share
+Up 5 days in a row
+Apple reported quarterly results. (SEC filing)
+Apple announced an executive change. (SEC filing)
+Apple signed a major agreement. (SEC filing)
+Apple completed an acquisition or sale. (SEC filing)
+No new SEC filings found
+No confirmed events found
+No additional price highlights
+Price facts in Plus
+Update delayed
+Not covered yet
+Market closed today
+Checked 7:30 AM ET · SEC filings
+Sign in to get today's summary
+Summary arrives tomorrow morning
+Free plan can swap stocks 3 times a day. Plus has no limit.
+# 단어 수 경계: 15단어는 통과, 줄 끝 출처 꼬리표와 +N more는 세지 않는다
+Apple announced its board of directors elected a new chair at the annual shareholder meeting (Company)
+Apple announced its board of directors elected a new chair at the annual shareholder meeting (SEC filing)
+Microsoft announced its board of directors elected a new chair at the annual meeting +2 more (Company)
+# 두 번째·세 번째 줄 템플릿, 출처 범위, 레버리지 태그 (#4)
+Earnings Tue 10/13 before open (D-0)
+Earnings Thu 10/15 (est.) (D-2)
+Earnings Thu 10/15 after close (est.) (D-2)
+Ex-dividend 10/14 · $0.51/share
+Ex-dividend 12/21 · $0.0046/share
+Ex-dividend 12/21 · <$0.0001/share
+Down 5 days in a row
+At 52-week high
+At 52-week low
+2.0% below 52-week high
+25.0% above 52-week low
+3x · resets daily
+−3x inverse · resets daily
+1.5x · resets daily
+Earnings and dividend calendar
+Daily prices
+# 첫 번째 줄 출처 범위, 코드가 조립한 첫 번째 줄 모양(문장 + +N more + 꼬리표) (#6)
+SEC filings
+Apple reported Q4 revenue of $102.5B +2 more (SEC filing)
+# ---- 카드 문장이 아닌 검사기 경계 예시 ----
+# 아래 줄은 출처 꼬리표·전문용어 규칙과 관계없이 검사기의 단어 경계·값 표기 판정만 확인한다. 카드 문구 예시로 쓰지 않는다
+# 금지어와 비슷한 다른 단어(seller)
+Intel named a new seller of chips
+# 서식·항목 이름은 값이 아니다(F5, #22). 검사기는 통과시키지만 카드 문장에는 쓰지 않는다(전문용어, 출처는 꼬리표로. 2026-10-20 결정)
+Apple filed an 8-K report. (SEC filing)
+Apple filed an 8-K with Q3 revenue of $94B (SEC filing)
+Apple filed an 8-K/A with Q3 revenue of $94B (SEC filing)
+Apple filed a 10-Q with Q3 revenue of $94B (SEC filing)
+Apple filed Item 2.02 with Q3 revenue of $94B (SEC filing)
+# 한국어 권유 표현과 글자가 겹치는 정상 문장(#22)
+너도 사랑해
+그분은 의사세요
+애플이 새 아이폰을 발표했다

@@ -1,0 +1,34 @@
+{
+  "coverage": [
+    {"ticker": "AAPL", "name": "Apple Inc."},
+    {"ticker": "JPM", "name": "JPMorgan Chase & Co."},
+    {"ticker": "KO", "name": "The Coca-Cola Company"},
+    {"ticker": "MSFT", "name": "Microsoft Corporation"},
+    {"ticker": "NVDA", "name": "NVIDIA Corporation"},
+    {"ticker": "PFE", "name": "Pfizer Inc."},
+    {"ticker": "SPY", "name": "SPDR S&P 500 ETF Trust"},
+    {"ticker": "SQQQ", "name": "ProShares UltraPro Short QQQ", "leverage": -3},
+    {"ticker": "TQQQ", "name": "ProShares UltraPro QQQ", "leverage": 3},
+    {"ticker": "XOM", "name": "Exxon Mobil Corporation"}
+  ],
+  "prices": {},
+  "events": {
+    "AAPL": [
+      {"kind": "earnings", "day": "2026-10-15", "confirmed": true, "timing": "after_close"},
+      {"kind": "ex_dividend", "day": "2026-11-09", "amount": 0.26}
+    ],
+    "MSFT": [{"kind": "earnings", "day": "2026-10-15", "confirmed": false, "timing": null}],
+    "KO": [
+      {"kind": "earnings", "day": "2026-10-20", "confirmed": true, "timing": "before_open"},
+      {"kind": "ex_dividend", "day": "2026-10-14", "amount": 0.51}
+    ],
+    "JPM": [{"kind": "earnings", "day": "2026-10-13", "confirmed": true, "timing": "before_open"}],
+    "XOM": [
+      {"kind": "ex_dividend", "day": "2026-10-16", "amount": 0.99},
+      {"kind": "earnings", "day": "2026-10-16", "confirmed": true, "timing": "after_close"}
+    ],
+    "PFE": [],
+    "TQQQ": []
+  },
+  "failures": [{"source": "events", "subject": "NVDA", "error": "error"}]
+}

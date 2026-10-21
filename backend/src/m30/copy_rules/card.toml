@@ -1,0 +1,18 @@
+# card.toml
+# 카드 줄·시장 한눈에·아침 알림 금지어 (HANDOFF 3-3).
+# 카드 검사는 arena.toml의 always_banned도 함께 검사한다. 원형을 적는다.
+# 코드는 원형 뒤에 s·es·d·ed·ing이 붙은 형태, e로 끝나면 e를 뺀 ing(plunging), y로 끝나면 ies·ied(opportunities, rallied)를 잡는다.
+# 불규칙형은 따로 적어야 잡는다(sank). bought·sold는 못 잡는다
+banned = [
+  "buy", "sell", "should", "bullish", "bearish", "likely to rise", "upside",
+  "downside", "opportunity", "undervalued", "overvalued", "momentum",
+  "breakout", "rally ahead",
+]
+emotion_verbs = [
+  "soar", "plunge", "skyrocket", "crash", "tank",
+  "surge", "plummet", "rocket", "tumble", "slump", "spike", "jump",
+  "rally", "sink", "sank", "dive", "collapse", "explode", "nosedive",
+]
+# 첫 번째 줄 끝 출처 꼬리표 (card-copy-rules 1장 7번). 줄 끝의 "(Company)"·"(SEC filing)"만 단어·숫자 수에서 뺀다.
+# 그 외 줄 끝 괄호는 본문으로 센다. 출처가 늘면 여기에 더한다
+source_tags = ["Company", "SEC filing"]

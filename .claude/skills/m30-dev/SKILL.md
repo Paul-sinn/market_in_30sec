@@ -1,6 +1,6 @@
 ---
 name: m30-dev
-description: "30초 종목 리포트 앱(market_in_30sec) 개발 오케스트레이터. 기능 구현, 모듈 추가, 서버 파이프라인, iOS 화면, 아레나, 결제·Plus 잠금, 위젯, 관리 화면 작업을 architect·backend-dev·ios-dev·copy-reviewer·qa 에이전트에 나눠 맡긴다. '구현해줘', '만들어줘', '개발 다음 단계', 'HANDOFF 7장 N단계 진행', '이 기능 추가' 요청에 사용한다. 재실행, 다시 실행, 수정, 보완, '스펙만 다시', '검수만 다시', '이전 결과를 바탕으로 개선' 같은 후속 요청에도 사용한다. 단순 질문이나 문서만 고치는 일에는 쓰지 않는다."
+description: "30초 종목 리포트 앱(market_in_30sec) 개발 오케스트레이터. GitHub 티켓 하나를 받아 architect(시그니처 보완) → backend-dev·web-dev·ios-dev(TDD 구현) → qa·copy-reviewer(완료 기준·문구·보안 검증) 순서로 맡기고 결과를 티켓에 남긴다. '#N 구현해줘', '티켓 N번 진행', '다음 티켓', '구현해줘', '만들어줘', '이 기능 추가' 요청에 사용한다. 재실행, 다시 실행, 수정, 보완, '검수만 다시', 'qa만 다시', '이전 결과를 바탕으로 개선' 같은 후속 요청에도 사용한다. 스펙·티켓 작성(to-spec, to-tickets), 단순 질문, 문서만 고치는 일에는 쓰지 않는다."
 ---
 
 # m30-dev 오케스트레이터
@@ -9,101 +9,146 @@ description: "30초 종목 리포트 앱(market_in_30sec) 개발 오케스트레
 
 | 단계 | 실행 모드 | 선택 이유 |
 | --- | --- | --- |
-| 1. 작업 확정 | 메인이 직접 | 범위와 순서는 사용자와 맞춰야 한다 |
-| 2. 설계 | 서브에이전트 위임 (architect) | 결과(스펙) 한 번만 받으면 된다 |
-| 3. 구현 | 서브에이전트 위임 (backend-dev, ios-dev) | 서로 다른 디렉터리라 동시에 진행할 수 있다 |
-| 4. 검증 | 생성·검증 (copy-reviewer, qa) | 만든 에이전트와 다른 에이전트가 검사한다 |
+| 0~1. 티켓 확인·범위 확정 | 메인이 직접 | 선행 티켓·사용자 조치 여부는 사용자와 맞춰야 한다 |
+| 2. 시그니처 보완 | 서브에이전트 위임 (architect) | 결과(스펙) 한 번만 받으면 된다 |
+| 3. TDD 구현 | 서브에이전트 위임 (backend-dev, web-dev, ios-dev) | 서로 다른 디렉터리라 동시에 진행할 수 있다 |
+| 4. 검증 | 생성·검증 (qa, copy-reviewer) | 만든 에이전트와 다른 에이전트가 검사한다 |
 | 5. 수정 반복 | 서브에이전트 위임 | 지적 항목만 해당 구현자에게 다시 맡긴다 |
 
 메인은 직접 코드를 쓰지 않는다. 결정하고 배분하고 결과를 확인한다. 이유: 메인 맥락을 깨끗하게 유지하고, 모든 코드가 검증 단계를 거치게 하기 위해서다.
+
+**사용자에게 설명하는 방식:** 사용자는 프로덕션 경험이 없는 1인 개발자다(HANDOFF 9장). 단계를 시작할 때마다 "무엇을, 왜" 하는지 한국어 한 줄로 알린다. 전문 용어(테스트 입구·seam, frontier, RLS, 마이그레이션, 멱등 등)는 처음 나올 때 풀어서 쓴다. 이유: 사용자가 각 단계의 결과를 직접 판단하고 다음 결정을 내려야 하기 때문이다. 결정이 필요하면 추천안을 답처럼 쓰지 말고 AskUserQuestion으로 하나씩 묻는다.
+
+**자율 모드 (2026-10-20~, HANDOFF 7장):** 웹 MVP 단계에서는 묻지 않고 추천안으로 정한다. 정한 것은 티켓 코멘트·HANDOFF에 기록하고 보고에 한 줄씩 적어 사용자가 뒤집을 수 있게 한다. 검증 통과 후 커밋·push·티켓 닫기까지 진행하고 다음 티켓으로 간다(아래 6단계 3·4번의 "요청할 때만"을 대신한다). 키·비밀값 입력, 유료 구독, `/reload-plugins`처럼 사용자만 할 수 있는 일만 요청한다. 이유: 사용자가 빠르게 MVP를 만들어 직접 테스트하기를 원함.
 
 ## 에이전트 구성
 
 | 에이전트 | `subagent_type` | 모델 | 맡는 일 |
 | --- | --- | --- | --- |
-| 설계 | `architect` | opus | 스펙: 스키마, 시그니처, API 구조, 검증 커맨드 |
-| 서버 | `backend-dev` | opus | `backend/` 구현 + 테스트 |
+| 설계 | `architect` | opus | 티켓에 필요한 시그니처·스키마·API 구조만 보완 |
+| 서버 | `backend-dev` | opus | `backend/` TDD 구현 |
+| 웹 | `web-dev` | opus | `web/` 구현 + lint·테스트·빌드, 디자인은 `ui-ux-pro-max` |
 | 앱 | `ios-dev` | opus | `ios/` 구현 + 빌드 |
 | 문구 검수 | `copy-reviewer` | sonnet | 문장·프롬프트 규칙 검사, 읽기 전용 |
-| 통합 검증 | `qa` | sonnet | 테스트 실행, 서버↔앱 구조 대조, 읽기 전용 |
+| 통합 검증 | `qa` | sonnet | 테스트 실행, 완료 기준 대조, 보안 확인, 읽기 전용 |
 
 모두 `name` 없는 단발 호출이다. 다시 맡길 때는 이전 산출물 경로를 프롬프트에 적는다.
 
+**에이전트 정의를 고친 직후에는** 세션이 옛 정의를 쓰고 있다(정의는 세션 시작 때 읽힌다). 고친 정의로 돌리려면 사용자에게 `/reload-plugins` 또는 재시작을 요청한 뒤 시작한다.
+
 ## 작업 절차
 
-### 0단계: 기존 작업 확인
-1. `_workspace/`가 있는지 본다
-   - 없으면: 처음 실행. `_workspace/`를 만든다
-   - 있고 "검수만 다시", "스펙만 수정"처럼 일부 요청이면: 해당 단계만 다시 실행한다
-   - 있고 새 기능 요청이면: 기존 `_workspace/`를 `_workspace_{YYYYMMDD-HHMM}/`로 옮기고 새로 시작한다
-2. `GLOSSARY.md`, `docs/HANDOFF.md`, `docs/adr/`를 읽는다
+### 0단계: 티켓 확인
+1. 티켓 번호를 정한다
+   - 사용자가 번호를 줬으면 그 티켓
+   - "다음 티켓"이면 #1의 열린 하위 이슈 중 열린 선행 티켓이 없는 것(frontier)에서 가장 작은 번호:
+     `gh api repos/Paul-sinn/market_in_30sec/issues/1/sub_issues --paginate --jq '.[] | select(.state=="open" and .issue_dependencies_summary.blocked_by==0) | .number' | sort -n`
+2. 티켓을 읽는다: `gh issue view <N> --json title,body,labels,comments,state`. 부모 스펙 #1의 "개정 사항"도 읽는다
+3. 선행 티켓 확인: `gh api repos/Paul-sinn/market_in_30sec/issues/<N>/dependencies/blocked_by --jq '.[] | select(.state=="open") | .number'`. 열린 선행 티켓이 있으면 멈추고 사용자에게 알린다
+4. 라벨 확인: `ready-for-human`이면 사람이 해야 하는 부분(구독, 키 발급, 수동 기록)을 먼저 사용자에게 알리고, 에이전트가 할 수 있는 부분만 진행한다. `deferred`면 진행하지 않는다
+5. 작업 폴더: `_workspace/issue-{N}/`
+   - 없으면 만든다(처음 실행)
+   - 있고 "qa만 다시", "검수만 다시"처럼 일부 요청이면 해당 단계만 다시 실행한다
+   - 있고 처음부터 다시 하라는 요청이면 `_workspace/issue-{N}_{YYYYMMDD-HHMM}/`로 옮기고 새로 시작한다
+6. `GLOSSARY.md`, `docs/HANDOFF.md`(특히 3-10), `docs/adr/`를 읽는다
+7. 하네스가 최신 결정을 따르는지 확인한다. 결정 문서가 하네스보다 나중에 바뀌었으면, 구현 전에 사용자에게 하네스 점검(`harness:harness` 운영 절차)을 제안한다. 이유: 결정은 문서에서 바뀌는데 에이전트·스킬이 옛 기준으로 검증하면, 통과한 코드가 새 결정을 어긴다.
+   ```bash
+   d=$(git log -1 --format=%ct -- docs/HANDOFF.md docs/adr GLOSSARY.md)
+   h=$(git log -1 --format=%ct -- .claude CLAUDE.md)
+   if [ "$d" -gt "$h" ] || [ -n "$(git status --porcelain -- docs/HANDOFF.md docs/adr GLOSSARY.md)" ]; then echo "하네스 점검 제안"; fi
+   ```
 
-### 1단계: 작업 확정 (메인 직접)
-1. 요청을 HANDOFF 7장 개발 순서 중 어디에 해당하는지 정한다
-2. 이번에 할 범위를 1~3문장으로 정리해 사용자에게 확인받는다. 선택이 필요하면 AskUserQuestion으로 하나씩 묻는다
-3. HANDOFF에 ⏳(미정)으로 남은 결정에 걸리면 진행 전에 사용자에게 묻는다
-4. 산출물 번호 `{NN}`을 정한다 (`_workspace/`의 가장 큰 번호 + 1, 처음이면 01)
+### 1단계: 범위 확정 (메인 직접)
+1. 티켓의 완료 기준을 그대로 범위로 삼는다. 1~3문장으로 정리해 사용자에게 알리고 확인받는다. 선택이 필요하면 AskUserQuestion으로 하나씩 묻는다
+2. 완료 기준이 HANDOFF의 ⏳(미정) 결정에 걸리면 진행 전에 사용자에게 묻는다
+3. 필요한 환경을 확인한다: 로컬 Supabase(Docker + Supabase CLI), `uv`. 없으면 설치를 제안하고 사용자 확인 후 진행한다
+4. 산출물 번호 `{NN}`을 정한다(`_workspace/issue-{N}/`의 가장 큰 번호 + 1, 처음이면 01)
 
-### 2단계: 설계
-`Agent(subagent_type: "architect", prompt: <범위 + 관련 문서 경로 + 출력 경로 _workspace/{NN}_architect_spec.md>)`
+### 2단계: 시그니처 보완
+`Agent(subagent_type: "architect", prompt: <티켓 번호 + 완료 기준 + 스펙 #1 + 관련 기존 코드 경로 + 출력 경로 _workspace/issue-{N}/{NN}_architect_spec.md>)`
 
-스펙을 받으면 메인이 확인한다:
-- "사용자 결정 필요" 항목이 있으면 사용자에게 묻고 답을 넣어 architect를 다시 부른다
+- 티켓이 이미 기존 모듈 안의 작은 확장뿐이고 새 인터페이스·테이블이 없으면 이 단계를 건너뛰고, 건너뛴 이유를 보고에 적는다
+- "사용자 결정 필요"가 있으면 사용자에게 묻고 답을 넣어 다시 부른다
 - ADR 후보가 있으면 사용자에게 만들지 묻는다
-- 스펙 요약을 사용자에게 보여주고 구현 진행을 확인받는다
 
-### 3단계: 구현
-스펙이 서버와 앱을 둘 다 건드리면 한 메시지에서 두 Agent를 동시에 부른다. 한쪽만이면 하나만 부른다.
-
+### 3단계: TDD 구현
 | 에이전트 | 입력 | 산출물 |
 | --- | --- | --- |
-| `backend-dev` | `_workspace/{NN}_architect_spec.md` | `backend/…`, `_workspace/{NN}_backend-dev_report.md` |
-| `ios-dev` | `_workspace/{NN}_architect_spec.md` | `ios/…`, `_workspace/{NN}_ios-dev_report.md` |
+| `backend-dev` | 티켓 번호, `_workspace/issue-{N}/{NN}_architect_spec.md` | `backend/…`, `_workspace/issue-{N}/{NN}_backend-dev_report.md` |
+| `web-dev` | 티켓 번호, 스펙 | `web/…`, `_workspace/issue-{N}/{NN}_web-dev_report.md` |
+| `ios-dev` | 티켓 번호, 스펙 | `ios/…`, `_workspace/issue-{N}/{NN}_ios-dev_report.md` |
 
-완료 알림을 기다린다. 메인이 같은 작업을 다시 하지 않는다.
+티켓이 서버와 앱을 둘 다 건드리면 한 메시지에서 두 Agent를 동시에 부른다. 완료 알림을 기다린다. 메인이 같은 작업을 다시 하지 않는다.
 
 ### 4단계: 검증
 구현이 끝나면 한 메시지에서 동시에 부른다:
-- `qa`: 스펙 + 구현 보고 → `_workspace/{NN}_qa_report.md`
-- `copy-reviewer`: 이번 작업에 LLM 프롬프트, 템플릿 문구, 화면 문구, 알림 문구가 포함됐을 때만 → `_workspace/{NN}_copy-reviewer_review.md`
+- `qa`: 티켓 번호 + 스펙 + 구현 보고 → `_workspace/issue-{N}/{NN}_qa_report.md`
+- `copy-reviewer`: 이번 작업에 LLM 프롬프트, 템플릿·상태 문구, 화면 문구, 알림 문구가 포함됐을 때만 → `_workspace/issue-{N}/{NN}_copy-reviewer_review.md`
 
 ### 5단계: 수정 반복
 - qa 실패나 copy-reviewer 위반이 있으면 해당 구현 에이전트에게 지적 파일 경로를 넘겨 다시 맡기고, 4단계를 다시 실행한다
 - 최대 3회 반복한다. 3회 후에도 남으면 남은 항목을 정리해 사용자에게 보고하고 멈춘다
-- copy-reviewer의 `보류` 항목은 반복 대상이 아니다. 사용자에게 판단을 묻는다
+- copy-reviewer의 `보류`와 qa의 `판정 불가`는 반복 대상이 아니다. 사용자에게 판단을 묻는다
 
 ### 6단계: 마무리
-1. 사용자에게 보고: 무엇을 만들었는지, 검증 결과(통과·실패 그대로), 남은 문제, 사용자가 해야 할 일
-2. 커밋은 사용자가 요청할 때만 한다. 커밋 메시지에 Claude Co-Authored-By 줄을 넣지 않는다
-3. 새로 정해진 용어는 `GLOSSARY.md`, 바뀐 결정은 `docs/HANDOFF.md`에 반영한다
-4. 실수나 실패가 있었으면 `CLAUDE.md`의 실수 기록에 한 줄 남긴다
+1. 사용자에게 보고: 무엇을 만들었는지, 완료 기준 대조 결과(통과·실패·실행 못 함 그대로), 남은 문제, 사용자가 해야 할 일. 위 "사용자에게 설명하는 방식"을 따른다
+2. 티켓에 결과 코멘트를 남긴다: 완료 기준 대조표 요약, 실행한 테스트 커맨드와 결과, 남은 문제. 비밀값·내부 경로 외 정보만
+3. 커밋·push는 사용자가 요청할 때만 한다. 커밋 메시지에 Claude Co-Authored-By 줄을 넣지 않는다. 커밋 전에 gitleaks(설치돼 있으면)나 qa의 비밀값 검색이 통과해야 한다
+4. 티켓 닫기는 사용자가 결과를 확인하고 요청할 때만 한다
+5. 새로 정해진 용어는 `GLOSSARY.md`, 바뀐 결정은 `docs/HANDOFF.md`에 반영한다
+6. 실수나 실패가 있었으면 `CLAUDE.md`의 실수 기록에 한 줄 남긴다
+
+## 원격 Supabase
+
+CLAUDE.md의 "원격 Supabase 규칙"을 따른다. 에이전트는 원격에 쓰지 않는다. 마이그레이션의 원격 적용은 메인이 로컬 테스트 통과를 확인하고 사용자 확인을 받은 뒤 Supabase MCP로 한다.
 
 ## 데이터 전달
 
-- 모든 중간 산출물은 `_workspace/{NN}_{agent}_{artifact}.md`
-- 에이전트 프롬프트에는 읽을 파일 경로를 전부 적는다. 서브에이전트는 이 대화를 모른다
-- 최종 산출물은 `backend/`, `ios/`, `docs/`에만 둔다
+- 모든 중간 산출물은 `_workspace/issue-{N}/{NN}_{agent}_{artifact}.md`
+- qa·copy-reviewer는 Write 도구가 없다. 보고서 파일을 못 썼으면 답변으로 받은 전문을 메인이 그 경로에 그대로 저장한다(요약·수정 없이, 저장했다는 머리말 한 줄만). 이유: #3에서 qa가 파일을 못 써 보고서가 답변에만 남았고, 다음 단계 에이전트는 파일 경로로만 읽는다
+- 에이전트 프롬프트에는 티켓 번호와 읽을 파일 경로를 전부 적는다. 서브에이전트는 이 대화를 모른다
+- 임시 파일·변이 복사본은 에이전트마다 scratchpad 아래 자기 폴더(`<agent>-<티켓>/`, 예: `qa-6/`)에만 둔다. 프롬프트에 그 경로를 적는다. 이유: 동시에 도는 에이전트가 같은 scratchpad에서 서로의 스크립트를 덮어쓰고 지웠다(#6)
+- 최종 산출물은 `backend/`, `web/`, `ios/`, `docs/`, `.github/workflows/`에만 둔다
+
+## Vercel 배포
+
+배포·환경 변수 설정은 메인이 Vercel MCP로 한다(에이전트는 배포하지 않는다). 비밀값은 사용자가 Vercel에 직접 넣는다. 배포 보호 없이 공개 배포하지 않는다(1단계는 비공개 대시보드).
 
 ## 오류 처리
 
 - 에이전트가 실패하면 한 번 다시 맡긴다. 또 실패하면 누락 사실을 보고에 적고 진행 여부를 사용자에게 묻는다
-- 사용량 한도 소진, 인증 만료, 권한 거부는 다시 시도하지 않는다. 부분 산출물을 직접 열어 어디까지 됐는지 확인하고 `_workspace/{NN}_orchestrator_incident.md`에 적은 뒤 보고한다. 한도라면 풀리는 시각도 알린다
-- 에이전트가 "사용자 조치 필요"로 멈추면 그 내용을 그대로 사용자에게 전달하고 멈춘다 (API 키, Apple 계정, Supabase 설정 등)
+- 사용량 한도 소진, 인증 만료(`gh`, Supabase), 권한 거부는 다시 시도하지 않는다. 부분 산출물을 직접 열어 어디까지 됐는지 확인하고 `_workspace/issue-{N}/{NN}_orchestrator_incident.md`에 적은 뒤 보고한다. 한도라면 풀리는 시각도 알린다
+- 에이전트가 "사용자 조치 필요"로 멈추면 그 내용을 그대로 사용자에게 전달하고 멈춘다(API 키, 벤더 구독, Apple 계정, Docker·Supabase CLI 등)
 - 멈춘 에이전트의 빈자리는 메인이 직접 확인한 사실로만 채운다. 에이전트의 판단을 추측해 쓰지 않는다
 
 ## 테스트 시나리오
 
 ### 정상 흐름
-요청: "HANDOFF 7장 2단계 진행해줘 — 데이터 어댑터랑 Supabase 스키마"
-1. 0단계: `_workspace/` 없음 → 생성
-2. 1단계: 범위 = 시세·EDGAR·지표 일정 어댑터 인터페이스 + fake, Supabase 스키마. 사용자 확인
-3. 2단계: architect → `_workspace/01_architect_spec.md`. 스펙에 `MyStocks` 추가·삭제 이력 테이블 포함 확인
-4. 3단계: backend-dev만 호출 (iOS 영향 없음)
-5. 4단계: qa만 호출 (문구 없음) → 통과
-6. 6단계: 보고
+요청: "#2 구현해줘"
+1. 0단계: #2 선행 없음, `ready-for-agent`. `_workspace/issue-2/` 생성
+2. 1단계: 범위 = #2 완료 기준(뼈대, 첫 카드, 줄마다 데이터 상태, RLS 꺼진 테이블 0개 등). Docker·Supabase CLI 확인
+3. 2단계: architect → `_workspace/issue-2/01_architect_spec.md` (저장소 공개 읽기 함수, 카드 테이블, 마이그레이션 구조)
+4. 3단계: backend-dev만 호출. 완료 기준마다 실패 테스트 → 최소 코드
+5. 4단계: qa만 호출(문구 없음) → 완료 기준 대조표 전부 통과, 보안 확인 통과
+6. 6단계: 보고 + #2에 결과 코멘트. 커밋·티켓 닫기는 사용자 요청 대기
 
-### 오류 흐름
-요청: "첫 번째 줄 생성 구현해줘"
-1. 2~3단계 진행 후 4단계에서 copy-reviewer가 프롬프트 예시 출력의 "Tesla shares soared" 위반 보고
-2. 5단계: backend-dev에게 `_workspace/03_copy-reviewer_review.md` 넘겨 재작업 → 다시 검수 → 통과
-3. qa가 `.env`에 `ANTHROPIC_API_KEY` 없음으로 live 테스트를 실행하지 못했다고 보고 → 실행 못 한 항목으로 사용자에게 그대로 보고 (통과로 쓰지 않음)
+### 오류 흐름 1 — 선행 티켓이 열려 있음
+요청: "#7 구현해줘" (선행 #3, #6이 열려 있음)
+1. 0단계에서 열린 선행 #3, #6을 찾고 멈춘다
+2. "#7은 #3, #6이 끝나야 시작할 수 있다. 지금 시작 가능한 티켓: …"을 보고한다
+
+### 오류 흐름 2 — 사람이 할 일이 있는 티켓
+요청: "#18 진행해줘" (`ready-for-human`)
+1. 0단계에서 "벤더 구독·키 발급은 Paul이 해야 한다"를 먼저 알린다
+2. 에이전트가 할 수 있는 벤더 약관·조정가 확인 문서와 실제 어댑터의 테스트(녹화 응답 기준)까지 진행한다
+3. 키가 없어 live 테스트를 못 돌렸으면 qa 보고에 "실행 못 함"으로 남고, 통과로 쓰지 않는다
+
+### 오류 흐름 3 — 하네스가 옛 기준
+요청: "#4 구현해줘" (직전에 HANDOFF 3-3의 데이터 상태 문구가 바뀌었고 하네스는 그대로)
+1. 0단계 7번 확인에서 "하네스 점검 제안"이 나온다
+2. 구현을 시작하지 않고 "결정 문서가 하네스보다 새롭다. 바뀐 결정: … 점검 후 진행할까?"를 묻는다
+
+### 오류 흐름 4 — 검수 위반
+요청: "#6 구현해줘"
+1. 4단계에서 copy-reviewer가 프롬프트 예시 출력의 "Tesla shares soared" 위반 보고
+2. 5단계: backend-dev에게 `_workspace/issue-6/03_copy-reviewer_review.md`를 넘겨 재작업 → 다시 검수 → 통과

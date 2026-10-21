@@ -1,0 +1,68 @@
+"""LLM 프로토콜의 실제 Anthropic 구현. 표준 라이브러리만 쓴다. 재시도는 하지 않는다(SourceCalls가 한다). 캐시 표시·토큰 수는 #14.
+
+키 노출 방지(2026-10-18 DB 비밀번호 사고와 같은 교훈): 키는 LLMSettings(repr 숨김) 안에만 있다. 헤더는 요청을 만드는
+도우미 안에서만 만들고, 예외가 올라가는 complete 프레임의 지역 변수에 키·헤더를 두지 않는다(pytest --showlocals가 찍는다).
+모든 실패는 상태만 담은 메시지로 from None — 원래 예외(urllib 프레임에 요청 헤더가 있다)를 끊는다."""
+
+import http.client
+import json
+import urllib.error
+import urllib.request
+
+from m30.adapters import AccessDeniedError, SourceError, TransientSourceError
+from m30.config import LLMSettings
+from m30.llm import LLMRequest
+
+API_URL = "https://api.anthropic.com/v1/messages"
+API_VERSION = "2023-06-01"
+
+
+def error_for_status(status: int) -> SourceError:
+    """401·403 → AccessDeniedError, 429·500~599(529 포함) → TransientSourceError, 그 외 → SourceError."""
+    message = f"anthropic http {status}"
+    if status in (401, 403):
+        return AccessDeniedError(message)
+    if status == 429 or 500 <= status <= 599:
+        return TransientSourceError(message)
+    return SourceError(message)
+
+
+class AnthropicLLM:
+    def __init__(self, settings: LLMSettings, *, url: str = API_URL, timeout: float = 30.0) -> None:
+        if not url.startswith("https://"):  # HANDOFF 3-7: 외부 요청은 HTTPS. 키를 평문으로 보내지 않는다
+            raise ValueError("url must start with https://")
+        self._settings = settings
+        self._url = url
+        self._timeout = timeout
+
+    def complete(self, request: LLMRequest) -> str:
+        """응답의 text 블록을 이어 붙인 텍스트. 실패: 401·403 → AccessDeniedError, 429·5xx·타임아웃·접속 실패 →
+        TransientSourceError, 그 밖의 HTTP 오류·이상한 응답 → SourceError."""
+        try:
+            with urllib.request.urlopen(self._http_request(request), timeout=self._timeout) as response:
+                body = response.read()
+        except urllib.error.HTTPError as e:  # URLError의 하위 클래스라 먼저 받는다
+            raise error_for_status(e.code) from None
+        except TimeoutError:
+            raise TransientSourceError("anthropic timeout") from None
+        except (urllib.error.URLError, OSError, http.client.HTTPException):  # 접속 실패·응답 도중 끊김
+            raise TransientSourceError("anthropic connection failed") from None
+        try:
+            return "".join(block["text"] for block in json.loads(body)["content"] if block["type"] == "text")
+        except (ValueError, KeyError, TypeError):
+            raise SourceError("anthropic response shape") from None
+
+    def _http_request(self, request: LLMRequest) -> urllib.request.Request:
+        """헤더(키 포함)는 이 프레임 안에서만 만든다. Request의 repr에는 헤더가 없다."""
+        payload = {
+            "model": request.model,
+            "max_tokens": request.max_tokens,
+            "system": request.system,
+            "messages": [{"role": "user", "content": request.user}],
+        }
+        return urllib.request.Request(
+            self._url,
+            data=json.dumps(payload).encode(),
+            headers={"x-api-key": self._settings.api_key, "anthropic-version": API_VERSION, "content-type": "application/json"},
+            method="POST",
+        )
