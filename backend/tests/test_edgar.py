@@ -2,7 +2,9 @@
 
 tests/edgar_responses/의 파일은 실제 녹화가 아니다. SEC 공개 문서를 기억에 기대어 손으로 만든 모양이다(스펙 #19 가정 A1~A5).
 live(tests/test_edgar_live.py)가 실제 응답과 맞는지 확인하고, 틀리면 이 파일들과 파싱을 함께 고친다.
-- A1: acceptanceDateTime("2026-10-15T16:30:12.000Z")의 숫자는 동부 벽시계 시각이다. 끝의 Z는 UTC가 아니다
+- A1(2026-10-21 live로 확인·수정): 실제 접수 시각은 전체 제출 파일 SEC-HEADER의 <ACCEPTANCE-DATETIME>YYYYMMDDHHMMSS이고 동부
+  벽시계다. submissions의 acceptanceDateTime은 그 값 + 정확히 8시간에 Z(20260730163028 → "2026-07-31T00:30:28.000Z")라 동부도
+  진짜 UTC도 아니다 → 후보 고르기에만 쓴다(기간 앞뒤 12시간). fixture의 acceptanceDateTime은 이 관측 모양이다
 - A2: submissions JSON = 맨 위 cik(앞 0 없는 문자열), filings.recent의 같은 길이 열 배열
   accessionNumber·form·acceptanceDateTime·items("2.02,9.01", 없으면 "")·reportDate("YYYY-MM-DD", 없으면 "")
 - A3: company_tickers.json = {"0": {"cik_str": 320193, "ticker": "AAPL", "title": "Apple Inc."}, …} (cik_str는 정수)
@@ -67,6 +69,16 @@ class RecordedGet:
 
 def recorded(name):
     return (RESPONSES / name).read_bytes()
+
+
+def submission_file(accession, accepted, item="8.01 Other Events"):
+    """손으로 만든 최소 전체 제출 파일: SEC-HEADER(접수 시각 = 동부 벽시계 YYYYMMDDHHMMSS) + 8-K 본문 하나."""
+    return (
+        f"<SEC-DOCUMENT>{accession}.txt : {accepted[:8]}\n<SEC-HEADER>{accession}.hdr.sgml : {accepted[:8]}\n"
+        f"<ACCEPTANCE-DATETIME>{accepted}\nACCESSION NUMBER:\t\t{accession}\nCONFORMED SUBMISSION TYPE:\t8-K\n</SEC-HEADER>\n"
+        f"<DOCUMENT>\n<TYPE>8-K\n<SEQUENCE>1\n<FILENAME>d8k.htm\n<DESCRIPTION>8-K\n<TEXT>\n"
+        f"<html><body><p>Item {item}.</p></body></html>\n</TEXT>\n</DOCUMENT>\n</SEC-DOCUMENT>\n"
+    ).encode()
 
 
 def test_SEC_User_Agent는_SEC_USER_AGENT_환경_변수에서만_읽는다():
@@ -340,7 +352,17 @@ def sec_responses(**changes):
         txt_url(100): bad_bytes(recorded("0000320193-26-000100.txt")),
         txt_url(101): recorded("0000320193-26-000101.txt"),
         txt_url(102): recorded("0000320193-26-000102.txt"),
+        # submissions 시각으로는 후보(기간 앞뒤 12시간)지만 헤더 시각으로는 기간 밖: 받고 버린다
+        txt_url(104): submission_file("0000320193-26-000104", "20261015035959"),  # 시작 1초 전
+        txt_url(105): submission_file("0000320193-26-000105", "20261016040000", "7.01 Regulation FD Disclosure"),  # = 끝
     } | changes
+
+
+def with_rows(*rows):
+    """AAPL submissions의 filings.recent를 rows로 바꾼다. row = (accessionNumber, form, acceptanceDateTime, items, reportDate)."""
+    data = json.loads(recorded("CIK0000320193.json"))
+    data["filings"]["recent"] = {name: [row[i] for row in rows] for i, name in enumerate(edgar.RECENT_COLUMNS)}
+    return json.dumps(data).encode()
 
 
 def run_edgar(store, get, day=FRI):
@@ -364,18 +386,97 @@ def saved(admin, column):
     return dict(admin.execute(f"select accession, {column} from public.sec_filing order by accession").fetchall())
 
 
-def test_공시_기간_안에_접수한_8_K·8_K_A만_받고_접수_시각은_EDGAR_동부_벽시계_시각이다(store, admin):
+def test_후보는_submissions_시각으로_넓게_고르고_접수_시각은_SEC_HEADER의_동부_시각으로_정확히_거른다(store, admin):
     get = RecordedGet(sec_responses())
 
     run_edgar(store, get)
 
-    # 기간 밖(03:59:59, 끝 04:00)·서식 4·8-K12B는 전체 제출 파일을 받지 않는다. CIK마다 submissions 한 번(GOOGL·GOOG 같은 CIK)
-    assert get.urls == [AAPL_SUBMISSIONS, txt_url(102), txt_url(101), txt_url(100), GOOGL_SUBMISSIONS]
-    assert saved(admin, "accepted_at") == {
+    # 후보 = submissions 시각이 기간 앞뒤 12시간 안인 8-K·8-K/A(서식 4·8-K12B는 받지 않는다). CIK마다 submissions 한 번
+    assert get.urls == [AAPL_SUBMISSIONS, txt_url(105), txt_url(102), txt_url(101), txt_url(100), txt_url(104), GOOGL_SUBMISSIONS]
+    assert saved(admin, "accepted_at") == {  # 헤더 시각으로 다시 거른 결과. 104(03:59:59)·105(끝 04:00)는 버렸다
         "0000320193-26-000100": datetime(2026, 10, 15, 4, 0, tzinfo=ET),  # = 기간 시작, 포함
-        "0000320193-26-000101": datetime(2026, 10, 15, 16, 30, 12, tzinfo=ET),  # "…T16:30:12.000Z"를 UTC로 읽지 않는다
+        "0000320193-26-000101": datetime(2026, 10, 15, 16, 30, 12, tzinfo=ET),  # JSON "2026-10-16T00:30:12.000Z"가 아니다
         "0000320193-26-000102": datetime(2026, 10, 15, 17, 5, tzinfo=ET),
     }
+
+
+def test_넓힌_후보_창에만_든_공시는_쓸_문서가_없어도_CIK를_지연시키지_않는다(store):
+    # 104(헤더 03:59:59)가 그림·PDF뿐이어도 기간 밖이라 버린다. 남기면 빈 원본이 그 CIK 전체를 invalid_data로 만든다
+    pdf_only = submission_file("0000320193-26-000104", "20261015035959").replace(b"<FILENAME>d8k.htm", b"<FILENAME>d8k.pdf")
+
+    ran = run_edgar(store, RecordedGet(sec_responses(**{txt_url(104): pdf_only})))
+
+    assert [f for f in ran.summary.failures if f.source is Source.SEC_FILINGS] == []
+    assert sorted(store.list_raw_filings(FRI)) == ["0000320193-26-000100", "0000320193-26-000101", "0000320193-26-000102"]
+
+
+@pytest.mark.parametrize(
+    "listed, header, kept",
+    [
+        # submissions 시각 = 기간 시작 - 12시간(10-14 16:00 EDT)
+        ("2026-10-14T20:00:00.000Z", "20261015040000", datetime(2026, 10, 15, 4, 0, tzinfo=ET)),
+        ("2026-10-14T19:59:59.000Z", "20261015040000", None),  # 그보다 1초 앞: 후보 아님
+        # 기간 끝 + 12시간(10-16 16:00 EDT) 1초 전
+        ("2026-10-16T19:59:59.000Z", "20261016035959", datetime(2026, 10, 16, 3, 59, 59, tzinfo=ET)),
+        ("2026-10-16T20:00:00.000Z", "20261016035959", None),  # = 기간 끝 + 12시간: 후보 아님
+    ],
+    ids=["start_margin", "before_margin", "end_margin", "after_margin"],
+)
+def test_후보는_submissions_시각이_기간_앞뒤_12시간_안인_공시다(store, admin, listed, header, kept):
+    row = ("0000320193-26-000108", "8-K", listed, "8.01", "")
+    get = RecordedGet(sec_responses(**{
+        AAPL_SUBMISSIONS: with_rows(row), txt_url(108): submission_file("0000320193-26-000108", header),
+    }))
+
+    run_edgar(store, get)
+
+    assert (txt_url(108) in get.urls) is (kept is not None)
+    assert saved(admin, "accepted_at") == ({} if kept is None else {"0000320193-26-000108": kept})
+
+
+def test_동부_20시_뒤_저녁_공시는_다음_거래일_카드에_들어간다(store, admin):
+    # 목요일 20:30 ET 접수. submissions 값(금요일 04:30에 Z)을 동부로 읽으면 금요일 카드 기간 밖이라 월요일 카드로 밀린다
+    evening = ("0000320193-26-000107", "8-K", "2026-10-16T04:30:00.000Z", "8.01", "")
+    get = RecordedGet(sec_responses(**{
+        AAPL_SUBMISSIONS: with_rows(evening),
+        txt_url(107): submission_file("0000320193-26-000107", "20261015203000"),
+    }))
+
+    run_edgar(store, get)
+
+    assert saved(admin, "accepted_at") == {"0000320193-26-000107": datetime(2026, 10, 15, 20, 30, tzinfo=ET)}
+    assert saved(admin, "trading_day") == {"0000320193-26-000107": FRI}
+
+
+@pytest.mark.parametrize(
+    "day, rows, kept",
+    [
+        (  # 서머타임 끝(11-01): 기간 [금 10-30 04:00 EDT, 월 11-02 04:00 EST)
+            date(2026, 11, 2),
+            [(201, "20261030035959", "2026-10-30T11:59:59.000Z"), (202, "20261030040000", "2026-10-30T12:00:00.000Z"),
+             (203, "20261102035959", "2026-11-02T11:59:59.000Z"), (204, "20261102040000", "2026-11-02T12:00:00.000Z")],
+            {"0000320193-26-000202": datetime(2026, 10, 30, 4, 0, tzinfo=ET),  # UTC-4
+             "0000320193-26-000203": datetime(2026, 11, 2, 3, 59, 59, tzinfo=ET)},  # UTC-5
+        ),
+        (  # 서머타임 시작(03-08): 기간 [금 03-06 04:00 EST, 월 03-09 04:00 EDT)
+            date(2026, 3, 9),
+            [(301, "20260306035959", "2026-03-06T11:59:59.000Z"), (302, "20260306040000", "2026-03-06T12:00:00.000Z"),
+             (303, "20260309035959", "2026-03-09T11:59:59.000Z"), (304, "20260309040000", "2026-03-09T12:00:00.000Z")],
+            {"0000320193-26-000302": datetime(2026, 3, 6, 4, 0, tzinfo=ET),  # UTC-5
+             "0000320193-26-000303": datetime(2026, 3, 9, 3, 59, 59, tzinfo=ET)},  # UTC-4
+        ),
+    ],
+    ids=["dst_ends", "dst_starts"],
+)
+def test_서머타임이_바뀌는_주말에도_04시_경계는_동부_벽시계로_정확하다(store, admin, day, rows, kept):
+    responses = {AAPL_SUBMISSIONS: with_rows(*[(f"0000320193-26-000{n}", "8-K", listed, "8.01", "") for n, _, listed in rows])}
+    responses |= {txt_url(n): submission_file(f"0000320193-26-000{n}", header) for n, header, _ in rows}
+    get = RecordedGet(sec_responses(**responses))
+
+    run_edgar(store, get, day)
+
+    assert get.urls.count(txt_url(rows[0][0])) == 1 and get.urls.count(txt_url(rows[-1][0])) == 1  # 경계 밖 둘도 후보로 받았다
+    assert saved(admin, "accepted_at") == kept
 
 
 def test_보고_기준일은_EDGAR_reportDate이고_비어_있으면_없음이다(store, admin):
@@ -385,12 +486,6 @@ def test_보고_기준일은_EDGAR_reportDate이고_비어_있으면_없음이�
     assert saved(admin, "report_date") == {
         "0000320193-26-000100": None, "0000320193-26-000101": date(2026, 10, 15), "0000320193-26-000102": date(2026, 10, 1),
     }
-
-
-@pytest.mark.parametrize("value", ["2026-10-15T16:30:12.000Z", "2026-10-15T16:30:12", "2026-10-15T20:30:12+00:00"])
-def test_접수_시각은_Z를_UTC로_읽지_않고_명시적_오프셋은_따른다(value):
-    assert edgar._accepted_at(value) == datetime(2026, 10, 15, 16, 30, 12, tzinfo=ET)
-    assert edgar._accepted_at(value).utcoffset() is not None
 
 
 def test_같은_CIK의_티커_둘은_submissions를_한_번_받고_CIK_없는_ETF는_미지원이다(store):
@@ -503,8 +598,8 @@ def test_SEC_429는_다시_시도해_성공해도_실행_요약에_남는다(sto
     assert ran.summary.access_denied == ()
     assert ran.sleeps == [1.0]
     # 공시 파일 하나가 일시 실패하면 그 CIK를 처음부터 다시 받는다(다시 시도는 SourceCalls가 CIK 단위로)
-    assert get.urls == [AAPL_SUBMISSIONS, txt_url(102), txt_url(101),
-                        AAPL_SUBMISSIONS, txt_url(102), txt_url(101), txt_url(100), GOOGL_SUBMISSIONS]
+    assert get.urls == [AAPL_SUBMISSIONS, txt_url(105), txt_url(102), txt_url(101),
+                        AAPL_SUBMISSIONS, txt_url(105), txt_url(102), txt_url(101), txt_url(100), txt_url(104), GOOGL_SUBMISSIONS]
     assert ran.summary.failures == (SourceFailure(Source.LLM, "1", FailureReason.ERROR),)  # SEC 실패는 없다(LLM은 일부러 실패)
     assert len(store.list_raw_filings(FRI)) == 3
 
@@ -561,15 +656,32 @@ def test_쓸_문서_없이_SEC_HEADER뿐인_공시는_그_CIK를_지연시키고
     assert store.list_raw_filings(FRI) == {}
 
 
-def test_SEC_HEADER가_없는_응답도_문서_구간만으로_저장한다(store):
-    earnings = recorded("0000320193-26-000101.txt").decode()
-    headerless = earnings[: earnings.index("<SEC-HEADER>")] + earnings[earnings.index("</SEC-HEADER>\n") + len("</SEC-HEADER>\n"):]
+def without(text, start, end):
+    """text에서 start부터 end(포함)까지 지운다."""
+    return text[: text.index(start)] + text[text.index(end) + len(end):]
 
-    run_edgar(store, RecordedGet(sec_responses(**{txt_url(101): headerless.encode()})))
 
-    start = headerless.index("<DOCUMENT>")
-    end = headerless.index("</DOCUMENT>", headerless.index("<TYPE>EX-99.2")) + len("</DOCUMENT>")
-    assert store.list_raw_filings(FRI)["0000320193-26-000101"] == headerless[start:end]
+EARNINGS_TXT = recorded("0000320193-26-000101.txt").decode()
+
+
+@pytest.mark.parametrize(
+    "earnings",
+    [
+        without(EARNINGS_TXT, "<ACCEPTANCE-DATETIME>", "163012\n"),  # 헤더에 접수 시각 줄이 없다
+        EARNINGS_TXT.replace("<ACCEPTANCE-DATETIME>20261015163012", "<ACCEPTANCE-DATETIME>20261315163012"),  # 13월
+        EARNINGS_TXT.replace("<ACCEPTANCE-DATETIME>20261015163012", "<ACCEPTANCE-DATETIME>2026101516"),  # 자릿수 모자람
+        without(EARNINGS_TXT, "<SEC-HEADER>", "</SEC-HEADER>\n"),  # 헤더가 없다
+    ],
+    ids=["no_time", "bad_month", "short", "no_header"],
+)
+def test_헤더_접수_시각이_없거나_틀린_공시는_어느_카드인지_정할_수_없어_그_CIK를_지연시킨다(store, earnings):
+    ran = run_edgar(store, RecordedGet(sec_responses(**{txt_url(101): earnings.encode()})))
+
+    assert [f for f in ran.summary.failures if f.source is Source.SEC_FILINGS] == [
+        SourceFailure(Source.SEC_FILINGS, AAPL_CIK, FailureReason.ERROR)
+    ]
+    assert ran.summary.news["AAPL"].status is LineStatus.DELAYED
+    assert store.list_raw_filings(FRI) == {}
 
 
 def test_Exhibit_99가_아닌_HTML_첨부는_원본에도_본문에도_넣지_않는다(store):

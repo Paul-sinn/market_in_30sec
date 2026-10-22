@@ -49,15 +49,17 @@ def test_실제_EDGAR에서_실험_종목_CIK와_Apple_실적_8_K를_가정대�
     etfs_empty = all(coverage[t] is None for t in EXPERIMENT_ETFS)
     valid = valid_filings(filings, AAPL_CIK)
     in_window = all(since <= f.accepted_at < until for f in filings)
-    headers_kept = all(f.raw.startswith("<SEC-HEADER>") and header_accepted_at(f.raw) is not None for f in filings)
-    # A1 직접 확인: JSON acceptanceDateTime을 동부로 읽은 값 = 헤더의 접수 시각(동부). UTC였다면 4~5시간 차이가 난다
-    header_matches = len(filings) > 0 and all(header_accepted_at(f.raw) == f.accepted_at for f in filings)
+    headers_kept = all(f.raw.startswith("<SEC-HEADER>") for f in filings)
+    # A1: 접수 시각은 헤더 <ACCEPTANCE-DATETIME>(동부 벽시계)에서 온다. submissions JSON 시각은 헤더 + 8시간에 Z라 비교하지 않는다
+    from_header = len(filings) > 0 and all(
+        header_accepted_at(f.raw) is not None and header_accepted_at(f.raw) == f.accepted_at for f in filings
+    )
     assert googl_aapl, "A3: ticker list shape"
     assert etfs_empty, "U3: ETF CIK"
     assert valid, "A2: submissions shape"
     assert in_window, "A2: window"
-    assert headers_kept, "A4: raw does not start with SEC-HEADER with ACCEPTANCE-DATETIME"
-    assert header_matches, "A1: acceptanceDateTime differs from SEC-HEADER ACCEPTANCE-DATETIME (not US Eastern wall clock?)"
+    assert headers_kept, "A4: raw does not start with SEC-HEADER"
+    assert from_header, "A1: accepted_at is not the SEC-HEADER ACCEPTANCE-DATETIME"
     assert len(earnings) > 0, "A2: no 2.02 8-K in the last 120 days"
     for f in earnings:
         has_report_date = f.report_date is not None
@@ -68,4 +70,5 @@ def test_실제_EDGAR에서_실험_종목_CIK와_Apple_실적_8_K를_가정대�
         assert exhibit_ok, "A4: EX-99 text"
         assert body_at_item, "A4/U5: 8-K body does not start at Item"
         assert raw_small, "U1: graphic/XBRL stored"
+    # 티커 목록 1 + submissions 1 + 후보 파일. 후보는 기간 앞뒤 12시간씩 넓어 하루치 더(120일에 Apple 8-K는 보통 2~4건)
     assert get.requests < 10, "SEC requests per run"

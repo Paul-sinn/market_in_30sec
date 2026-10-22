@@ -15,7 +15,7 @@ import urllib.parse
 import urllib.request
 import zlib
 from collections.abc import Callable
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 
 from m30.adapters import SourceError, TransientSourceError, error_for_status
@@ -31,6 +31,10 @@ FORMS = frozenset(FilingForm)  # 정확히 "8-K"·"8-K/A". 8-K12B 등은 다른 
 RECENT_COLUMNS = ("accessionNumber", "form", "acceptanceDateTime", "items", "reportDate")  # submissions filings.recent의 쓰는 열
 TEXT_EXTENSIONS = frozenset({".htm", ".html", ".txt"})  # 읽는 문서. PDF·그림(jpg·gif)·XBRL(xml·xsd)은 읽지도 저장하지도 않는다
 HEADER = re.compile(r"<SEC-HEADER>.*?</SEC-HEADER>", re.DOTALL)  # 접수 시각·항목 원본. 몇 KB라 남긴다(사람 대조)
+ACCEPTED = re.compile(r"<ACCEPTANCE-DATETIME>([0-9]{14})(?![0-9])")  # 실제 접수 시각 YYYYMMDDHHMMSS, 동부 벽시계(#19 live 확인)
+# submissions acceptanceDateTime은 후보 고르기에만: live 관측값이 헤더 + 정확히 8시간에 Z라 동부도 진짜 UTC도 아니다.
+# 어느 해석이든 실제 시각과 12시간 안이므로 기간을 앞뒤로 이만큼 넓혀 후보를 받고, 헤더 시각으로 다시 정확히 거른다
+CANDIDATE_MARGIN = timedelta(hours=12)
 DOCUMENT = re.compile(r"<DOCUMENT>.*?</DOCUMENT>", re.DOTALL)
 TYPE = re.compile(r"<TYPE>([^\n]*)")
 FILENAME = re.compile(r"<FILENAME>([^\n]*)")
@@ -138,20 +142,24 @@ class EdgarFilingSource:
         self._get = get
 
     def filings(self, cik: str, since: datetime, until: datetime) -> list[Filing]:
-        """순서 = submissions 순서(최신 먼저). submissions 모양 오류 → SourceError("sec submissions shape")."""
-        rows = _recent(self._get(SUBMISSIONS_URL.format(cik=cik)), cik, since, until)
+        """순서 = submissions 순서(최신 먼저). submissions 모양 오류 → SourceError("sec submissions shape").
+        후보(submissions 시각이 기간 앞뒤 CANDIDATE_MARGIN 안)마다 전체 제출 파일을 받고, 헤더 접수 시각이 since 이상 until 미만인
+        것만 돌려준다. 헤더 접수 시각이 없거나 틀리면 SourceError("sec submission header")(그 CIK 지연)."""
+        candidates = _recent(self._get(SUBMISSIONS_URL.format(cik=cik)), cik, since - CANDIDATE_MARGIN, until + CANDIDATE_MARGIN)
         filings = []
-        for accession, form, accepted_at, items, report_date in rows:
+        for accession, form, items, report_date in candidates:
             url = SUBMISSION_TEXT_URL.format(
                 cik_number=int(cik), accession_digits=accession.replace("-", ""), accession=accession
             )
             # Postgres text는 NUL을 받지 못한다. errors="replace"는 짝 없는 서로게이트를 만들지 않는다(valid_filings가 CIK를 지연시키지 않게)
             text = self._get(url).decode("utf-8", "replace").replace("\x00", "\ufffd")
+            header, accepted_at = _header(text)
+            if not since <= accepted_at < until:  # 넓힌 후보 창에만 든 공시
+                continue
             documents = _documents(text, form)
             sections = [section for _, _, section in documents]
-            header = HEADER.search(text)
-            if sections and header:  # 쓸 문서가 없으면 헤더도 빼 빈 원본: valid_filings가 그 CIK를 invalid_data로 지연(닫힌 쪽)
-                sections.insert(0, header.group(0))
+            if sections:  # 쓸 문서가 없으면 헤더도 빼 빈 원본: valid_filings가 그 CIK를 invalid_data로 지연(닫힌 쪽)
+                sections.insert(0, header)
             raw = "\n".join(sections)
             texts = [(kind, _document_text(section, extension)) for kind, extension, section in documents]
             body = next((_without_cover(text) for kind, text in texts if kind == form), "")
@@ -162,8 +170,8 @@ class EdgarFilingSource:
 
 def _recent(
     data: bytes, cik: str, since: datetime, until: datetime
-) -> list[tuple[str, FilingForm, datetime, tuple[str, ...], date | None]]:
-    """submissions JSON → 기간 안 8-K·8-K/A 행. 그 행만 접수 시각을 읽는다."""
+) -> list[tuple[str, FilingForm, tuple[str, ...], date | None]]:
+    """submissions JSON → acceptanceDateTime이 [since, until)인 8-K·8-K/A 행(후보). 그 행만 시각을 읽는다."""
     try:
         top = json.loads(data)
         if int(top["cik"]) != int(cik):
@@ -176,23 +184,34 @@ def _recent(
         for accession, form, accepted, items, report in zip(*columns, strict=True):  # 열 길이가 다르면 ValueError
             if form not in FORMS:
                 continue
-            accepted_at = _accepted_at(accepted)
-            if not since <= accepted_at < until:
+            if not since <= _listed_at(accepted) < until:
                 continue
             if ACCESSION.fullmatch(accession) is None:  # 주소에 들어간다. 경로에 이상한 글자가 끼지 않게
                 raise ValueError("accession")
             items = tuple(i.strip() for i in items.split(",") if i.strip())  # EDGAR 표기 그대로("2.02"). 형식은 valid_filings가 본다
-            rows.append((accession, FilingForm(form), accepted_at, items, date.fromisoformat(report) if report else None))
+            rows.append((accession, FilingForm(form), items, date.fromisoformat(report) if report else None))
     except (AttributeError, KeyError, TypeError, ValueError):
         raise SourceError("sec submissions shape") from None
     return rows
 
 
-def _accepted_at(value: str) -> datetime:
-    """A1: acceptanceDateTime의 숫자는 동부 벽시계 시각이고 끝의 Z는 UTC 표시가 아니다. 명시적 오프셋이 있으면 따른다.
-    동부로 읽어야 틀려도 소식을 잃지 않는다: UTC로 잘못 읽으면 06~08시 ET 장전 공시가 02~04시가 되어 이미 지난 카드 기간에 들어간다."""
-    at = datetime.fromisoformat(value.removesuffix("Z"))
-    return at.replace(tzinfo=ET) if at.tzinfo is None else at.astimezone(ET)
+def _listed_at(value: str) -> datetime:
+    """submissions acceptanceDateTime → 후보 고르기용 대략 시각(Z는 표준대로 UTC, 시간대 없으면 동부). 정확하지 않다(CANDIDATE_MARGIN)."""
+    at = datetime.fromisoformat(value)
+    return at if at.tzinfo is not None else at.replace(tzinfo=ET)
+
+
+def _header(text: str) -> tuple[str, datetime]:
+    """(SEC-HEADER 구간 원문, 실제 접수 시각 tz=ET). 헤더·접수 시각이 없거나 날짜가 아니면 SourceError: 접수 시각을 모르면
+    어느 카드의 공시인지 정할 수 없다(다시 시도하지 않고 그 CIK 지연)."""
+    header = HEADER.search(text)
+    found = ACCEPTED.search(header.group(0)) if header else None
+    try:
+        if found is None:
+            raise ValueError("no acceptance time")
+        return header.group(0), datetime.strptime(found[1], "%Y%m%d%H%M%S").replace(tzinfo=ET)
+    except ValueError:
+        raise SourceError("sec submission header") from None
 
 
 def _documents(text: str, form: FilingForm) -> list[tuple[str, str, str]]:
