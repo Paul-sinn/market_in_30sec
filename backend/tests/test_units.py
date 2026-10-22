@@ -6,12 +6,12 @@ from decimal import Decimal
 
 import pytest
 
-from m30.adapters import AccessDeniedError, SourceError, TransientSourceError
+from m30.adapters import AccessDeniedError, RateLimitedError, SourceError, TransientSourceError, error_for_status
 from m30.adapters.events import Earnings, EarningsTiming, ExDividend
 from m30.adapters.prices import DailyBar
 from m30.config import ET, ConfigError, is_local_db, load_llm_settings, load_settings
 from m30.copy_rules import ALWAYS_BANNED, CARD_BANNED, EMOTION_VERBS, SOURCE_TAG, check_card
-from m30.llm.anthropic import AnthropicLLM, error_for_status
+from m30.llm.anthropic import AnthropicLLM
 from m30.models import CardLine, LineStatus
 from m30.pipeline.compute import card_numbers, change_pct, format_per_share, format_usd, round_pct, streak
 from m30.pipeline.lines import (
@@ -361,15 +361,17 @@ def test_첫_번째_줄_지시문이_이름_붙인_금지어는_카드_금지어
     assert words and set(words) <= set(CARD_BANNED)  # card.toml에서 빠진 단어를 지시문만 계속 막지 않게
 
 
+@pytest.mark.parametrize("label", ["anthropic", "sec"])
 @pytest.mark.parametrize(
     "status, error",
-    [(401, AccessDeniedError), (403, AccessDeniedError), (429, TransientSourceError), (500, TransientSourceError),
-     (503, TransientSourceError), (529, TransientSourceError), (400, SourceError), (404, SourceError)],
+    [(401, AccessDeniedError), (403, AccessDeniedError), (429, RateLimitedError), (500, TransientSourceError),
+     (503, TransientSourceError), (529, TransientSourceError), (400, SourceError), (404, SourceError), (301, SourceError)],
 )
-def test_Anthropic_HTTP_상태는_재시도·차단·기타_실패로_나뉜다(status, error):
-    raised = error_for_status(status)
-    assert type(raised) is error  # 400·404는 SourceError 그 자체: 재시도도 차단도 하지 않는다
-    assert str(raised) == f"anthropic http {status}"  # 상태만. 응답 본문·헤더·URL 없음
+def test_HTTP_상태는_재시도·차단·속도_제한·기타_실패로_나뉜다(label, status, error):
+    raised = error_for_status(label, status)
+    assert type(raised) is error  # 400·404·301은 SourceError 그 자체: 재시도도 차단도 하지 않는다
+    assert str(raised) == f"{label} http {status}"  # 상태만. 응답 본문·헤더·URL 없음
+    assert isinstance(raised, TransientSourceError) is (error in (RateLimitedError, TransientSourceError))  # 429도 다시 시도한다
 
 
 def test_Anthropic_클라이언트는_HTTPS_주소만_받는다():

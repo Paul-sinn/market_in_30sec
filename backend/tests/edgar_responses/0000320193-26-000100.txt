@@ -1,0 +1,63 @@
+<SEC-DOCUMENT>0000320193-26-000100.txt : 20261015
+<SEC-HEADER>0000320193-26-000100.hdr.sgml : 20261015
+<ACCEPTANCE-DATETIME>20261015040000
+ACCESSION NUMBER:		0000320193-26-000100
+CONFORMED SUBMISSION TYPE:	8-K
+PUBLIC DOCUMENT COUNT:		4
+ITEM INFORMATION:		Other Events[NUL]
+FILED AS OF DATE:		20261015
+</SEC-HEADER>
+<DOCUMENT>
+<TYPE>8-K
+<SEQUENCE>1
+<FILENAME>aapl-20261014.htm
+<DESCRIPTION>8-K
+<TEXT>
+<html>
+<head><title>aapl-20261014</title></head>
+<body>
+<p style="text-align:center">UNITED STATES SECURITIES AND EXCHANGE COMMISSION</p>
+<p style="text-align:center">FORM 8-K</p>
+<table><tr><td>Common Stock, $0.00001 par value per share</td><td>AAPL</td></tr></table>
+<p><b>Item 8.01</b> Other Events.</p>
+<p>On October 14, 2026, Apple Inc. announced[NUL] a new product event to be held in November[0xFF] 2026.</p>
+</body>
+</html>
+</TEXT>
+</DOCUMENT>
+<DOCUMENT>
+<TYPE>EX-2.1
+<SEQUENCE>2
+<FILENAME>ex21.htm
+<DESCRIPTION>AGREEMENT
+<TEXT>
+<html><body><p>Ex21Marker Asset Purchase Agreement dated as of October 14, 2026.</p></body></html>
+</TEXT>
+</DOCUMENT>
+<DOCUMENT>
+<TYPE>EX-99.1
+<SEQUENCE>3
+<FILENAME>ex991.pdf
+<DESCRIPTION>PRESS RELEASE
+<TEXT>
+<PDF>
+begin 644 ex991.pdf
+M)5!$1BTQ+C0*)>+CS],*,2 P(&]B:@H\/"]4>7!E("]#871A;&]G"B]086=E
+`
+end
+</PDF>
+</TEXT>
+</DOCUMENT>
+<DOCUMENT>
+<TYPE>GRAPHIC
+<SEQUENCE>4
+<FILENAME>logo.gif
+<DESCRIPTION>GRAPHIC
+<TEXT>
+begin 644 logo.gif
+M1TE&.#EA 0 ! (   /___P   "'Y! $   $ +      0 ! $  ($1  [
+`
+end
+</TEXT>
+</DOCUMENT>
+</SEC-DOCUMENT>

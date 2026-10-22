@@ -7,7 +7,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
-from m30.adapters import AccessDeniedError, Source, SourceError, TransientSourceError
+from m30.adapters import AccessDeniedError, RateLimitedError, Source, SourceError, TransientSourceError
 from m30.adapters.events import CorporateEvent, Earnings, EarningsTiming, ExDividend
 from m30.adapters.filings import Filing, FilingForm
 from m30.adapters.indicators import IndicatorRelease
@@ -24,7 +24,8 @@ FILING_KEYS = {"accession", "form", "accepted_at", "items", "body", "exhibit99"}
 FILING_OPTIONAL_KEYS = {"report_date"}  # "YYYY-MM-DD" 또는 null
 INDICATOR_KEYS = {"name", "released_at"}
 FAILURE_KEYS = {"source", "subject", "error", "times"}
-FAILURE_ERRORS = {"transient": TransientSourceError, "access_denied": AccessDeniedError, "error": SourceError}
+FAILURE_ERRORS = {"transient": TransientSourceError, "access_denied": AccessDeniedError, "error": SourceError,
+                  "rate_limited": RateLimitedError}
 NO_SUBJECT = {Source.INDICATORS, Source.LLM}  # 대상 없이 출처 전체에 거는 실패. LLM은 호출 순서대로 앞의 times번
 
 

@@ -56,6 +56,7 @@ LOOKBACK = timedelta(weeks=53)  # 52주 이력 + 52주 전 날이 휴장일이�
 class RunSummary:
     trading_day: date
     access_denied: tuple[Source, ...]  # 401·403이 난 출처. 요약 맨 위에 표시
+    rate_limited: tuple[Source, ...]  # 429를 낸 출처(다시 시도로 성공했어도). access_denied 바로 아래 표시
     cards_saved: int
     change_delayed: tuple[str, ...]  # 등락률을 계산 못 해 delayed로 저장한 티커 (오름차순)
     failures: tuple[SourceFailure, ...]  # 재시도 뒤에도 실패한 출처·대상
@@ -164,6 +165,7 @@ class MorningPipeline:
         return RunSummary(
             trading_day=trading_day,
             access_denied=calls.access_denied,
+            rate_limited=calls.rate_limited,
             cards_saved=saved,
             change_delayed=tuple(delayed),
             failures=calls.failures,

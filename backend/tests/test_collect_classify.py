@@ -3,10 +3,13 @@
 import dataclasses
 import json
 import signal
+import subprocess
+import sys
 import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -498,6 +501,7 @@ ERRORS = {  # 실패 종류 → (가짜 호출 수, 대기, 실패 사유)
     "transient": (4, [1.0, 2.0, 4.0], FailureReason.RETRIES_EXHAUSTED),
     "error": (1, [], FailureReason.ERROR),
     "access_denied": (1, [], FailureReason.ACCESS_DENIED),
+    "rate_limited": (4, [1.0, 2.0, 4.0], FailureReason.RETRIES_EXHAUSTED),  # 429: 일시 실패처럼 다시 시도
 }
 FAILURE_CASES = [(source, error) for source in Source for error in ERRORS]
 
@@ -519,6 +523,7 @@ def test_출처마다_실패_종류에_따라_재시도하고_그_범위만_지�
     blocked = [NEXT_SUBJECT[source]] if denied and source in NEXT_SUBJECT else []  # 부르지 않은 대상도 실패로 남는다
     assert ran.summary.failures == tuple(SourceFailure(source, s, reason) for s in [FAILED_SUBJECT[source], *blocked])
     assert ran.summary.access_denied == ((source,) if denied else ())
+    assert ran.summary.rate_limited == ((source,) if error == "rate_limited" else ())
 
     expected = {"AAPL": dict(NORMAL), "MSFT": dict(NORMAL)}
     if source in NEXT_SUBJECT:
@@ -533,6 +538,22 @@ def test_출처마다_실패_종류에_따라_재시도하고_그_범위만_지�
         assert {r.unclassified for r in store.list_classifications(FRI)} == {UnclassifiedReason.BATCH_FAILED}
     else:
         assert ran.summary.skipped_batches == ()
+
+
+def test_CLI는_429를_낸_출처를_다시_시도해_성공해도_ACCESS_DENIED_바로_아래_줄에_찍는다(admin, filings_day, tmp_path):
+    # 입구 3(프로세스 출력, 오케스트레이터 결정): CLI를 하위 프로세스로 실제로 돌린다(로컬 DB, admin이 먼저 비운다). 1초 실제 대기
+    path = tmp_path / "rate_limited.json"
+    path.write_text(json.dumps(json.loads(filings_day.read_text()) | {"failures": [
+        {"source": "sec_filings", "subject": AAPL_CIK, "error": "rate_limited", "times": 1},
+        {"source": "events", "subject": "MSFT", "error": "access_denied"},
+    ]}))
+    r = subprocess.run([sys.executable, "-m", "m30.pipeline", "2026-10-16", "--scenario", str(path)],
+                       cwd=Path(__file__).resolve().parent.parent, capture_output=True, text=True, timeout=60)
+
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.splitlines()[:2] == ["ACCESS DENIED (not retried): events", "RATE LIMITED (429, retried): sec_filings"]
+    # 429는 다시 시도로 풀려 실패로 남지 않는다(sec_filings 없음). SPY 일정은 MSFT 403 뒤라 부르지 않고 차단으로 남는다
+    assert r.stdout.splitlines()[-1] == "failed: events/MSFT=access_denied, events/SPY=access_denied"
 
 
 def test_401·403이_난_출처는_이번_실행에서_다시_부르지_않는다(store):

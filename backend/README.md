@@ -32,11 +32,13 @@ uv run python -m m30.pipeline 2026-10-16 --scenario scenarios/filings_day.json  
   - 같은 거래일을 다시 돌려도 재발행된 줄은 덮지 않는다. 공시 줄이 없는 카드(데이터 상태 문구)는 재발행이 오류로 거부된다
   - 사람 문장은 검사기를 거치지 않으니 저장 전에 미리 본다: `echo "Name named a new CFO (SEC filing)" | python3 .claude/skills/card-copy-rules/scripts/check_copy.py --mode card -`(레포 루트에서). 파이프라인처럼 그 카드의 종목명·티커를 단어마다 `Name`으로 바꿔 넣는다. 안 바꾸면 이름 때문에 정상 줄이 걸린다(`Best Buy`의 `buy`, `3M`의 숫자)
 - 카드 수정 이력: 카드 내용(확인 시각·갱신 시각 제외)이 바뀔 때마다 바뀌기 전 행 전체가 `stock_card_revision.previous`(jsonb)에 남는다(트리거, 추가만).
-- 출처 실패는 시나리오의 `failures`로 넣는다: `{"source": "sec_filings", "subject": "0000320193", "error": "transient", "times": 3}`. `source`는 `prices`·`events`·`sec_filings`·`indicators`·`llm`(뒤의 둘은 `subject` 없음), `error`는 `transient`(재시도함)·`access_denied`(401·403)·`error`. `times`가 없으면 계속 실패한다. CLI는 실제로 기다린다(재시도 간격 1·2·4초).
+- 출처 실패는 시나리오의 `failures`로 넣는다: `{"source": "sec_filings", "subject": "0000320193", "error": "transient", "times": 3}`. `source`는 `prices`·`events`·`sec_filings`·`indicators`·`llm`(뒤의 둘은 `subject` 없음), `error`는 `transient`(재시도함)·`rate_limited`(429, 재시도함. 성공해도 CLI 맨 위 `RATE LIMITED (429, retried): …` 줄에 남는다)·`access_denied`(401·403, `ACCESS DENIED` 줄)·`error`. `times`가 없으면 계속 실패한다. CLI는 실제로 기다린다(재시도 간격 1·2·4초).
 
 - `supabase start -x ...`: 테스트는 psycopg로 Postgres에 직접 붙으므로 Postgres(`supabase_db_*`)만 띄운다. 뺀 서비스: 로그인(gotrue), realtime, storage-api, imgproxy, API 게이트웨이(kong), mailpit, PostgREST, postgres-meta, Studio, edge-runtime, logflare, vector, supavisor. 로그인 화면 작업 등 이 서비스가 필요하면 `-x` 없이 `supabase start`.
 - `supabase` 명령은 레포 루트에서, `uv` 명령은 `backend/`에서 실행한다.
 - 테스트를 돌리면 로컬 DB의 `public` 테이블이 전부 비워진다.
 - 테스트와 CLI는 `SUPABASE_DB_URL`이 로컬(127.0.0.1·localhost·::1)이 아니면 멈춘다. 원격 주소를 넣지 않는다.
 - `SUPABASE_DB_URL`은 비밀번호가 든 비밀값이다. `.env` 파일에 두지 말고 위 `export` 줄로만 셸에 넣는다.
+- SEC EDGAR 실제 어댑터(`m30.adapters.edgar`): `EdgarClient(load_edgar_settings())`의 `get`을 `EdgarFilingSource`·`ticker_ciks`에 넣는다. CLI·실행기 연결은 #26(지금 CLI는 가짜 공시만 쓴다). SEC 공정 접근 규칙대로 User-Agent에 이름과 연락 이메일이 필요하다. 값은 채팅·파일·커밋에 쓰지 말고 셸에서만 넣는다: `export SEC_USER_AGENT="<이름> <연락 이메일>"`. 요청은 초당 8회 이하(0.125초 간격), `www.sec.gov`·`data.sec.gov` HTTPS만, 리다이렉트는 따라가지 않는다. 저장 원본(`sec_filing.payload`)은 전체 제출 파일에서 SEC-HEADER(접수 시각 원본) + 8-K·8-K/A 본문과 Exhibit 99(HTML·텍스트) 문서 구간을 원문 그대로 이은 것이다(그림·XBRL·ZIP·PDF·다른 첨부 제외). 쓸 문서가 하나도 없는 공시는 원본을 비워 그 CIK를 지연으로 둔다. 실험 종목 15개는 `m30.experiment`(ETF 4개는 CIK 없음 → `Not covered yet`)
+- SEC live 테스트(요청 10회 미만, 사용자가 요청할 때만): 위 `export` 뒤 `uv run pytest -q -m live tests/test_edgar_live.py`. `SEC_USER_AGENT`가 없으면 건너뛴다. 단언은 참/거짓과 가정 번호(`A1`~`A5`)만 찍는다(본문·User-Agent 없음). A1(접수 시각 = 동부)은 JSON `acceptanceDateTime`과 SEC-HEADER `<ACCEPTANCE-DATETIME>`을 비교해 확인한다
 - 실제 외부 API 테스트(live, 기본 실행에서 빠짐): 실제 Haiku로 첫 번째 줄 초안을 한 번 만든다(`tests/test_newsline_live.py`, 응답 모양만 확인하고 문장은 출력하지 않는다). 키는 명령에 값을 쓰지 말고 셸에서 미리 `export ANTHROPIC_API_KEY`로 넣은 뒤 `uv run pytest -q -m live tests/test_newsline_live.py`. 사용자가 요청할 때만

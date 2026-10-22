@@ -1,7 +1,10 @@
+import re
 from dataclasses import dataclass
 from datetime import date, datetime
 from enum import StrEnum
 from typing import Protocol
+
+ACCESSION = re.compile(r"[0-9]{10}-[0-9]{2}-[0-9]{6}")  # 접수번호 형식(fullmatch). 수집 검증과 EDGAR 주소 만들기가 같이 쓴다
 
 
 class FilingForm(StrEnum):

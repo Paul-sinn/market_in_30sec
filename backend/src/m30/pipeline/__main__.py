@@ -50,6 +50,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     # 예외 메시지·URL·키는 찍지 않는다. 401·403은 맨 위(터미널 강조·Discord는 #17)
     if summary.access_denied:
         print(f"ACCESS DENIED (not retried): {', '.join(summary.access_denied)}")
+    if summary.rate_limited:
+        print(f"RATE LIMITED (429, retried): {', '.join(summary.rate_limited)}")
     delayed = ", ".join(summary.change_delayed) or "-"
     print(f"{summary.trading_day} cards_saved={summary.cards_saved} change_delayed={delayed}")
     skipped = ", ".join(f"{b.number}:{b.reason}" for b in summary.skipped_batches) or "-"
