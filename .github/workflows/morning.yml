@@ -1,0 +1,42 @@
+name: morning-pipeline
+
+# 레포가 공개라 이 로그도 공개다. CLI는 결과 코드·건수·티커만 찍는다(#26). run:은 한 줄, 입력·secrets는 env:로만 넘긴다(주입 방지)
+on:
+  schedule:
+    - cron: "17 9 * * 1-5"  # 09:17 UTC = 05:17 EDT / 04:17 EST, 월~금. 공시 기간(04:00 ET)이 닫힌 뒤, 7:30 ET 훨씬 전
+  workflow_dispatch:
+    inputs:
+      trading_day:
+        description: "거래일 YYYY-MM-DD (동부). 비우면 오늘(동부)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: morning-pipeline  # GitHub 실행은 한 번에 하나. DB 거래일 잠금은 #16
+  cancel-in-progress: false
+
+jobs:
+  morning:
+    runs-on: ubuntu-24.04
+    environment: production  # secrets는 main 브랜치 실행에만(U4)
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa  # v10.3.1
+        with:
+          version: "0.11.2"
+      - run: uv sync --locked --no-dev
+      - run: uv run --no-sync python -m m30.pipeline --production ${TRADING_DAY:+"$TRADING_DAY"}
+        env:
+          TRADING_DAY: ${{ inputs.trading_day }}
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}

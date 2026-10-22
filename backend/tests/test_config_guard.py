@@ -22,12 +22,14 @@ CANARIES = {
     [
         ("test_DB_설정을_읽는다", {"SUPABASE_DB_URL": None}, "SUPABASE_DB_URL is not set"),
         ("test_Anthropic_설정을_읽는다", {"ANTHROPIC_API_KEY": None}, "ANTHROPIC_API_KEY is not set"),
+        ("test_Anthropic_설정을_읽는다", {"ANTHROPIC_API_KEY": "sk-ant-Zq9CfgCanaryKey\n"}, "ANTHROPIC_API_KEY must be one line"),
+        ("test_Anthropic_설정을_읽는다", {"ANTHROPIC_API_KEY": "sk-ant-Zq9Cfg CanaryKey"}, "ANTHROPIC_API_KEY must be one line"),
         ("test_SEC_설정을_읽는다", {"SEC_USER_AGENT": None}, "SEC_USER_AGENT is not set"),
         ("test_SEC_설정을_읽는다", {"SEC_USER_AGENT": "M30 Canary ua-canary-Q7 no email"}, "SEC_USER_AGENT must be one line"),
         ("test_SEC_설정을_읽는다", {"SEC_USER_AGENT": "M30 Canary ua-canary-Q7@x.invalid\r\nX-Injected: 1"},
          "SEC_USER_AGENT must be one line"),
     ],
-    ids=["db_missing", "llm_missing", "sec_missing", "sec_no_email", "sec_newline"],
+    ids=["db_missing", "llm_missing", "llm_newline", "llm_space", "sec_missing", "sec_no_email", "sec_newline"],
 )
 def test_설정_읽기가_거부해도_환경의_비밀값과_거부한_값이_traceback_지역_변수에_남지_않는다(probe, change, message):
     env = {k: v for k, v in os.environ.items() if k not in CANARIES} | CANARIES

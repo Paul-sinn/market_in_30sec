@@ -52,11 +52,14 @@ class LLMSettings:
 
 
 def load_llm_settings(env: Mapping[str, str] = os.environ) -> LLMSettings:
-    """실제 Anthropic 클라이언트(#14)가 부른다. 가짜 LLM은 키가 필요 없다. env를 지우는 이유는 load_settings와 같다."""
+    """실제 Anthropic 클라이언트(#14)가 부른다. 가짜 LLM은 키가 필요 없다. env를 지우는 이유는 load_settings와 같다.
+    공백·줄바꿈 없는 ASCII만 받는다: http.client는 잘못된 헤더 값(붙여넣기 끝 줄바꿈 등)을 예외 메시지에 그대로 넣는다."""
     settings = LLMSettings(api_key=env.get(LLM_KEY_VAR, ""))
     del env
     if not settings.api_key:
         raise ConfigError(f"{LLM_KEY_VAR} is not set")
+    if not re.fullmatch(r"[\x21-\x7e]+", settings.api_key):
+        raise ConfigError(f"{LLM_KEY_VAR} must be one line of printable ASCII without spaces")
     return settings
 
 

@@ -16,7 +16,7 @@ uv run python -m m30.pipeline 2026-10-13 --scenario scenarios/events_and_tags.js
 uv run python -m m30.pipeline 2026-10-16 --scenario scenarios/filings_day.json       # 공시 수집·분류 확인용
 ```
 
-- LLM은 시나리오의 `llm_replies`(가짜, 호출 순서대로: 분류 묶음 → 첫 번째 줄 초안 종목 순 → 공시마다 사실/예측 판정(걸리면 재생성 → 재판정))를 쓴다. `ANTHROPIC_API_KEY` 없이 돈다. CLI에 실제 Haiku를 연결하는 것은 #14. CLI는 문장을 찍지 않는다(`drafts:`·`review:` 줄은 결과 코드만).
+- LLM은 시나리오의 `llm_replies`(가짜, 호출 순서대로: 분류 묶음 → 첫 번째 줄 초안 종목 순 → 공시마다 사실/예측 판정(걸리면 재생성 → 재판정))를 쓴다. `ANTHROPIC_API_KEY` 없이 돈다. 실제 Anthropic은 운영 모드(아래)만 쓴다. CLI는 문장을 찍지 않는다(`drafts:`·`review:` 줄은 결과 코드만).
 - 검수: 초안 → 숫자 대조(계산 원본 `numbers`) → 금지어(`m30.copy_rules`, 종목명을 가리고) → 사실/예측 판정(LLM) → 걸리면 이유를 넣어 1회 재생성. 그래도 걸리면 카드에 8-K 항목 대체 줄(`Apple reported quarterly results (SEC filing)` 등)을 쓰고 `hold_queue`(보류함)에 행을 남긴다. 문장 없이 대체 줄만 나간 경우(본문 없음·LLM 실패)도 행이 생긴다. 8-K/A가 앞선 카드가 쓴 공시(같은 CIK·같은 `report_date` = EDGAR reportDate. 가짜 시나리오는 공시의 선택 키 `"report_date": "YYYY-MM-DD"`)를 정정하면 그 카드는 그대로 두고 `amended_filing` 행(`정정 공시 있음`)을 남긴다.
 - 보류함 `rules` 읽는 법: 한 칸 = `{시도} {단계}: {이유}`.
   - 시도: `1` 처음 쓴 줄, `2` 걸린 이유를 넣어 한 번 다시 쓴 줄(`2 draft: call_limit`이면 다시 쓰려다, `2 fact_check: call_limit`이면 다시 쓴 줄을 판정받으려다 실행당 호출 상한에 막힘). `2`가 없으면 다시 쓰지 않은 것(문장이 없었거나 판정을 못 받음)
@@ -37,8 +37,24 @@ uv run python -m m30.pipeline 2026-10-16 --scenario scenarios/filings_day.json  
 - `supabase start -x ...`: 테스트는 psycopg로 Postgres에 직접 붙으므로 Postgres(`supabase_db_*`)만 띄운다. 뺀 서비스: 로그인(gotrue), realtime, storage-api, imgproxy, API 게이트웨이(kong), mailpit, PostgREST, postgres-meta, Studio, edge-runtime, logflare, vector, supavisor. 로그인 화면 작업 등 이 서비스가 필요하면 `-x` 없이 `supabase start`.
 - `supabase` 명령은 레포 루트에서, `uv` 명령은 `backend/`에서 실행한다.
 - 테스트를 돌리면 로컬 DB의 `public` 테이블이 전부 비워진다.
-- 테스트와 CLI는 `SUPABASE_DB_URL`이 로컬(127.0.0.1·localhost·::1)이 아니면 멈춘다. 원격 주소를 넣지 않는다.
+- 테스트와 CLI는 `SUPABASE_DB_URL`이 로컬(127.0.0.1·localhost·::1)이 아니면 멈춘다(CLI는 `--production`이 아니면). 테스트에 원격 주소를 넣지 않는다.
 - `SUPABASE_DB_URL`은 비밀번호가 든 비밀값이다. `.env` 파일에 두지 말고 위 `export` 줄로만 셸에 넣는다.
-- SEC EDGAR 실제 어댑터(`m30.adapters.edgar`): `EdgarClient(load_edgar_settings())`의 `get`을 `EdgarFilingSource`·`ticker_ciks`에 넣는다. CLI·실행기 연결은 #26(지금 CLI는 가짜 공시만 쓴다). SEC 공정 접근 규칙대로 User-Agent에 이름과 연락 이메일이 필요하다. 값은 채팅·파일·커밋에 쓰지 말고 셸에서만 넣는다: `export SEC_USER_AGENT="<이름> <연락 이메일>"`. 요청은 초당 8회 이하(0.125초 간격), `www.sec.gov`·`data.sec.gov` HTTPS만, 리다이렉트는 따라가지 않는다. 저장 원본(`sec_filing.payload`)은 전체 제출 파일에서 SEC-HEADER(접수 시각 원본) + 8-K·8-K/A 본문과 Exhibit 99(HTML·텍스트) 문서 구간을 원문 그대로 이은 것이다(그림·XBRL·ZIP·PDF·다른 첨부 제외). 쓸 문서가 하나도 없는 공시는 원본을 비워 그 CIK를 지연으로 둔다. 실험 종목 15개는 `m30.experiment`(ETF 4개는 CIK 없음 → `Not covered yet`)
-- SEC live 테스트(요청 10회 미만, 사용자가 요청할 때만): 위 `export` 뒤 `uv run pytest -q -m live tests/test_edgar_live.py`. `SEC_USER_AGENT`가 없으면 건너뛴다. 단언은 참/거짓과 가정 번호(`A1`~`A5`)만 찍는다(본문·User-Agent 없음). A1(접수 시각 = 동부)은 JSON `acceptanceDateTime`과 SEC-HEADER `<ACCEPTANCE-DATETIME>`을 비교해 확인한다
+- SEC EDGAR 실제 어댑터(`m30.adapters.edgar`): `EdgarClient(load_edgar_settings())`의 `get`을 `EdgarFilingSource`·`ticker_ciks`에 넣는다. CLI 시나리오 모드는 가짜 공시, 운영 모드(`--production`)는 이 어댑터를 쓴다. SEC 공정 접근 규칙대로 User-Agent에 이름과 연락 이메일이 필요하다. 값은 채팅·파일·커밋에 쓰지 말고 셸에서만 넣는다: `export SEC_USER_AGENT="<이름> <연락 이메일>"`. 요청은 초당 8회 이하(0.125초 간격), `www.sec.gov`·`data.sec.gov` HTTPS만, 리다이렉트는 따라가지 않는다. 저장 원본(`sec_filing.payload`)은 전체 제출 파일에서 SEC-HEADER(접수 시각 원본) + 8-K·8-K/A 본문과 Exhibit 99(HTML·텍스트) 문서 구간을 원문 그대로 이은 것이다(그림·XBRL·ZIP·PDF·다른 첨부 제외). 쓸 문서가 하나도 없는 공시는 원본을 비워 그 CIK를 지연으로 둔다. 접수 시각(`accepted_at`)은 SEC-HEADER `<ACCEPTANCE-DATETIME>`(동부 벽시계)에서 읽는다. submissions JSON의 `acceptanceDateTime`은 실제로 헤더 + 8시간에 `Z`라(2026-10-21 live 관측) 받을 후보를 고르는 데만 쓰고(공시 기간 앞뒤 12시간), 헤더 시각으로 기간을 다시 정확히 거른다. 헤더 접수 시각이 없거나 틀리면 그 CIK는 지연이다. 실험 종목 15개는 `m30.experiment`(ETF 4개는 CIK 없음 → `Not covered yet`)
+- SEC live 테스트(요청 10회 미만, 사용자가 요청할 때만): 위 `export` 뒤 `uv run pytest -q -m live tests/test_edgar_live.py`. `SEC_USER_AGENT`가 없으면 건너뛴다. 단언은 참/거짓과 가정 번호(`A1`~`A5`)만 찍는다(본문·User-Agent 없음). A1은 모든 공시에 헤더 접수 시각이 있고 `accepted_at`이 그 값인지 본다
 - 실제 외부 API 테스트(live, 기본 실행에서 빠짐): 실제 Haiku로 첫 번째 줄 초안을 한 번 만든다(`tests/test_newsline_live.py`, 응답 모양만 확인하고 문장은 출력하지 않는다). 키는 명령에 값을 쓰지 말고 셸에서 미리 `export ANTHROPIC_API_KEY`로 넣은 뒤 `uv run pytest -q -m live tests/test_newsline_live.py`. 사용자가 요청할 때만
+
+## 운영 모드 (매일 아침 실행기, #26)
+
+```bash
+uv run python -m m30.pipeline --production              # 오늘(동부) 거래일. 원격 DB를 쓸 수 있는 유일한 모드
+uv run python -m m30.pipeline --production 2026-10-16   # 지난 거래일 다시 돌리기·빠진 날 채우기
+```
+
+- `.github/workflows/morning.yml`이 평일 09:17 UTC(05:17 EDT / 04:17 EST)에 이 명령을 돌린다. Actions → `morning-pipeline` → Run workflow로 수동 실행(거래일 입력은 비워도 된다). 실행은 한 번에 하나씩.
+- 출처: 공시 = SEC EDGAR, LLM = Anthropic. 실제 출처가 아직 없는 자리는 가짜 데이터 없이 데이터 상태 문구만: 시세(#18 전) → 등락률 지연·세 번째 줄 `Update delayed`, 일정(#21 전) → 두 번째 줄 `Not covered yet`, 지표 일정 → 저장 안 함. 실행 전에 실험 종목 CIK를 SEC 티커 목록으로 갱신하고, 실패하면 저장된 행을 쓴다(`coverage: NOT REFRESHED …`).
+- 필요한 환경 변수 셋: `SUPABASE_DB_URL`, `ANTHROPIC_API_KEY`, `SEC_USER_AGENT`. 하나라도 없으면 DB에 붙기 전에 이름만 알리고 exit 2.
+- 원격 DB 주소는 Supabase **Session pooler**(포트 5432) URI만. Transaction pooler(6543)는 연결 전에 거부한다(`set role service_role`이 연결 내내 유지돼야 한다). Direct connection은 IPv6 전용이라 GitHub 러너에서 붙지 못한다. 비로컬 연결은 항상 `sslmode=require`.
+- exit 코드: 0 = 정상·주말, 2 = 인자 오류·이른/미래 날짜(그날 04:00 ET 전)·설정 누락·값 형식 오류·트랜잭션 풀러(6543), 1 = DB 연결 실패·예외·재시도 뒤에도 실패한 출처 호출(401·403 포함)·카드 0장. 1이면 워크플로가 실패로 끝난다.
+- 예상 못 한 예외는 `RUN FAILED: <예외 이름> [sqlstate=<코드>]` 한 줄만 찍는다(메시지·traceback 없음: DB 오류 DETAIL에 행 내용, 라이브러리 메시지에 키가 섞일 수 있다). 원인을 보려면 로컬 DB에서 같은 날짜로 `run_production`을 직접 부른다.
+- **레포가 공개라 Actions 로그도 공개다.** CLI는 결과 코드·건수·티커만 찍는다. 카드 문장·공시 본문·가격·URL·키·환경 변수 값을 출력에 더하지 않는다(#17·#18·#21도 같은 규칙).
+- 사용자 설정(값은 채팅·파일·커밋에 쓰지 않는다): ① Supabase Connect → Session pooler URI(비밀번호 칸 채움, 특수문자는 퍼센트 인코딩) ② GitHub Settings → Environments → `production`(배포 브랜치 `main`만) + environment secrets 셋 ③ 실패한 Actions 알림 켜기 ④ main 병합 뒤 첫 실행은 수동으로.

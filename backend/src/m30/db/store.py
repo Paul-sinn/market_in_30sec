@@ -4,11 +4,12 @@ from collections.abc import Iterable
 from datetime import date
 
 import psycopg
+from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
 from m30.adapters.filings import Filing
 from m30.adapters.indicators import IndicatorRelease
-from m30.config import DB_URL_VAR, ET, Settings
+from m30.config import DB_URL_VAR, ET, ConfigError, Settings, is_local_db
 from m30.models import (
     AMENDED_RULE,
     CardLine,
@@ -44,14 +45,27 @@ _UPSERT_CARD = (
 )
 
 
+class DBConnectError(psycopg.OperationalError):
+    """connect()가 다시 던지는 연결 실패. 문구는 이 모듈이 쓴 것뿐(주소·비밀번호 없음)이라 공개 로그에 찍어도 된다."""
+
+
 def connect(settings: Settings) -> psycopg.Connection:
-    """autocommit 연결 후 service_role로 권한을 낮춘다(서버 코드는 DDL을 못 한다)."""
+    """autocommit 연결 후 service_role로 권한을 낮춘다(서버 코드는 DDL을 못 한다).
+    비로컬: 트랜잭션 풀러(6543)는 거부(문장마다 서버 연결이 바뀌어 set role이 유지되지 않는다), sslmode=require로 덮어쓴다.
+    shortcut: require는 서버 인증서를 검증하지 않는다, 검증이 필요하면 Supabase CA 인증서 + verify-full."""
+    local = is_local_db(settings.database_url)
     try:
-        conn = psycopg.connect(settings.database_url, autocommit=True)
+        ports = (conninfo_to_dict(settings.database_url).get("port") or "").split(",")  # 여러 호스트면 "5432,6543"
+        if not local and any(p.strip().isdigit() and int(p) == 6543 for p in ports):
+            raise ConfigError(
+                f"{DB_URL_VAR}이 트랜잭션 풀러(포트 6543)입니다. 세션 풀러(포트 5432) 주소를 쓰세요: set role이 연결 내내 유지돼야 합니다"
+            )
+        conn = psycopg.connect(settings.database_url, autocommit=True, **({} if local else {"sslmode": "require"}))
     except psycopg.Error:
         # psycopg 프레임 인자(conninfo)·주소 파싱 오류 메시지에 비밀번호가 있어 원래 예외를 끊고 다시 던진다
-        raise psycopg.OperationalError(
-            f"{DB_URL_VAR}로 DB에 연결하지 못했습니다. 로컬이면 supabase start와 README의 export 줄을 확인하세요"
+        raise DBConnectError(
+            f"{DB_URL_VAR}로 DB에 연결하지 못했습니다. 로컬이면 supabase start와 README의 export 줄을,"
+            " 운영이면 세션 풀러(포트 5432) 주소와 비밀번호를 확인하세요"
         ) from None
     try:
         conn.execute("set role service_role")
