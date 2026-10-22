@@ -1,9 +1,13 @@
 """입구 2: 마이그레이션이 적용된 로컬 DB가 직접 막는 규칙. 관리자 연결로 카탈로그 조회·역할 전환."""
 
+import dataclasses
+import json
+
 import pytest
 from psycopg import errors
 
-from m30.models import IMPORTANCE_MAX, Coverage, NewsKind
+from m30.models import IMPORTANCE_MAX, Coverage, HoldStage, HoldState, NewsKind
+from test_collect_classify import AAPL, FRI, MSFT, filing, label, reply, run, scenario
 
 CARD_SQL = (
     "insert into public.stock_card (ticker, trading_day, status, change_pct, change_status)"
@@ -39,7 +43,7 @@ CARD_COLUMNS = [
     "news_line_text", "news_line_status", "news_line_checked_at", "news_line_source_scope",
     "event_line_text", "event_line_status", "event_line_checked_at", "event_line_source_scope",
     "price_fact_line_text", "price_fact_line_status", "price_fact_line_checked_at", "price_fact_line_source_scope",
-    "updated_at", "leverage_tag",
+    "updated_at", "leverage_tag", "news_line_accession",
 ]
 
 
@@ -54,8 +58,8 @@ def test_카드_컬럼은_정해진_목록뿐이고_방향_의견_필드가_없�
     columns = [r[0] for r in admin.execute(
         "select column_name from information_schema.columns"
         " where table_schema = 'public' and table_name = 'stock_card' order by ordinal_position")]
-    assert columns == CARD_COLUMNS  # 콜·토크·방향·판정 컬럼은 영원히 없다 (ADR-0001)
-    assert len(columns) == 19
+    assert columns == CARD_COLUMNS  # 콜·토크·방향·판정 컬럼은 영원히 없다 (ADR-0001). 출처 공시 열은 방향 의견이 아니다
+    assert len(columns) == 20
     assert enum_values(admin, "card_status") == ["normal", "fallback"]
     assert enum_values(admin, "line_status") == ["checked_found", "checked_none", "delayed", "unsupported"]
 
@@ -109,7 +113,8 @@ def test_RLS가_꺼진_테이블이_없다(admin):
     rls_off = [r[0] for r in admin.execute(
         "select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace"
         " where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity")]
-    tables = {"coverage", "stock_card", "sec_filing", "indicator_release", "filing_classification"}
+    tables = {"coverage", "stock_card", "sec_filing", "indicator_release", "filing_classification", "hold_queue",
+              "stock_card_revision"}
     assert tables <= set(public_tables(admin))  # 검사 대상이 비어서 통과하는 것을 막는다
     assert rls_off == []
 
@@ -133,8 +138,9 @@ def test_로그인_없이는_DB에서_카드를_직접_읽을_수_없다(admin, 
 
 def all_ops(conn, table):
     first_col = conn.execute(
-        "select column_name from information_schema.columns"
-        " where table_schema = 'public' and table_name = %s order by ordinal_position limit 1", (table,)).fetchone()[0]
+        "select column_name from information_schema.columns"  # identity 열은 갱신 자체를 권한 검사 전에 거부한다
+        " where table_schema = 'public' and table_name = %s and is_identity = 'NO' order by ordinal_position limit 1",
+        (table,)).fetchone()[0]
     t = f"public.{table}"
     return {
         "select": f"select * from {t}",
@@ -189,6 +195,17 @@ def test_public_뷰는_security_invoker다(admin):
         " where n.nspname = 'public' and c.relkind = 'm'")]
     assert definer_views == []
     assert materialized == []
+
+
+@pytest.mark.parametrize("role", ["anon", "authenticated"])
+def test_anon·authenticated는_public_함수를_실행할_수_없다(admin, role):
+    executable = [r[0] for r in admin.execute(
+        "select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace"
+        " where n.nspname = 'public' and has_function_privilege(%s, p.oid, 'EXECUTE')", (role,))]
+    functions = [r[0] for r in admin.execute(
+        "select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'")]
+    assert {"keep_card_revision", "republish_from_hold_queue"} <= set(functions)  # 검사 대상이 비어서 통과하지 않게
+    assert executable == []
 
 
 def test_security_definer_함수가_없다(admin):
@@ -271,3 +288,141 @@ def test_분류_종류와_중요도_범위는_코드와_DB가_같다(aapl_filing
     for bad in ({"kind": "rumor"}, {"importance": 0}, {"importance": IMPORTANCE_MAX + 1}):
         with pytest.raises(errors.CheckViolation):
             classify_row(aapl_filing, **bad)
+
+
+# 보류함 재발행·수정 이력(U3·U4): 대시보드에서 service_role로 보류함 행을 고치는 것과 같은 SQL
+HUMAN = "Apple named a new CFO (SEC filing)"
+REPLACEMENT = "Apple filed a company update (SEC filing)"
+
+
+@pytest.fixture
+def held(store, admin):
+    """AAPL 카드 = 대체 줄 + 보류함 행 1개(금지어 두 번), MSFT 카드 = 공시 없음. 파이프라인으로 만든다."""
+    buy = json.dumps({"sentence": "Apple agreed to buy a startup"})
+    run(store, scenario([AAPL, MSFT], [filing(1, body="Apple agreed to acquire a startup.")], [reply(label(1)), buy, buy]))
+    return store
+
+
+def as_service_role(conn, sql, params=()):
+    with conn.transaction():
+        conn.execute("set local role service_role")
+        conn.execute(sql, params)
+
+
+def table_contents(conn, skip):
+    return {t: sorted(r[0] for r in conn.execute(f"select t::text from public.{t} t"))
+            for t in public_tables(conn) if t not in skip}
+
+
+def revisions(conn):
+    return conn.execute("select ticker, trading_day, previous->>'news_line_text' from public.stock_card_revision order by id").fetchall()
+
+
+def test_보류함에서_재발행하면_그_카드의_첫_번째_줄만_바뀌고_다른_테이블은_그대로다(admin, held):
+    before = {c.ticker: c for c in held.list_cards(FRI)}
+    others = table_contents(admin, {"stock_card", "hold_queue", "stock_card_revision"})
+    assert before["AAPL"].news_line.text == REPLACEMENT and others["sec_filing"]  # 검사 대상이 비어서 통과하지 않게
+
+    as_service_role(admin, "update public.hold_queue set edited_text = %s, state = 'republished'", (HUMAN,))
+
+    after = {c.ticker: c for c in held.list_cards(FRI)}
+    aapl = before["AAPL"]
+    assert after["AAPL"].news_line == dataclasses.replace(aapl.news_line, text=HUMAN)  # 줄 상태·출처 범위·확인 시각 그대로
+    assert dataclasses.replace(after["AAPL"], news_line=aapl.news_line, updated_at=None) == dataclasses.replace(aapl, updated_at=None)
+    assert after["MSFT"] == before["MSFT"]
+    assert table_contents(admin, {"stock_card", "hold_queue", "stock_card_revision"}) == others  # 아침 알림(#12)도 여기 들어온다
+    assert revisions(admin) == [("AAPL", FRI, REPLACEMENT)]  # 이전 내용은 수정 이력에
+
+
+def test_수정됨은_카드를_바꾸지_않는다(admin, held):
+    before = held.list_cards(FRI)
+    as_service_role(admin, "update public.hold_queue set edited_text = %s, state = 'edited'", (HUMAN,))
+
+    assert held.list_cards(FRI) == before
+    assert revisions(admin) == []
+
+
+@pytest.mark.parametrize("state", ["edited", "republished"])
+def test_고친_문장_없이_수정됨이나_재발행으로_바꿀_수_없다(admin, held, state):
+    with pytest.raises(errors.CheckViolation):
+        as_service_role(admin, "update public.hold_queue set state = %s", (state,))
+
+
+def test_공시_줄이_없는_카드는_재발행이_실패한다(admin, held):
+    admin.execute("update public.stock_card set news_line_text = 'No new SEC filings found', news_line_status = 'checked_none',"
+                  " news_line_accession = null where ticker = 'AAPL'")
+    with pytest.raises(errors.RaiseException):
+        as_service_role(admin, "update public.hold_queue set edited_text = %s, state = 'republished'", (HUMAN,))
+
+
+def test_보류함_단계·상태는_코드와_DB가_같다(admin):
+    assert enum_values(admin, "hold_stage") == [s.value for s in HoldStage]
+    assert enum_values(admin, "hold_state") == [s.value for s in HoldState]
+
+
+def test_수정_이력은_추가만_할_수_있다(admin):
+    allowed = [p for p in ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE")
+               if admin.execute("select has_table_privilege('service_role', 'public.stock_card_revision', %s)", (p,)).fetchone()[0]]
+    assert allowed == ["SELECT", "INSERT"]
+
+
+HOLD_SQL = ("insert into public.hold_queue (ticker, trading_day, accession, stage, draft_text, rules, replacement_text, edited_text)"
+            " values (%s, '2026-10-16', %s, %s, %s, %s, %s, %s)")
+HOLD_ROW = {"ticker": "AAPL", "accession": ACCESSION, "stage": "draft", "draft_text": None, "rules": ["1 draft: no_text"],
+            "replacement_text": REPLACEMENT, "edited_text": None}
+
+
+@pytest.fixture
+def aapl_card(aapl_filing):
+    aapl_filing.execute(f"insert into public.stock_card ({CARD_COLS}, news_line_text, news_line_status, news_line_checked_at,"
+                        " news_line_source_scope, news_line_accession) values ('AAPL', '2026-10-16', 'normal', 1.3,"
+                        f" 'checked_found', %s, 'checked_found', now(), 'SEC filings', %s)", (REPLACEMENT, ACCESSION))
+    return aapl_filing
+
+
+def hold_row(conn, **changes):
+    row = HOLD_ROW | changes
+    with conn.transaction(force_rollback=True):
+        conn.execute(HOLD_SQL, tuple(row.values()))
+
+
+def test_보류함_행은_대체_줄_행과_정정_공시_행_모양만_받는다(aapl_card):
+    hold_row(aapl_card)
+    hold_row(aapl_card, stage="amended_filing", rules=["정정 공시 있음"], replacement_text=None)
+
+
+@pytest.mark.parametrize(
+    "changes, error",
+    [
+        ({"rules": []}, errors.CheckViolation),
+        ({"stage": "amended_filing", "rules": ["정정 공시 있음"]}, errors.CheckViolation),  # 정정 행에 대체 줄
+        ({"replacement_text": None}, errors.CheckViolation),  # 검수 행에 대체 줄 없음
+        ({"stage": "amended_filing", "replacement_text": None, "draft_text": "Apple named a CFO"}, errors.CheckViolation),
+        ({"edited_text": ""}, errors.CheckViolation),
+        ({"ticker": "MSFT"}, errors.ForeignKeyViolation),  # 카드가 없는 종목
+    ],
+    ids=["규칙_없음", "정정_행에_대체_줄", "검수_행에_대체_줄_없음", "정정_행에_원래_문장", "빈_고친_문장", "없는_카드"],
+)
+def test_보류함_행_규칙을_DB가_막는다(aapl_card, changes, error):
+    with pytest.raises(error):
+        hold_row(aapl_card, **changes)
+
+
+def test_데이터_상태_문구_줄에는_출처_공시를_둘_수_없다(aapl_filing):
+    with pytest.raises(errors.CheckViolation):
+        aapl_filing.execute(f"insert into public.stock_card ({CARD_COLS}, news_line_text, news_line_status, news_line_checked_at,"
+                            " news_line_source_scope, news_line_accession) values ('AAPL', '2026-10-16', 'normal', 1.3,"
+                            " 'checked_found', 'No new SEC filings found', 'checked_none', now(), 'SEC filings', %s)",
+                            (ACCESSION,))
+
+
+def test_재발행한_행의_고친_문장을_다시_고치면_카드도_따라_바뀐다(admin, held):
+    second = "Apple named a new chief financial officer (SEC filing)"
+    as_service_role(admin, "update public.hold_queue set edited_text = %s, state = 'republished'", (HUMAN,))
+    as_service_role(admin, "update public.hold_queue set edited_text = %s", (second,))
+
+    assert {c.ticker: c.news_line.text for c in held.list_cards(FRI)}["AAPL"] == second
+    assert revisions(admin) == [("AAPL", FRI, REPLACEMENT), ("AAPL", FRI, HUMAN)]
+    as_service_role(admin, "update public.hold_queue set rules = rules")  # 상태·문장이 그대로인 갱신은 카드를 건드리지 않는다
+
+    assert len(revisions(admin)) == 2

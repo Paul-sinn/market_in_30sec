@@ -1,5 +1,6 @@
 """카드에 나가는 코드 줄(첫 번째 줄의 데이터 상태 문구, 두 번째·세 번째 줄)과 고정 문구. 화면 문구는 이 파일에만 둔다(copy-reviewer 검수 대상)."""
 
+import re
 from collections.abc import Sequence
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -26,6 +27,22 @@ EVENT_WINDOW = timedelta(days=365)  # U1 = C: 기간 제한 없이 가장 가까
 STREAK_MIN = 3  # U3: 연속 상승·하락 3일 이상
 NEAR_52W_PCT = Decimal("10.0")  # U4 = B: 52주 고점·저점 10% 이내
 
+# 대체 줄: 검수를 통과하지 못한 첫 번째 줄 대신. 8-K 항목 번호로 소식 종류만 밝힌다(보도자료 제목·서식 이름은 쓰지 않는다)
+REPLACEMENT_PHRASES = (
+    ("2.02", "reported quarterly results"),
+    ("5.02", "announced a leadership update"),  # 이사 선임·퇴임, 임원 보수만 다룬 5.02에도 참(executive change는 아님)
+    ("1.01", "signed a major agreement"),
+    ("2.01", "completed an acquisition or sale"),
+)  # 항목이 여럿이면 이 순서로 처음 맞는 것
+REPLACEMENT_OTHER = "filed a company update"  # U2: 옛 "filed an 8-K report"는 서식 이름 금지(#22)와 충돌
+REPLACEMENT_AMENDED = "updated an earlier report"  # U2: 8-K/A는 항목과 관계없이(없던 인사 변화를 새로 알리지 않게)
+
+_THE = re.compile(r"^The\s+", re.I)
+_LEGAL_TAIL = re.compile(
+    r"(?:\s*,\s*|\s+)(?:(?:&|and)\s+)?(?:Inc\.?|Incorporated|Corp\.?|Corporation|Co\.?|Company|Ltd\.?|Limited|plc|N\.V\.|S\.A\.|L\.P\.)$",
+    re.I,
+)
+
 WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # 고정 튜플: 서버 로캘이 바뀌어도 요일 표기가 같다
 TIMING_TEXT = {EarningsTiming.BEFORE_OPEN: "before open", EarningsTiming.AFTER_CLOSE: "after close"}
 
@@ -40,6 +57,24 @@ def news_template_line(news: TickerNews, checked_at: datetime) -> CardLine | Non
         # U4 = A: 공시가 있는데 후보가 없으면(전부 의견글 = 회사 공시라 분류 오류) "없음"으로 단정하지 않는다
         return delayed_line(NEWS_SCOPE, checked_at)
     return None
+
+
+def company_short_name(name: str) -> str:
+    """앞 'The '와 끝 법인 꼬리(Inc.·Corp.·Co.·Company·Ltd.·plc 등, 앞 쉼표·&·and 포함)를 반복해서 뗀다. 남는 게 없으면 원래 이름.
+    'Best Buy Co., Inc.' → 'Best Buy'. 대체 줄과 종목명 가리기가 같이 쓴다(첫 번째 줄 지시문도 꼬리를 떼고 쓰게 한다)."""
+    short = name
+    while (cut := _LEGAL_TAIL.sub("", _THE.sub("", short, count=1), count=1)) != short:
+        short = cut
+    return short.strip() or name
+
+
+def replacement_sentence(company: str, items: Sequence[str], amended: bool) -> str:
+    """대체 줄 문장. 끝 마침표·꼬리표·+N more 없음(조립은 newsline.news_text)."""
+    if amended:
+        phrase = REPLACEMENT_AMENDED
+    else:
+        phrase = next((p for item, p in REPLACEMENT_PHRASES if item in items), REPLACEMENT_OTHER)
+    return f"{company_short_name(company)} {phrase}"
 
 
 def event_line(events: Sequence[CorporateEvent] | None, trading_day: date, checked_at: datetime) -> CardLine:

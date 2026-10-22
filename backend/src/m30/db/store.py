@@ -4,12 +4,26 @@ from collections.abc import Iterable
 from datetime import date
 
 import psycopg
+from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
 from m30.adapters.filings import Filing
 from m30.adapters.indicators import IndicatorRelease
-from m30.config import DB_URL_VAR, ET, Settings
-from m30.models import CardLine, CardStatus, Classification, Coverage, LineStatus, NewsKind, StockCard, UnclassifiedReason
+from m30.config import DB_URL_VAR, ET, ConfigError, Settings, is_local_db
+from m30.models import (
+    AMENDED_RULE,
+    CardLine,
+    CardStatus,
+    Classification,
+    Coverage,
+    HoldItem,
+    HoldStage,
+    HoldState,
+    LineStatus,
+    NewsKind,
+    StockCard,
+    UnclassifiedReason,
+)
 
 LINES = ("news_line", "event_line", "price_fact_line")
 LINE_ATTRS = ("text", "status", "checked_at", "source_scope")
@@ -21,6 +35,7 @@ CARD_COLUMNS = (
     "change_status",
     *(f"{line}_{attr}" for line in LINES for attr in LINE_ATTRS),
     "leverage_tag",
+    "news_line_accession",
 )
 _UPSERT_CARD = (
     f"insert into public.stock_card ({', '.join(CARD_COLUMNS)}) values ({', '.join(['%s'] * len(CARD_COLUMNS))})"
@@ -30,14 +45,27 @@ _UPSERT_CARD = (
 )
 
 
+class DBConnectError(psycopg.OperationalError):
+    """connect()가 다시 던지는 연결 실패. 문구는 이 모듈이 쓴 것뿐(주소·비밀번호 없음)이라 공개 로그에 찍어도 된다."""
+
+
 def connect(settings: Settings) -> psycopg.Connection:
-    """autocommit 연결 후 service_role로 권한을 낮춘다(서버 코드는 DDL을 못 한다)."""
+    """autocommit 연결 후 service_role로 권한을 낮춘다(서버 코드는 DDL을 못 한다).
+    비로컬: 트랜잭션 풀러(6543)는 거부(문장마다 서버 연결이 바뀌어 set role이 유지되지 않는다), sslmode=require로 덮어쓴다.
+    shortcut: require는 서버 인증서를 검증하지 않는다, 검증이 필요하면 Supabase CA 인증서 + verify-full."""
+    local = is_local_db(settings.database_url)
     try:
-        conn = psycopg.connect(settings.database_url, autocommit=True)
+        ports = (conninfo_to_dict(settings.database_url).get("port") or "").split(",")  # 여러 호스트면 "5432,6543"
+        if not local and any(p.strip().isdigit() and int(p) == 6543 for p in ports):
+            raise ConfigError(
+                f"{DB_URL_VAR}이 트랜잭션 풀러(포트 6543)입니다. 세션 풀러(포트 5432) 주소를 쓰세요: set role이 연결 내내 유지돼야 합니다"
+            )
+        conn = psycopg.connect(settings.database_url, autocommit=True, **({} if local else {"sslmode": "require"}))
     except psycopg.Error:
         # psycopg 프레임 인자(conninfo)·주소 파싱 오류 메시지에 비밀번호가 있어 원래 예외를 끊고 다시 던진다
-        raise psycopg.OperationalError(
-            f"{DB_URL_VAR}로 DB에 연결하지 못했습니다. 로컬이면 supabase start와 README의 export 줄을 확인하세요"
+        raise DBConnectError(
+            f"{DB_URL_VAR}로 DB에 연결하지 못했습니다. 로컬이면 supabase start와 README의 export 줄을,"
+            " 운영이면 세션 풀러(포트 5432) 주소와 비밀번호를 확인하세요"
         ) from None
     try:
         conn.execute("set role service_role")
@@ -88,6 +116,7 @@ class CardStore:
             *_line_values(card.event_line),
             *_line_values(card.price_fact_line),
             card.leverage_tag,
+            card.news_line_accession,
         )
         self._conn.execute(_UPSERT_CARD, values)
 
@@ -98,13 +127,15 @@ class CardStore:
     def save_filings(self, trading_day: date, filings: Iterable[Filing]) -> frozenset[str]:
         """공시 원본 저장. 이미 있는 접수번호는 건드리지 않는다(처음 받은 원본·거래일 유지).
         돌려주는 값: 넘긴 접수번호 중 처음 받은 거래일이 trading_day인 것 = 이번 카드의 새 소식."""
-        rows = [(f.accession, f.cik, f.form.value, f.accepted_at, list(f.items), trading_day, f.raw) for f in filings]
+        rows = [
+            (f.accession, f.cik, f.form.value, f.accepted_at, list(f.items), trading_day, f.raw, f.report_date) for f in filings
+        ]
         if not rows:
             return frozenset()
         with self._conn.cursor() as cur:
             cur.executemany(
-                "insert into public.sec_filing (accession, cik, form, accepted_at, items, trading_day, payload)"
-                " values (%s, %s, %s, %s, %s, %s, %s) on conflict (accession) do nothing",
+                "insert into public.sec_filing (accession, cik, form, accepted_at, items, trading_day, payload, report_date)"
+                " values (%s, %s, %s, %s, %s, %s, %s, %s) on conflict (accession) do nothing",
                 rows,
             )
             found = cur.execute(
@@ -187,6 +218,69 @@ class CardStore:
                 price_fact_line=_line(r, "price_fact_line"),
                 leverage_tag=r["leverage_tag"],
                 updated_at=r["updated_at"].astimezone(ET),
+                news_line_accession=r["news_line_accession"],
             )
             for r in rows
+        ]
+
+    def republished_news(self, trading_day: date) -> dict[str, tuple[str, str | None]]:
+        """티커 → (카드 첫 번째 줄 문구, news_line_accession): trading_day 카드 중 republished 보류함 행이 있는 카드의 현재 값.
+        카드 루프 전에 읽는다(재실행이 사람이 재발행한 줄을 덮지 않게)."""
+        rows = self._conn.execute(
+            "select c.ticker, c.news_line_text, c.news_line_accession from public.stock_card c"
+            " where c.trading_day = %s and exists (select from public.hold_queue h where h.ticker = c.ticker"
+            " and h.trading_day = c.trading_day and h.state = 'republished')",
+            (trading_day,),
+        )
+        return {ticker: (text, accession) for ticker, text, accession in rows}
+
+    def replace_hold_items(self, trading_day: date, rows: Iterable[HoldItem]) -> None:
+        """한 트랜잭션: trading_day의 pending이면서 amended_filing이 아닌 행을 지우고 rows를 넣는다.
+        on conflict do nothing: 사람이 손댄 행·정정 행과 키가 겹치면 그 행을 그대로 둔다. 같은 입력이면 같은 행."""
+        values = [
+            (r.ticker, r.trading_day, r.accession, r.stage.value, r.draft_text, list(r.rules), r.replacement_text,
+             r.state.value, r.edited_text)
+            for r in rows
+        ]
+        with self._conn.transaction(), self._conn.cursor() as cur:
+            cur.execute(
+                "delete from public.hold_queue where trading_day = %s and state = 'pending' and stage <> 'amended_filing'",
+                (trading_day,),
+            )
+            cur.executemany(
+                "insert into public.hold_queue"
+                " (ticker, trading_day, accession, stage, draft_text, rules, replacement_text, state, edited_text)"
+                " values (%s, %s, %s, %s, %s, %s, %s, %s, %s) on conflict do nothing",
+                values,
+            )
+
+    def flag_amended_cards(self, trading_day: date, amendments: Iterable[Filing]) -> None:
+        """8-K/A마다(report_date 없으면 건너뜀) 같은 CIK·같은 report_date의 다른 공시를 첫 번째 줄로 쓴 trading_day 이전 카드에
+        (그 카드의 종목·거래일, 8-K/A 접수번호, amended_filing, [AMENDED_RULE]) 행을 넣는다(있으면 그대로). 카드는 건드리지 않는다.
+        shortcut: 보고 기준일을 주지 않는 출처면 원래 공시를 못 찾는다, #19가 EDGAR reportDate를 채우면 해소."""
+        values = [
+            (a.accession, [AMENDED_RULE], a.cik, a.report_date, a.accession, trading_day)
+            for a in amendments
+            if a.report_date is not None
+        ]
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                "insert into public.hold_queue (ticker, trading_day, accession, stage, rules)"
+                " select c.ticker, c.trading_day, %s, 'amended_filing', %s"
+                " from public.stock_card c join public.sec_filing f on f.accession = c.news_line_accession"
+                " where f.cik = %s and f.report_date = %s and f.accession <> %s and c.trading_day < %s"
+                " on conflict do nothing",
+                values,
+            )
+
+    def list_hold_items(self, trading_day: date) -> list[HoldItem]:
+        """trading_day 행, (종목, 접수번호) 순."""
+        rows = self._conn.execute(
+            "select ticker, trading_day, accession, stage::text, draft_text, rules, replacement_text, state::text, edited_text"
+            " from public.hold_queue where trading_day = %s order by ticker, accession",
+            (trading_day,),
+        )
+        return [
+            HoldItem(ticker, day, accession, HoldStage(stage), draft, tuple(rules), replacement, HoldState(state), edited)
+            for ticker, day, accession, stage, draft, rules, replacement, state, edited in rows
         ]

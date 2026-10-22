@@ -106,3 +106,40 @@ class StockCard:
     price_fact_line: CardLine | None = None
     leverage_tag: str | None = None  # 예: "3x · resets daily". None = 레버리지 상품 아님
     updated_at: datetime | None = None  # DB가 채움. 저장소에서 읽은 카드에만 있음 (ET)
+    news_line_accession: str | None = None  # 첫 번째 줄이 쓴 공시(통과·대체·재발행 줄). 데이터 상태 문구면 None
+
+
+class HoldStage(StrEnum):
+    """보류함 행이 걸린 단계. 바꾸면 마이그레이션 enum도 같이."""
+
+    DRAFT = "draft"  # 초안 형식(빈 응답·거절·남은 #·두 문장·15단어 초과) 또는 문장 없음(JSON 깨짐·전송 실패·상한·본문 없음)
+    NUMBERS = "numbers"  # 숫자 대조
+    COPY_RULES = "copy_rules"  # 금지어 검사(m30.copy_rules)
+    FACT_CHECK = "fact_check"  # 사실/예측 판정: 예측·의견, 또는 판정 LLM 실패
+    AMENDED_FILING = "amended_filing"  # 발행된 카드가 쓴 공시에 정정 공시(8-K/A)가 옴
+
+
+class HoldState(StrEnum):
+    """보류함 처리 상태. 바꾸면 마이그레이션 enum도 같이."""
+
+    PENDING = "pending"  # 대기
+    EDITED = "edited"  # 수정됨: edited_text를 썼고 카드는 그대로
+    REPUBLISHED = "republished"  # 재발행됨: 카드 첫 번째 줄 = edited_text (DB 트리거)
+
+
+AMENDED_RULE = "정정 공시 있음"
+
+
+@dataclass(frozen=True)
+class HoldItem:
+    """hold_queue 한 행(GLOSSARY HoldQueue)."""
+
+    ticker: str
+    trading_day: date
+    accession: str  # 이 행을 만든 공시(검수 = 초안의 공시, 정정 = 8-K/A)
+    stage: HoldStage
+    draft_text: str | None  # 원래 문장(마지막으로 받은 LLM 문장). None = 문장 없음·정정 행
+    rules: tuple[str, ...]  # 걸린 규칙. 비지 않는다
+    replacement_text: str | None  # 카드에 들어간 대체 줄. 정정 행은 None(카드를 고치지 않는다)
+    state: HoldState = HoldState.PENDING
+    edited_text: str | None = None  # 사람이 쓴 첫 번째 줄(꼬리표 포함 전체)

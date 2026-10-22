@@ -22,3 +22,20 @@ class TransientSourceError(SourceError):
 
 class AccessDeniedError(SourceError):
     """401·403(키 오류, SEC 차단). 재시도하지 않고, 이번 실행에서 그 출처를 더 부르지 않는다. 실행 요약 맨 위."""
+
+
+class RateLimitedError(TransientSourceError):
+    """429. 일시 실패처럼 다시 시도하고, 이번 실행에서 429를 낸 출처는 실행 요약 rate_limited에 남는다."""
+
+
+def error_for_status(label: str, status: int) -> SourceError:
+    """401·403 → AccessDeniedError, 429 → RateLimitedError, 500~599(529 포함) → TransientSourceError, 그 외(30x 포함) →
+    SourceError. 메시지는 f"{label} http {status}"뿐(응답 본문·헤더·URL 없음). Anthropic·SEC가 같이 쓴다(HANDOFF 3-10 한 벌)."""
+    message = f"{label} http {status}"
+    if status in (401, 403):
+        return AccessDeniedError(message)
+    if status == 429:
+        return RateLimitedError(message)
+    if 500 <= status <= 599:
+        return TransientSourceError(message)
+    return SourceError(message)

@@ -1,0 +1,54 @@
+<SEC-DOCUMENT>0000320193-26-000102.txt : 20261015
+<SEC-HEADER>0000320193-26-000102.hdr.sgml : 20261015
+<ACCEPTANCE-DATETIME>20261015170500
+ACCESSION NUMBER:		0000320193-26-000102
+CONFORMED SUBMISSION TYPE:	8-K/A
+PUBLIC DOCUMENT COUNT:		3
+CONFORMED PERIOD OF REPORT:	20261001
+ITEM INFORMATION:		Departure of Directors or Certain Officers; Election of Directors; Appointment of Certain Officers: Compensatory Arrangements of Certain Officers
+FILED AS OF DATE:		20261015
+</SEC-HEADER>
+<DOCUMENT>
+<TYPE>8-K/A
+<SEQUENCE>1
+<FILENAME>aapl-20261001a.htm
+<DESCRIPTION>8-K/A
+<TEXT>
+<XBRL>
+<?xml version="1.0" encoding="utf-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:ix="http://www.xbrl.org/2013/inlineXBRL">
+<head><title>aapl-20261001a</title></head>
+<body>
+<div style="display:none"><ix:header><ix:hidden><ix:nonNumeric name="dei:EntityCentralIndexKey" contextRef="c-1">0000320193</ix:nonNumeric><ix:nonNumeric name="dei:AmendmentFlag" contextRef="c-1">true</ix:nonNumeric></ix:hidden></ix:header></div>
+<div style="text-align:center"><span>SECURITIES AND EXCHANGE COMMISSION</span></div>
+<div style="text-align:center"><span>FORM 8-K/A</span></div>
+<div style="text-align:center"><span>(Amendment No. 1)</span></div>
+<table><tr><td><span>Common Stock, $0.00001 par value per share</span></td><td><span>AAPL</span></td></tr></table>
+<div><span style="font-weight:700">EXPLANATORY NOTE</span></div>
+<div><span>This Amendment No. 1 amends the Current Report on Form 8-K filed by Apple Inc. on October 1, 2026 to report the compensation of the new Chief Financial Officer, which was not determined at the time of the original filing.</span></div>
+<div><span style="font-weight:700">Item 5.02</span><span>&#160;&#160;Departure of Directors or Certain Officers; Election of Directors; Appointment of Certain Officers.</span></div>
+<div><span>The Compensation Committee approved an annual base salary for the Chief Financial Officer.</span></div>
+</body>
+</html>
+</XBRL>
+</TEXT>
+</DOCUMENT>
+<DOCUMENT>
+<TYPE>EX-10.1
+<SEQUENCE>2
+<FILENAME>exhibit101-offerletter.htm
+<DESCRIPTION>EX-10.1
+<TEXT>
+<html><body><p>Ex101Marker Offer letter between Apple Inc. and the Chief Financial Officer, annual base salary $1,000,000.</p></body></html>
+</TEXT>
+</DOCUMENT>
+<DOCUMENT>
+<TYPE>EX-104
+<SEQUENCE>3
+<FILENAME>exhibit104.htm
+<DESCRIPTION>EX-104
+<TEXT>
+<html><body><p>Ex104Marker Cover Page Interactive Data File (embedded within the Inline XBRL document).</p></body></html>
+</TEXT>
+</DOCUMENT>
+</SEC-DOCUMENT>

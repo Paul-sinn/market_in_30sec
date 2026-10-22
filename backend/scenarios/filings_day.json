@@ -38,6 +38,8 @@
       {"id": 3, "ticker": "AAPL", "kind": "earnings", "importance": 5, "opinion": false}
     ]},
     {"sentence": "Apple reported Q4 revenue of $102.5B"},
-    {"sentence": "Alphabet updated an earlier report on its new finance chief's pay"}
+    {"sentence": "Alphabet updated an earlier report on its new finance chief's pay"},
+    {"label": "fact"},
+    {"label": "fact"}
   ]
 }

@@ -13,7 +13,17 @@ from m30.adapters.prices import PriceSource
 from m30.config import ET
 from m30.db.store import CardStore
 from m30.llm import LLM, LLMBudget, LLMRequest
-from m30.models import CardLine, CardStatus, Classification, Coverage, LineStatus, NewsCandidate, StockCard, TickerNews
+from m30.models import (
+    CardLine,
+    CardStatus,
+    Classification,
+    Coverage,
+    HoldItem,
+    LineStatus,
+    NewsCandidate,
+    StockCard,
+    TickerNews,
+)
 from m30.pipeline.classify import Classified, FilingItem, SkippedBatch, batch_count, classify
 from m30.pipeline.collect import (
     SourceCalls,
@@ -28,6 +38,7 @@ from m30.pipeline.compute import bars_usable, change_pct
 from m30.pipeline.lines import (
     EVENT_SCOPE,
     EVENT_WINDOW,
+    NEWS_SCOPE,
     PRICE_SCOPE,
     delayed_line,
     event_line,
@@ -36,6 +47,7 @@ from m30.pipeline.lines import (
     price_fact_line,
 )
 from m30.pipeline.newsline import NewsDraft, write_news_drafts
+from m30.pipeline.review import NewsReview, review_drafts
 
 LOOKBACK = timedelta(weeks=53)  # 52주 이력 + 52주 전 날이 휴장일이어도 거래일이 들어가는 1주
 
@@ -44,6 +56,7 @@ LOOKBACK = timedelta(weeks=53)  # 52주 이력 + 52주 전 날이 휴장일이�
 class RunSummary:
     trading_day: date
     access_denied: tuple[Source, ...]  # 401·403이 난 출처. 요약 맨 위에 표시
+    rate_limited: tuple[Source, ...]  # 429를 낸 출처(다시 시도로 성공했어도). access_denied 바로 아래 표시
     cards_saved: int
     change_delayed: tuple[str, ...]  # 등락률을 계산 못 해 delayed로 저장한 티커 (오름차순)
     failures: tuple[SourceFailure, ...]  # 재시도 뒤에도 실패한 출처·대상
@@ -54,7 +67,8 @@ class RunSummary:
     llm_calls: int  # 보낸 LLM 요청 수(재시도 포함)
     llm_call_limit: int  # 실행당 LLM 호출 상한
     news: dict[str, TickerNews]  # 커버 범위 티커 → 첫 번째 줄 상태·후보 (#6의 입력)
-    drafts: dict[str, NewsDraft]  # 소식 있는 종목 → 첫 번째 줄 초안. 검수(#7) 전이라 카드·DB·CLI에 문장을 내보내지 않는다
+    drafts: dict[str, NewsDraft]  # 소식 있는 종목 → 첫 번째 줄 초안(검수 전). 카드에는 reviews의 줄만 간다
+    reviews: dict[str, NewsReview]  # 소식 있는 종목 → 검수 결과(통과한 줄 또는 대체 줄)
 
 
 class MorningPipeline:
@@ -90,13 +104,16 @@ class MorningPipeline:
         budget = LLMBudget(self._llm, len(coverage) * 4 + batch_count(items))  # 생성 대상 = 커버 범위 전체(#8 전)
 
         def send(subject: str, request: LLMRequest) -> str:
-            """LLM 호출 창구 하나: 분류(묶음 번호)·첫 번째 줄(접수번호)이 같은 상한·재시도·차단을 쓴다."""
+            """LLM 호출 창구 하나: 분류(묶음 번호)·첫 번째 줄·판정(접수번호)이 같은 상한·재시도·차단을 쓴다."""
             return calls.call(Source.LLM, subject, lambda: budget.complete(request), lambda text: isinstance(text, str))
 
         outcomes, skipped = classify(items, trading_day, lambda n, request: send(str(n), request))
         self._store.replace_classifications(trading_day, _classification_rows(items, outcomes))
         news = {cov.ticker: _ticker_news(cov, failed_ciks, items, outcomes) for cov in coverage}
-        drafts = write_news_drafts(news, {i.filing.accession: i for i in items}, trading_day, send)
+        by_accession = {i.filing.accession: i for i in items}
+        drafts = write_news_drafts(news, by_accession, trading_day, send)
+        reviews = review_drafts(drafts, news, by_accession, {c.ticker: c.name for c in coverage}, trading_day, send)
+        kept = self._store.republished_news(trading_day)  # 사람이 재발행한 첫 번째 줄은 재실행이 덮지 않는다
         saved = 0
         delayed = []
         for cov in coverage:
@@ -112,26 +129,43 @@ class MorningPipeline:
             usable = bars_usable(bars, trading_day)  # 지난 카드 값은 읽지 않는다. 그날 받은 봉으로만
             pct = change_pct(bars) if usable else None
             price_fact = price_fact_line(bars, checked_at) if usable else delayed_line(PRICE_SCOPE, checked_at)
-            news_line = news_template_line(news[cov.ticker], checked_at)  # LLM 초안은 검수(#7) 전에 카드에 쓰지 않는다
+            # 첫 번째 줄의 출처는 셋뿐: 사람이 재발행한 줄, 검수 결과(통과한 줄·대체 줄), LLM 없는 데이터 상태 문구
+            if cov.ticker in kept:
+                text, accession = kept[cov.ticker]
+                news_line = CardLine(text, LineStatus.CHECKED_FOUND, checked_at, NEWS_SCOPE)
+            elif cov.ticker in reviews:
+                accession = reviews[cov.ticker].accession
+                news_line = CardLine(reviews[cov.ticker].line, LineStatus.CHECKED_FOUND, checked_at, NEWS_SCOPE)
+            else:
+                accession, news_line = None, news_template_line(news[cov.ticker], checked_at)
             self._store.upsert_card(
                 StockCard(
                     ticker=cov.ticker,
                     trading_day=trading_day,
-                    status=CardStatus.FALLBACK if news_line is None else CardStatus.NORMAL,  # 축소판 = 소식 있음, 검수 대기
+                    status=CardStatus.FALLBACK if news_line is None else CardStatus.NORMAL,  # 축소판은 7:45 마감(미구현)용
                     change_pct=pct,
                     change_status=LineStatus.DELAYED if pct is None else LineStatus.CHECKED_FOUND,
                     news_line=news_line,
                     event_line=self._event_line(cov.ticker, trading_day, checked_at, calls),
                     price_fact_line=price_fact,
                     leverage_tag=leverage_tag(cov.leverage),
+                    news_line_accession=accession,
                 )
             )
             saved += 1
             if pct is None:
                 delayed.append(cov.ticker)
+        # 카드를 먼저 쓴다(외래 키). U1 = A: 대체 줄이 카드에 들어간 종목마다 보류함 행 하나
+        self._store.replace_hold_items(trading_day, [
+            HoldItem(t, trading_day, r.accession, r.stage, r.draft_text, r.rules, r.line)
+            for t, r in reviews.items()
+            if r.stage is not None and t not in kept
+        ])
+        self._store.flag_amended_cards(trading_day, [i.filing for i in items if i.filing.form is FilingForm.EIGHT_K_A])
         return RunSummary(
             trading_day=trading_day,
             access_denied=calls.access_denied,
+            rate_limited=calls.rate_limited,
             cards_saved=saved,
             change_delayed=tuple(delayed),
             failures=calls.failures,
@@ -143,6 +177,7 @@ class MorningPipeline:
             llm_call_limit=budget.limit,
             news=news,
             drafts=drafts,
+            reviews=reviews,
         )
 
     def _collect_filings(

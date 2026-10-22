@@ -8,9 +8,9 @@ from decimal import Decimal
 from enum import StrEnum
 from itertools import pairwise
 
-from m30.adapters import AccessDeniedError, Source, SourceError, TransientSourceError
+from m30.adapters import AccessDeniedError, RateLimitedError, Source, SourceError, TransientSourceError
 from m30.adapters.events import Earnings, EarningsTiming, ExDividend
-from m30.adapters.filings import Filing, FilingForm
+from m30.adapters.filings import ACCESSION, Filing, FilingForm
 from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.prices import DailyBar
 from m30.config import ET
@@ -18,7 +18,6 @@ from m30.trading_day import previous_trading_day
 
 RETRY_DELAYS = (1.0, 2.0, 4.0)  # U5 = A. 길이 = 재시도 횟수(3) → 최대 4번 호출. 지터 없음(서버 1대, 결정적 테스트)
 CUTOFF = time(4, 0)  # 수집 시각(HANDOFF 3-6). 공시 기간의 경계
-ACCESSION = re.compile(r"[0-9]{10}-[0-9]{2}-[0-9]{6}")
 ITEM = re.compile(r"[0-9]\.[0-9]{2}")
 
 
@@ -38,7 +37,7 @@ class FailureReason(StrEnum):
 @dataclass(frozen=True, order=True)
 class SourceFailure:
     source: Source
-    subject: str | None  # 티커(시세·일정), CIK(공시), 묶음 번호(LLM 분류)·접수번호(LLM 첫 번째 줄), None(지표)
+    subject: str | None  # 티커(시세·일정), CIK(공시), 묶음 번호(LLM 분류)·접수번호(LLM 첫 번째 줄·판정), None(지표)
     reason: FailureReason
 
 
@@ -50,6 +49,7 @@ class SourceCalls:
         self._sleep = sleep
         self._failures: list[SourceFailure] = []
         self._denied: set[Source] = set()
+        self._rate_limited: set[Source] = set()
 
     def call[T](self, source: Source, subject: str | None, fetch: Callable[[], T], valid: Callable[[T], bool]) -> T:
         """최종 실패는 기록 후 그 SourceError를 그대로 올린다. 받은 값이 valid가 아니면 기록 후 SourceError.
@@ -57,7 +57,7 @@ class SourceCalls:
         try:
             if source in self._denied:  # 차단된 출처를 계속 부르면 SEC 차단이 길어지고 키 오류는 같은 실패만 반복한다
                 raise AccessDeniedError(f"{source} denied earlier in this run")
-            value = self._retrying(fetch)
+            value = self._retrying(source, fetch)
         except SourceError as e:
             if isinstance(e, AccessDeniedError):
                 self._denied.add(source)
@@ -68,17 +68,29 @@ class SourceCalls:
             raise SourceError(f"{source} returned invalid data for {subject}")
         return value
 
-    def _retrying[T](self, fetch: Callable[[], T]) -> T:
+    def _retrying[T](self, source: Source, fetch: Callable[[], T]) -> T:
         for delay in RETRY_DELAYS:
             try:
-                return fetch()
+                return self._fetch(source, fetch)
             except TransientSourceError:
                 self._sleep(delay)
-        return fetch()
+        return self._fetch(source, fetch)
+
+    def _fetch[T](self, source: Source, fetch: Callable[[], T]) -> T:
+        try:
+            return fetch()
+        except RateLimitedError:  # 다시 시도로 풀려도 남긴다: 429는 요청 간격을 다시 봐야 한다는 신호
+            self._rate_limited.add(source)
+            raise
 
     @property
     def access_denied(self) -> tuple[Source, ...]:
         return tuple(sorted(self._denied))
+
+    @property
+    def rate_limited(self) -> tuple[Source, ...]:
+        """이번 실행에서 429를 한 번이라도 낸 출처. 다시 시도로 성공했어도 남는다."""
+        return tuple(sorted(self._rate_limited))
 
     @property
     def failures(self) -> tuple[SourceFailure, ...]:
@@ -139,6 +151,7 @@ def valid_filings(filings: object, cik: str) -> bool:
         and all(text is None or _is_text(text) for text in (f.body, f.exhibit99))
         and _is_text(f.raw)
         and f.raw != ""
+        and (f.report_date is None or _is_day(f.report_date))
         for f in filings
     )
 

@@ -3,10 +3,13 @@
 import dataclasses
 import json
 import signal
+import subprocess
+import sys
 import time
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -60,12 +63,13 @@ def run(store, scenario, day=FRI):
 
 
 def filing(n, accepted_at="2026-10-15T10:00:00-04:00", cik=AAPL_CIK, form="8-K", items=("8.01",),
-           body=None, exhibit99=None):
-    """접수번호 {cik}-26-{n:06d}. raw는 가짜 로더처럼 항목 JSON. 기본은 본문 없음: 후보가 돼도 첫 번째 줄 LLM을 부르지 않는다."""
+           body=None, exhibit99=None, report_date=None):
+    """접수번호 {cik}-26-{n:06d}. raw는 가짜 로더처럼 항목 JSON(report_date는 줄 때만). 기본은 본문 없음: 후보가 돼도 첫 번째 줄 LLM을
+    부르지 않는다."""
     row = {"accession": f"{cik}-26-{n:06d}", "form": form, "accepted_at": accepted_at, "items": list(items),
-           "body": body, "exhibit99": exhibit99}
+           "body": body, "exhibit99": exhibit99} | ({"report_date": report_date} if report_date else {})
     return Filing(row["accession"], cik, FilingForm(form), datetime.fromisoformat(accepted_at), tuple(items), body,
-                  exhibit99, json.dumps(row, sort_keys=True))
+                  exhibit99, json.dumps(row, sort_keys=True), report_date and date.fromisoformat(report_date))
 
 
 def scenario(coverage, filings=(), replies=(), **more):
@@ -85,6 +89,7 @@ def reply(*labels):
 
 
 LINE = json.dumps({"sentence": "Apple named a new CFO"})  # 첫 번째 줄 응답: 본문 있는 공시가 후보가 되면 분류 뒤에 불린다
+FACT = json.dumps({"label": "fact"})  # 사실/예측 판정 응답: 첫 번째 줄이 코드 검사를 통과하면 그 뒤에 불린다
 
 
 def block(request):
@@ -129,7 +134,7 @@ def test_공시_원문은_프롬프트의_데이터_블록_안에만_들어간�
 def test_분류_지시문은_날짜·데이터와_관계없이_같다(store, filings_day):
     fri = run(store, filings_day)
     thu = run(store, scenario([AAPL], [filing(1, "2026-10-14T16:00:00-04:00", exhibit99="Apple named a new CFO.")],
-                              [reply(label(1)), LINE]), THU)
+                              [reply(label(1)), LINE, FACT]), THU)
 
     assert fri.llm.requests[0].user != thu.llm.requests[0].user
     assert fri.llm.requests[0].system == thu.llm.requests[0].system  # 캐싱 접두가 실행마다 같다
@@ -144,7 +149,7 @@ def test_분류_요청은_설정의_claude_haiku_5_5_모델과_응답_2000토큰
 
 def test_거대_첨부도_원본은_자르지_않고_프롬프트에는_앞부분_상한까지만_넣는다(store):
     big = "word " * 2000  # 공백을 모으면 9,999자
-    ran = run(store, scenario([AAPL], [filing(1, exhibit99=big)], [reply(label(1)), LINE]))
+    ran = run(store, scenario([AAPL], [filing(1, exhibit99=big)], [reply(label(1)), LINE, FACT]))
 
     assert json.loads(store.list_raw_filings(FRI)[f"{AAPL_CIK}-26-000001"])["exhibit99"] == big
     [item] = block(ran.llm.requests[0])
@@ -158,7 +163,7 @@ def test_거대_첨부도_원본은_자르지_않고_프롬프트에는_앞부�
 )
 def test_본문은_Exhibit_99_없으면_8_K_본문_둘_다_못_읽으면_항목_번호만_넣는다(store, body, exhibit99, text):
     ran = run(store, scenario([AAPL], [filing(1, items=("2.02", "9.01"), body=body, exhibit99=exhibit99)],
-                              [reply(label(1)), LINE]))
+                              [reply(label(1)), LINE, FACT]))
 
     [item] = block(ran.llm.requests[0])
     assert (item["text"], item["truncated"], item["items"]) == (text, False, ["2.02", "9.01"])
@@ -166,7 +171,7 @@ def test_본문은_Exhibit_99_없으면_8_K_본문_둘_다_못_읽으면_항목_
 
 @pytest.mark.parametrize("length, truncated", [(4000, False), (4001, True)], ids=["상한과_같음", "한_글자_넘음"])
 def test_상한과_같은_길이는_자르지_않고_한_글자_넘으면_자른다(store, length, truncated):
-    ran = run(store, scenario([AAPL], [filing(1, exhibit99="x" * length)], [reply(label(1)), LINE]))
+    ran = run(store, scenario([AAPL], [filing(1, exhibit99="x" * length)], [reply(label(1)), LINE, FACT]))
 
     [item] = block(ran.llm.requests[0])
     assert (item["text"], item["truncated"]) == ("x" * 4000, truncated)
@@ -409,7 +414,7 @@ def test_같은_접수번호가_두_CIK에서_와도_원본_하나_분류_입력
 
 def test_이미_다른_거래일_카드에_들어간_접수번호는_다시_소식이_되지_않는다(store):
     thu_filing = filing(9, "2026-10-14T16:00:00-04:00", body="first")
-    run(store, scenario([AAPL], [thu_filing], [reply(label(1)), LINE]), THU)
+    run(store, scenario([AAPL], [thu_filing], [reply(label(1)), LINE, FACT]), THU)
     ran = run(store, scenario([AAPL], [filing(9, "2026-10-15T10:00:00-04:00", body="changed")]), FRI)  # 같은 접수번호를 다시 보냄
 
     assert ran.llm.requests == []
@@ -496,6 +501,7 @@ ERRORS = {  # 실패 종류 → (가짜 호출 수, 대기, 실패 사유)
     "transient": (4, [1.0, 2.0, 4.0], FailureReason.RETRIES_EXHAUSTED),
     "error": (1, [], FailureReason.ERROR),
     "access_denied": (1, [], FailureReason.ACCESS_DENIED),
+    "rate_limited": (4, [1.0, 2.0, 4.0], FailureReason.RETRIES_EXHAUSTED),  # 429: 일시 실패처럼 다시 시도
 }
 FAILURE_CASES = [(source, error) for source in Source for error in ERRORS]
 
@@ -517,6 +523,7 @@ def test_출처마다_실패_종류에_따라_재시도하고_그_범위만_지�
     blocked = [NEXT_SUBJECT[source]] if denied and source in NEXT_SUBJECT else []  # 부르지 않은 대상도 실패로 남는다
     assert ran.summary.failures == tuple(SourceFailure(source, s, reason) for s in [FAILED_SUBJECT[source], *blocked])
     assert ran.summary.access_denied == ((source,) if denied else ())
+    assert ran.summary.rate_limited == ((source,) if error == "rate_limited" else ())
 
     expected = {"AAPL": dict(NORMAL), "MSFT": dict(NORMAL)}
     if source in NEXT_SUBJECT:
@@ -531,6 +538,22 @@ def test_출처마다_실패_종류에_따라_재시도하고_그_범위만_지�
         assert {r.unclassified for r in store.list_classifications(FRI)} == {UnclassifiedReason.BATCH_FAILED}
     else:
         assert ran.summary.skipped_batches == ()
+
+
+def test_CLI는_429를_낸_출처를_다시_시도해_성공해도_ACCESS_DENIED_바로_아래_줄에_찍는다(admin, filings_day, tmp_path):
+    # 입구 3(프로세스 출력, 오케스트레이터 결정): CLI를 하위 프로세스로 실제로 돌린다(로컬 DB, admin이 먼저 비운다). 1초 실제 대기
+    path = tmp_path / "rate_limited.json"
+    path.write_text(json.dumps(json.loads(filings_day.read_text()) | {"failures": [
+        {"source": "sec_filings", "subject": AAPL_CIK, "error": "rate_limited", "times": 1},
+        {"source": "events", "subject": "MSFT", "error": "access_denied"},
+    ]}))
+    r = subprocess.run([sys.executable, "-m", "m30.pipeline", "2026-10-16", "--scenario", str(path)],
+                       cwd=Path(__file__).resolve().parent.parent, capture_output=True, text=True, timeout=60)
+
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.splitlines()[:2] == ["ACCESS DENIED (not retried): events", "RATE LIMITED (429, retried): sec_filings"]
+    # 429는 다시 시도로 풀려 실패로 남지 않는다(sec_filings 없음). SPY 일정은 MSFT 403 뒤라 부르지 않고 차단으로 남는다
+    assert r.stdout.splitlines()[-1] == "failed: events/MSFT=access_denied, events/SPY=access_denied"
 
 
 def test_401·403이_난_출처는_이번_실행에서_다시_부르지_않는다(store):
@@ -591,6 +614,7 @@ WEIRD = {  # 실제 어댑터가 돌려줄 수 있는 이상한 값(가짜 로�
     "항목_번호_형식": (Source.SEC_FILINGS, aapl_filing(items=("x",))),
     "항목이_리스트": (Source.SEC_FILINGS, aapl_filing(items=["8.01"])),
     "본문이_bytes": (Source.SEC_FILINGS, aapl_filing(body=b"Item 8.01 Other Events.")),
+    "보고_기준일이_시각": (Source.SEC_FILINGS, aapl_filing(report_date=datetime(2026, 10, 14, tzinfo=ET))),
     "LLM_응답_None": (Source.LLM, {"llm_replies": [None]}),
 }
 

@@ -9,22 +9,12 @@ import json
 import urllib.error
 import urllib.request
 
-from m30.adapters import AccessDeniedError, SourceError, TransientSourceError
+from m30.adapters import SourceError, TransientSourceError, error_for_status
 from m30.config import LLMSettings
 from m30.llm import LLMRequest
 
 API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2023-06-01"
-
-
-def error_for_status(status: int) -> SourceError:
-    """401·403 → AccessDeniedError, 429·500~599(529 포함) → TransientSourceError, 그 외 → SourceError."""
-    message = f"anthropic http {status}"
-    if status in (401, 403):
-        return AccessDeniedError(message)
-    if status == 429 or 500 <= status <= 599:
-        return TransientSourceError(message)
-    return SourceError(message)
 
 
 class AnthropicLLM:
@@ -36,13 +26,13 @@ class AnthropicLLM:
         self._timeout = timeout
 
     def complete(self, request: LLMRequest) -> str:
-        """응답의 text 블록을 이어 붙인 텍스트. 실패: 401·403 → AccessDeniedError, 429·5xx·타임아웃·접속 실패 →
-        TransientSourceError, 그 밖의 HTTP 오류·이상한 응답 → SourceError."""
+        """응답의 text 블록을 이어 붙인 텍스트. 실패: 401·403 → AccessDeniedError, 429 → RateLimitedError, 5xx·타임아웃·
+        접속 실패 → TransientSourceError, 그 밖의 HTTP 오류·이상한 응답 → SourceError."""
         try:
             with urllib.request.urlopen(self._http_request(request), timeout=self._timeout) as response:
                 body = response.read()
         except urllib.error.HTTPError as e:  # URLError의 하위 클래스라 먼저 받는다
-            raise error_for_status(e.code) from None
+            raise error_for_status("anthropic", e.code) from None
         except TimeoutError:
             raise TransientSourceError("anthropic timeout") from None
         except (urllib.error.URLError, OSError, http.client.HTTPException):  # 접속 실패·응답 도중 끊김
