@@ -14,9 +14,10 @@
 - [x] 하네스: `web-dev` 에이전트 + `web-conventions` 스킬 추가, m30-dev에 웹 단계·자율 모드 → 사용자 `/reload-plugins` 대기
 - [x] 웹 MVP 티켓 발행: 부모 #23 — W1 #24, W2 #25(← #24), W3 #26(← #25)
   - [x] #24 W1 — 68823b8, 닫힘. 웹 뼈대 + 카드 대시보드(Next.js App Router, 서버에서만 카드 읽기, ui-ux-pro-max 디자인, 데이터 상태 문구 그대로) — 로컬 Supabase로 개발, #6·#7과 병렬 가능
-  - [ ] #25 W2 (원격 마이그레이션 적용, Basic Auth 6c81ad6 완료 → main 병합 → 사용자 Vercel import·env) 원격 Supabase에 마이그레이션 적용 + Vercel 배포(배포 보호) + 환경 변수(사용자가 service role 등 입력)
-  - [ ] #26 W3 매일 파이프라인 실행기(GitHub Actions cron → 원격 Supabase, 비로컬 DB 가드에 명시적 운영 모드)
+  - [x] #25 W2 — 닫힘. 운영 https://web-theta-olive-25.vercel.app (Basic Auth). 원격 Supabase에 마이그레이션 적용 + Vercel 배포(배포 보호) + 환경 변수(사용자가 service role 등 입력)
+  - [ ] #26 W3 (설계 중) 매일 파이프라인 실행기(GitHub Actions cron → 원격 Supabase, 비로컬 DB 가드에 명시적 운영 모드)
 - [x] #27 사용자 시안 적용(랜딩 `/` + `/cards`) — 60d7984, 닫힘. main 병합 PR #28
+- [ ] #19 SEC EDGAR 실제 어댑터 — 구현 중
 - [ ] #14 실제 Haiku(사용자: `ANTHROPIC_API_KEY`), #19 SEC EDGAR 실제(사용자: `SEC_USER_AGENT`) → 실제 공시로 첫 번째 줄
 - [ ] #18 시세(무료 API 성능 검사 → Marketstack 구독은 사용자), #21 일정 출처 — 그 전까지 두·세 번째 줄은 `Update delayed`
 - [ ] 2단계: #8 유저·내 종목, #9 무료/Plus 노출, 로그인(Google/Apple), #15 카드 API → SaaS
