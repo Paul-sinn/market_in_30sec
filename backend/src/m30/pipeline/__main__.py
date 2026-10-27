@@ -8,7 +8,18 @@ from datetime import date, datetime
 from pathlib import Path
 
 from m30.adapters.edgar import EdgarClient
-from m30.config import DB_URL_VAR, ET, ConfigError, is_local_db, load_edgar_settings, load_llm_settings, load_settings
+from m30.adapters.tiingo import TiingoPriceSource
+from m30.adapters.unavailable import NoPriceSource
+from m30.config import (
+    DB_URL_VAR,
+    ET,
+    ConfigError,
+    is_local_db,
+    load_edgar_settings,
+    load_llm_settings,
+    load_settings,
+    load_tiingo_settings,
+)
 from m30.db.store import CardStore, DBConnectError, connect
 from m30.llm.anthropic import AnthropicLLM
 from m30.pipeline.collect import filing_window
@@ -94,7 +105,8 @@ def _print_summary(summary: RunSummary) -> None:
 
 
 def _production(requested: date | None) -> int:
-    """날짜 확인 → 설정 셋 → DB 연결 → CIK 갱신·파이프라인(SEC·Anthropic) → 요약 → exit 코드. SEC·Anthropic은 DB 연결 뒤에만 부른다."""
+    """날짜 확인 → 설정 → DB 연결 → CIK 갱신·파이프라인(SEC·Anthropic·Tiingo) → 요약 → exit 코드. 외부 출처는 DB 연결 뒤에만 부른다.
+    시세: TIINGO_API_KEY가 있으면 Tiingo, 없으면(유료 구독 전) 시세 없이(등락률·세 번째 줄 지연)."""
     now = datetime.now(ET)
     day = requested or now.date()
     if day.weekday() >= 5:  # 휴장일 달력은 #16이 같은 규칙(exit 0)으로 넓힌다
@@ -103,15 +115,20 @@ def _production(requested: date | None) -> int:
     if now < filing_window(day)[1]:  # 미래 날짜 오타·밤늦은 PT 실행이 원격에 카드를 만들지 않게
         print(f"{day} 공시 기간은 그날 04:00 ET에 닫힙니다. 그 뒤에 실행하거나 지난 거래일을 넣으세요", file=sys.stderr)
         return 2
-    try:  # DB·SEC·Anthropic에 닿기 전에 셋 다 확인한다. 메시지에는 변수 이름만 있다
+    try:  # DB·외부 출처에 닿기 전에 모두 확인한다. 메시지에는 변수 이름만 있다
         settings, llm_settings, edgar_settings = load_settings(), load_llm_settings(), load_edgar_settings()
+        tiingo_settings = load_tiingo_settings()
     except ConfigError as e:
         print(e, file=sys.stderr)
         return 2
     try:
         with connect(settings) as conn:
             summary, refreshed = run_production(
-                CardStore(conn), day, get=EdgarClient(edgar_settings).get, llm=AnthropicLLM(llm_settings)
+                CardStore(conn),
+                day,
+                get=EdgarClient(edgar_settings).get,
+                llm=AnthropicLLM(llm_settings),
+                prices=TiingoPriceSource(tiingo_settings) if tiingo_settings else NoPriceSource(),
             )
     except (ConfigError, DBConnectError) as e:  # 우리가 쓴 문구(변수 이름·포트만): 6543 거부, 연결 실패
         print(e, file=sys.stderr)
@@ -123,6 +140,7 @@ def _production(requested: date | None) -> int:
         return 1
     _print_summary(summary)
     print("coverage: refreshed" if refreshed else "coverage: NOT REFRESHED (sec ticker list failed), stored rows used")
+    print("prices=tiingo" if tiingo_settings else "prices=none")  # none = TIINGO_API_KEY 없음(구독 전)
     return 1 if run_failed(summary) else 0
 
 

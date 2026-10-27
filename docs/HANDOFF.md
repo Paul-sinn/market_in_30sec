@@ -189,6 +189,8 @@
 - ✅ **실데이터 실험 시세** (2026-10-18): Marketstack Basic($9.99/월, 가격표에 "Commercial use")부터. 구독 전 확인: 분할·배당 조정가, APILayer 약관의 내부 상업 이용, HTTPS, TQQQ 포함, 1년 이력, 장 마감 후 업데이트 시각. 하나라도 안 맞으면 Tiingo Power Internal Commercial($50/월, 내부 상업 이용 명시, 월결제 해지 가능)
   - 무료 티어는 쓰지 않음: 확인한 무료 티어(Tiingo·Twelve Data·Massive·Marketstack 무료 등)는 거의 전부 개인·비상업 전용
   - 예외 (2026-10-18 사용자 결정): **구독 전 성능 검사만** 무료 API로 한다(데이터가 잘 오는지: 응답 시간, 누락, 조정가, 업데이트 시각). 검사 결과 수치만 문서로 남기고, 받은 시세는 원격 Supabase·실험(#20)·앱 표시에 쓰지 않는다. 어느 무료 API로 할지는 #18 시작 때 정한다(같은 API를 미리 보려면 Marketstack 무료 플랜이 가장 직접적)
+  - 확장 (2026-10-27 사용자 결정): 구독 전에 카드가 어떻게 나오는지 보려고 **로컬 미리보기**까지 허용. 무료 키 시세로 로컬 Supabase에 카드를 만들고 Paul의 Mac `localhost` 대시보드에서만 본다. 원격 Supabase·Vercel·GitHub Actions에는 무료 키를 넣지 않는다. 확인이 끝나면 로컬 DB를 비운다(`supabase db reset`)
+  - 2026-10-26 구독 전 확인 결과: Marketstack 탈락(배당 조정 없음, 이상 봉 약 1.9%, 다른 통화 봉 섞임 → `docs/vendors/marketstack.md`). Tiingo 기술 항목 전부 충족(`docs/vendors/tiingo.md`). 실험은 Tiingo Commercial($50/월, "Internal Use Only"), 앱 공개는 Tiingo Redistribution(가격표 "$250/month for startups", 영업 서면 확인 필요)
   - "내부 이용"은 데이터를 남에게 보여주지 않는 범위. 실험 카드는 Paul만 봄
 - ⏳ **앱 표시용 시세 벤더** (앱 표시 + **파생값 표시** 권한 필수, 2026-10-18 각 사 가격 페이지 기준, 법률 검토 아님):
   - Twelve Data Venture — 외부 표시 명시. 사업자 가격 페이지 기준 $499/월(연결제 시 $414). 이전 기록 $149는 다른 페이지 표기로 불일치, 구매 전 확인
