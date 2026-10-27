@@ -47,6 +47,8 @@ class AnthropicLLM:
         payload = {
             "model": request.model,
             "max_tokens": request.max_tokens,
+            # Haiku 5.5는 기본이 적응형 사고: 답 크기로 잡은 max_tokens(200·50)를 사고에 다 쓰면 text 블록 없이 끝난다(#14)
+            "thinking": {"type": "disabled"},
             "system": request.system,
             "messages": [{"role": "user", "content": request.user}],
         }

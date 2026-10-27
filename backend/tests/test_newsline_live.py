@@ -32,4 +32,5 @@ def test_실제_Haiku가_첫_번째_줄_초안을_정해진_JSON_모양으로_�
     )
 
     problem = drafts["AAPL"].problem  # 초안을 통째로 단언하면 실패 메시지에 문장이 찍힌다
-    assert problem not in {DraftProblem.JSON_INVALID, DraftProblem.LLM_FAILED, DraftProblem.CALL_LIMIT}
+    # EMPTY: 사고가 max_tokens를 다 써 text 없이 끝난 응답(#14 실측)도 여기서 잡는다
+    assert problem not in {DraftProblem.EMPTY, DraftProblem.JSON_INVALID, DraftProblem.LLM_FAILED, DraftProblem.CALL_LIMIT}
