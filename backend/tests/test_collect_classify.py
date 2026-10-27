@@ -590,6 +590,18 @@ WEIRD = {  # 실제 어댑터가 돌려줄 수 있는 이상한 값(가짜 로�
     "종가_float": (Source.PRICES, aapl_bars(OCT14, dataclasses.replace(OCT15, close=101.0))),
     "종가_NaN": (Source.PRICES, aapl_bars(OCT14, dataclasses.replace(OCT15, close=Decimal("NaN")))),
     "날짜_역순": (Source.PRICES, aapl_bars(OCT15, OCT14)),
+    # #18: OHLC 불일치(종가 101)
+    "종가가_고가보다_큼": (Source.PRICES, aapl_bars(OCT14, dataclasses.replace(OCT15, high=Decimal("100.5")))),
+    "종가가_저가보다_작음": (Source.PRICES, aapl_bars(OCT14, dataclasses.replace(OCT15, low=Decimal("101.5")))),
+    "시가가_고가보다_큼": (Source.PRICES, aapl_bars(OCT14, dataclasses.replace(OCT15, open=Decimal("103")))),
+    "시가가_저가보다_작음": (Source.PRICES, aapl_bars(OCT14, dataclasses.replace(OCT15, open=Decimal("99")))),
+    "고가가_저가보다_작음": (Source.PRICES, aapl_bars(OCT14, dataclasses.replace(OCT15, high=Decimal("100"), low=Decimal("102")))),
+    # #18: 실제 시세가 아닌 크기. 계산하면 Decimal 28자리를 넘어 실행 전체가 멈추던 값(#6 qa: 전일 종가 1E-30)
+    "종가_0": (Source.PRICES, aapl_bars(OCT14, bar("2026-10-15", "0"))),
+    "전일_종가_1E-30": (Source.PRICES, aapl_bars(bar("2026-10-14", "1E-30"), OCT15)),
+    "종가_1E+30": (Source.PRICES, aapl_bars(OCT14, bar("2026-10-15", "1E+30"))),
+    # #18: 하루 등락률이 stock_card.change_pct numeric(6,1)에 안 들어감(0.01 → 101 = +1,009,900%)
+    "등락률_DB_범위_밖": (Source.PRICES, aapl_bars(bar("2026-10-14", "0.01"), OCT15)),
     "실적일_없음": (Source.EVENTS, aapl_events(Earnings(None, True, None))),
     "배당_0": (Source.EVENTS, aapl_events(ExDividend(date(2026, 10, 20), Decimal(0)))),
     "실적일이_시각": (Source.EVENTS, aapl_events(Earnings(datetime(2026, 10, 20, tzinfo=ET), True, None))),

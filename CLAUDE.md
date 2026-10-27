@@ -43,6 +43,7 @@
 - 2026-10-20 — 변이가 적용 안 된 채 테스트 통과로 나옴 → 같은 크기 변이가 `.pyc` 캐시에 가려짐 → 변이 복사본은 `PYTHONDONTWRITEBYTECODE=1` + `__pycache__` 삭제(qa 정의에 규칙화)
 - 2026-10-20 — #24 커밋 전 비밀값 grep이 2건을 냈는데 커밋·push가 그대로 진행됨(둘 다 오탐: README의 `--override-name auth.service_role_key=…` 옵션, package-lock의 sha512 해시) → 검사와 커밋을 `;`로 이어 검사 결과가 커밋을 막지 못함 → 비밀값 검사는 `[ "$(… | grep -c …)" -eq 0 ] && git commit`처럼 0건일 때만 커밋이 실행되게 묶는다
 - 2026-10-20 — #6 backend-dev가 다른 에이전트의 변이 스크립트를 실행·삭제함(레포 파일 변경 없음) → 동시에 도는 에이전트가 scratchpad 한 폴더를 같이 씀 → 에이전트마다 scratchpad 하위 폴더 하나(m30-dev 데이터 전달에 규칙화)
+- 2026-10-27 — 첫 운영 실행이 DB 연결에서 4번 실패했는데 원인을 알 수 없었음(Direct connection URI, 특수문자 비밀번호) → 비밀값을 숨기려고 연결 실패 메시지에서 이유까지 지웠음 → 값 없는 오류도 고정 이유 코드(`reason=…`)는 남긴다(#26, PR #30)
 
 ## Agent skills
 

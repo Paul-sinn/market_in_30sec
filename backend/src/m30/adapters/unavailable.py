@@ -7,7 +7,7 @@ from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.prices import DailyBar
 
 
-class NoPriceSource:  # #18이 실제 시세 어댑터로 바꾼다
+class NoPriceSource:  # 운영 모드에서 TIINGO_API_KEY가 없을 때(유료 구독 전, #18)
     def daily_bars(self, ticker: str, start: date, end: date) -> list[DailyBar]:
         """항상 [] → 등락률 delayed(값 없음), 세 번째 줄 Update delayed."""
         return []

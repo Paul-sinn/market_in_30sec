@@ -17,6 +17,7 @@ NEWSLINE_MODEL = "claude-haiku-5-5"  # 첫 번째 줄. 출시 전 claude-sonnet-
 REVIEW_MODEL = "claude-haiku-5-5"  # 사실/예측 판정. 출시 전 claude-sonnet-5-5 (HANDOFF 3-6)
 LLM_KEY_VAR = "ANTHROPIC_API_KEY"  # Anthropic 키는 이 환경 변수에서만 읽는다
 SEC_UA_VAR = "SEC_USER_AGENT"  # SEC 공정 접근: 이름 + 연락 이메일. 값은 사용자가 셸·secrets에만 넣는다
+TIINGO_KEY_VAR = "TIINGO_API_KEY"  # 시세(#18). 유료 구독 전에는 비어 있다 → 운영 모드는 시세 없이 돈다
 
 
 class ConfigError(Exception):
@@ -78,4 +79,21 @@ def load_edgar_settings(env: Mapping[str, str] = os.environ) -> EdgarSettings:
         raise ConfigError(f"{SEC_UA_VAR} is not set")
     if not re.fullmatch(r"[\x20-\x7e]+", settings.user_agent) or "@" not in settings.user_agent:
         raise ConfigError(f"{SEC_UA_VAR} must be one line of printable ASCII with a contact email")
+    return settings
+
+
+@dataclass(frozen=True)
+class TiingoSettings:
+    api_key: str = field(repr=False)
+
+
+def load_tiingo_settings(env: Mapping[str, str] = os.environ) -> TiingoSettings | None:
+    """TIINGO_API_KEY를 읽는 곳은 여기 하나. 없거나 빈 값이면 None(구독 전: Actions는 없는 secret을 빈 문자열로 넣는다).
+    한 줄 ASCII 검사·env를 지우는 이유는 load_llm_settings와 같다."""
+    settings = TiingoSettings(api_key=env.get(TIINGO_KEY_VAR, ""))
+    del env
+    if not settings.api_key:
+        return None
+    if not re.fullmatch(r"[\x21-\x7e]+", settings.api_key):
+        raise ConfigError(f"{TIINGO_KEY_VAR} must be one line of printable ASCII without spaces")
     return settings

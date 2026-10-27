@@ -14,6 +14,7 @@ from m30.adapters.filings import ACCESSION, Filing, FilingForm
 from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.prices import DailyBar
 from m30.config import ET
+from m30.pipeline.compute import round_pct
 from m30.trading_day import previous_trading_day
 
 RETRY_DELAYS = (1.0, 2.0, 4.0)  # U5 = A. 길이 = 재시도 횟수(3) → 최대 4번 호출. 지터 없음(서버 1대, 결정적 테스트)
@@ -105,22 +106,32 @@ def _reason(error: SourceError) -> FailureReason:
     return FailureReason.ERROR
 
 
-# 받은 값 검증: 타입·계약만 본다. 0 이하 가격·봉 날짜 관계는 bars_usable이, OHLC 불일치는 #18이 본다
+# 받은 값 검증: 타입·계약과 데이터 오류. 봉 날짜가 직전 거래일인지는 bars_usable이 본다
+
+# 시세 크기(#18): 이 밖은 상장 주식 시세가 아니라 데이터 오류다. 안이면 두 가격의 비가 1E13 이하라 compute의 모든 %가
+# Decimal 28자리 안이다(#6 qa: 전일 종가 1E-30이면 반올림이 InvalidOperation으로 실행 전체를 멈췄다)
+PRICE_MIN, PRICE_MAX = Decimal("0.0001"), Decimal("1000000000")
+CHANGE_PCT_MAX = Decimal("99999.9")  # stock_card.change_pct numeric(6,1). 넘으면 저장 오류로 실행 전체가 멈춘다
 
 
 def valid_bars(bars: object) -> bool:
+    """봉마다 타입, 가격 크기, OHLC 순서(저가 ≤ 시가·종가 ≤ 고가). 날짜 오름차순이고 하루 등락률(반올림 후)이 DB 범위 안."""
     return (
         isinstance(bars, list)
         and all(
             isinstance(b, DailyBar)
             and _is_day(b.day)
-            and all(_is_finite(price) for price in (b.open, b.high, b.low, b.close))
+            and all(_is_finite(price) for price in (b.open, b.high, b.low, b.close))  # NaN은 크기 비교에서 예외라 먼저
+            and PRICE_MIN <= b.low <= min(b.open, b.close)
+            and max(b.open, b.close) <= b.high <= PRICE_MAX
             and type(b.volume) is int  # bool은 아니다
             and b.volume >= 0
             and isinstance(b.adjusted, bool)
             for b in bars
         )
-        and all(a.day < b.day for a, b in pairwise(bars))
+        and all(
+            a.day < b.day and abs(round_pct((b.close - a.close) / a.close * 100)) <= CHANGE_PCT_MAX for a, b in pairwise(bars)
+        )
     )
 
 

@@ -72,7 +72,8 @@ def test_같은_거래일로_다시_실행해도_카드가_중복되지_않고_�
     assert len(store.list_cards(FRI)) == 3
 
     changed = tmp_path / "aapl_204.json"
-    changed.write_text(first_card.read_text().replace('"close": 202.50', '"close": 204.00'))
+    changed.write_text(first_card.read_text().replace('"high": 203.00, "low": 200.10, "close": 202.50',
+                                                      '"high": 204.00, "low": 200.10, "close": 204.00'))  # 고가도: OHLC 순서
     run(store, changed)
 
     cards = store.list_cards(FRI)
@@ -251,6 +252,20 @@ def test_봉을_믿을_수_없으면_등락률과_세_번째_줄이_지연이고
     line = card.price_fact_line
     assert (line.text, line.status, line.source_scope) == ("Update delayed", LineStatus.DELAYED, PRICE_SCOPE)
     assert summary.change_delayed == ("AAPL",)
+
+
+@pytest.mark.parametrize(
+    "close, change",
+    [("1000.999", Decimal("99999.9")), ("1000.9995", None)],  # (1000.9995 − 1) / 1 = 99,999.95% → 100,000.0%
+    ids=["DB_범위_끝", "반올림하면_DB_범위_밖"],
+)
+def test_하루_등락률은_DB_범위_끝까지_저장하고_넘으면_그_종목만_지연이다(store, close, change):
+    summary = run(store, aapl_only([bar("2026-10-14", 1), bar("2026-10-15", close)]), FRI)  # 저장 오류로 멈추지 않는다
+
+    [card] = store.list_cards(FRI)
+    assert card.change_pct == change
+    assert card.price_fact_line.status is (LineStatus.DELAYED if change is None else LineStatus.CHECKED_NONE)
+    assert summary.change_delayed == (() if change else ("AAPL",))
 
 
 def closes(*day_close):
