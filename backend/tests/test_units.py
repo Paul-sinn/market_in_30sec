@@ -1,6 +1,10 @@
 """순수 함수 경계값. DB 없이 돈다."""
 
+import io
+import json
 import re
+import urllib.error
+import urllib.request
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -12,6 +16,8 @@ from m30.adapters.prices import DailyBar
 from m30.config import ET, ConfigError, is_local_db, load_llm_settings, load_settings
 from m30.copy_rules import ALWAYS_BANNED, CARD_BANNED, EMOTION_VERBS, SOURCE_TAG, check_card
 from m30.db.store import connect_failure_reason
+from m30.experiment import EXPERIMENT_COVERAGE
+from m30.llm import LLMRequest
 from m30.llm.anthropic import AnthropicLLM
 from m30.models import CardLine, LineStatus
 from m30.pipeline.compute import card_numbers, change_pct, format_per_share, format_usd, round_pct, streak
@@ -24,7 +30,18 @@ from m30.pipeline.lines import (
     price_fact_line,
     replacement_sentence,
 )
-from m30.pipeline.newsline import NEWS_TAG, NEWSLINE_SYSTEM, RETRY_NOTE, RETRY_REASONS, copy_retry_reasons, news_text
+from m30.pipeline.newsline import (
+    NEWS_TAG,
+    NEWSLINE_EXAMPLES,
+    NEWSLINE_SYSTEM,
+    RETRY_COPY_DEFAULT,
+    RETRY_LAST,
+    RETRY_NOTE,
+    RETRY_REASONS,
+    copy_retry_reasons,
+    news_text,
+    parse_news_reply,
+)
 from m30.pipeline.review import FACTCHECK_SYSTEM, FactLabel, mask_names, name_terms, numbers_from_source, parse_factcheck_reply
 from m30.trading_day import previous_trading_day
 
@@ -421,6 +438,43 @@ def test_Anthropic_클라이언트는_HTTPS_주소만_받는다():
         AnthropicLLM(load_llm_settings({"ANTHROPIC_API_KEY": "k"}), url="http://api.anthropic.com/v1/messages")
 
 
+def anthropic_complete(monkeypatch, urlopen):
+    """urllib.request.urlopen 자리에 urlopen(request, timeout)을 끼우고 요청 하나를 보낸다(네트워크 없음)."""
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    return AnthropicLLM(load_llm_settings({"ANTHROPIC_API_KEY": "k"})).complete(LLMRequest("claude-haiku-5-5", "sys", "usr", 200))
+
+
+def test_Anthropic_요청은_사고를_끄고_응답의_사고_블록은_버리고_text_블록만_이어_붙인다(monkeypatch):
+    sent = []
+    content = [{"type": "thinking", "thinking": "x", "signature": "s"}, {"type": "text", "text": "a"}, {"type": "text", "text": "b"}]
+
+    def urlopen(request, timeout):
+        sent.append(json.loads(request.data))
+        return io.BytesIO(json.dumps({"content": content}).encode())
+
+    assert anthropic_complete(monkeypatch, urlopen) == "ab"
+    # 사고를 켜 두면 Haiku 5.5가 답 크기로 잡은 max_tokens를 사고에 다 써 text 없이 끝난다(PR #32)
+    assert sent == [{"model": "claude-haiku-5-5", "max_tokens": 200, "thinking": {"type": "disabled"}, "system": "sys",
+                     "messages": [{"role": "user", "content": "usr"}]}]
+
+
+@pytest.mark.parametrize(
+    "status, error",
+    [(401, AccessDeniedError), (403, AccessDeniedError), (429, RateLimitedError), (529, TransientSourceError),
+     (400, SourceError), (None, TransientSourceError)],
+    ids=["401", "403", "429", "529", "400", "타임아웃"],
+)
+def test_Anthropic_HTTP_오류와_타임아웃은_차단·속도_제한·일시_실패·기타_실패로_바뀐다(monkeypatch, status, error):
+    def urlopen(request, timeout):
+        if status is None:
+            raise TimeoutError
+        raise urllib.error.HTTPError(request.full_url, status, "x", None, None)
+
+    with pytest.raises(SourceError) as raised:
+        anthropic_complete(monkeypatch, urlopen)
+    assert type(raised.value) is error
+
+
 @pytest.mark.parametrize(
     "items, amended, shown",
     [
@@ -493,6 +547,8 @@ def test_숫자_대조는_계산_단계와_같은_표기로_바꿔_비교한다(
         ('```json\n{"label": "fact"}\n```\n', FactLabel.FACT),
         ('{"label": "forecast", "why": "x"}', FactLabel.FORECAST),  # 다른 키는 무시
         ('{"label": "opinion"}', FactLabel.OPINION),
+        ('Here is the label: {"label": "fact"}', FactLabel.FACT),
+        ('{"label": "fact"} {"label": "opinion"}', None),  # 객체 둘: 어느 쪽도 믿지 않는다(재시도)
         ('{"label": "Fact"}', None),
         ('{"label": null}', None),
         ("[]", None),
@@ -500,7 +556,7 @@ def test_숫자_대조는_계산_단계와_같은_표기로_바꿔_비교한다(
         ("", None),
         ("x", None),
     ],
-    ids=["fact", "펜스", "다른_키", "opinion", "대문자", "null", "배열", "문자열", "빈_응답", "JSON_아님"],
+    ids=["fact", "펜스", "다른_키", "opinion", "앞_설명", "객체_둘", "대문자", "null", "배열", "문자열", "빈_응답", "JSON_아님"],
 )
 def test_판정_응답은_정해진_세_라벨만_받는다(text, label):
     assert parse_factcheck_reply(text) is label
@@ -532,6 +588,17 @@ def test_판정_지시문은_회사가_잡은_일정과_합의를_예측으로_�
     assert re.findall(r"\d", FACTCHECK_SYSTEM) == []  # 캐싱 접두에 실제 숫자·날짜가 없다
 
 
+def test_첫_번째_줄_지시문의_예시_줄은_가상_회사이고_문구_검사와_형식_규칙을_통과하며_12단어_이하다():
+    names = {term for c in EXPERIMENT_COVERAGE for term in (c.ticker, c.name)}
+    assert NEWSLINE_EXAMPLES
+    for example in NEWSLINE_EXAMPLES:
+        assert f"\n- {example}\n" in NEWSLINE_SYSTEM
+        assert check_card(news_text(example, 0)) == [], example  # 카드에 붙는 꼬리표까지 붙여 검사
+        assert parse_news_reply(json.dumps({"sentence": example})) == (example, None), example
+        assert len(example.split()) <= 12, example  # 지시문이 주는 목표 길이
+        assert [n for n in names if n in example] == [], example  # 실험 종목 이름이 예시로 새지 않게
+
+
 def test_거절_재생성_이유는_지시문의_거절_모양을_그대로_쓴다():
     assert '{"sentence": null}' in NEWSLINE_SYSTEM
     assert RETRY_REASONS["refusal"].count('{"sentence": null}') == 2  # 맨 null로 답하면 형식 깨짐이 된다
@@ -545,10 +612,17 @@ def test_LLM에_보내는_재생성_이유에는_한국어가_없다():
     issues += check_card("You named a new CFO") + check_card("Apple rose 1.2% and 3.4%") + check_card(" ".join(["word"] * 16))
     assert len(issues) >= len(CARD_BANNED + EMOTION_VERBS + ALWAYS_BANNED) + 3  # 검사기 문자열 모양마다 실제로 하나 이상
     reasons = copy_retry_reasons(issues)
-    sent = [*RETRY_REASONS.values(), RETRY_NOTE, *reasons]
+    sent = [*RETRY_REASONS.values(), RETRY_NOTE, RETRY_LAST, *reasons]
     assert [r for r in sent if HANGUL.search(r)] == []
     assert len(reasons) == len(issues)  # 위반마다 이유 하나(불릿 하나)
     assert copy_retry_reasons(["금지어 'buy'"]) == ["The word 'buy' is not allowed. State the same fact with a neutral word."]
+
+
+def test_숫자_개수_위반의_재생성_이유는_검사기가_센_개수를_쓰고_모양이_다르면_기본_이유다():
+    assert copy_retry_reasons(["숫자 3개 — 줄당 하나"]) == [
+        "The line had 3 numbers. Keep only the single figure that matters most, usually revenue, and leave out the others"
+        " and the words that go with them."]
+    assert copy_retry_reasons(["숫자가 너무 많음"]) == [RETRY_COPY_DEFAULT]  # 자리표시자 {count}를 그대로 보내지 않는다
 
 
 MMM_TERMS = name_terms(["MMM"], {"MMM": "3M Company"})

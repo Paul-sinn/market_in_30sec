@@ -131,12 +131,12 @@ KEY_CANARY, UA_CANARY = "sk-ant-KeyCanary93", "M30 Canary uaCanary41@example.inv
 TIINGO_CANARY = "tiingoKeyCanary57"
 
 
-def run_probe(settings, situation, tiingo_key=None):
-    """tiingo_key가 없으면 TIINGO_API_KEY를 뺀 환경(구독 전). 셸에 진짜 키가 있어도 하위 프로세스로 넘기지 않는다."""
+def run_probe(settings, situation, tiingo_key=None, extra=()):
+    """tiingo_key가 없으면 TIINGO_API_KEY를 뺀 환경(구독 전). 셸에 진짜 키가 있어도 하위 프로세스로 넘기지 않는다. extra = 덧붙일 CLI 인자."""
     env = {k: v for k, v in os.environ.items() if k != "TIINGO_API_KEY"} | {
         "SUPABASE_DB_URL": settings.database_url, "ANTHROPIC_API_KEY": KEY_CANARY, "SEC_USER_AGENT": UA_CANARY
     } | ({"TIINGO_API_KEY": tiingo_key} if tiingo_key else {})
-    r = subprocess.run([sys.executable, "tests/production_probe.py", situation, "--production", "2026-10-16"],
+    r = subprocess.run([sys.executable, "tests/production_probe.py", situation, "--production", "2026-10-16", *extra],
                        cwd=BACKEND, env=env, capture_output=True, text=True, timeout=60)
     out = r.stdout + r.stderr
     assert KEY_CANARY not in out and UA_CANARY not in out and TIINGO_CANARY not in out
@@ -200,3 +200,15 @@ def test_운영_CLI는_TIINGO_API_KEY가_한_줄_ASCII가_아니면_DB에_붙기
 
     assert code == 2
     assert out == "TIINGO_API_KEY must be one line of printable ASCII without spaces\nfake_modules=[]\n"
+
+
+def test_운영_품질_확인은_TIINGO_API_KEY가_있어도_시세를_부르지_않고_요약_뒤에_품질_블록을_찍는다(settings, admin):
+    code, out = run_probe(settings, "quiet", tiingo_key=TIINGO_CANARY, extra=["--quality"])  # 탐침 Tiingo는 불리면 RUN FAILED
+
+    assert code == 0
+    lines = out.splitlines()
+    assert "prices=none" in lines  # 무료 키 시간당 50회 보호: 품질 확인 대상은 첫 번째 줄
+    assert lines.index("prices=none") < lines.index(
+        "quality 2026-10-16 classify=claude-haiku-5-5 newsline=claude-haiku-5-5 review=claude-haiku-5-5 prices=none")
+    assert "lines news checked_found=0 checked_none=11 delayed=0 unsupported=4" in lines
+    assert "hold -" in lines and "classify -" in lines

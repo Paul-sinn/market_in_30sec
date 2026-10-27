@@ -1,8 +1,11 @@
 """python -m m30.pipeline 2026-10-16 --scenario scenarios/first_card.json   로컬 개발: 가짜 출처, 로컬 DB만
-python -m m30.pipeline --production [YYYY-MM-DD]                          운영: 실제·미연결 출처, 원격 DB 허용, 비우면 오늘(ET)"""
+python -m m30.pipeline --production [YYYY-MM-DD]                          운영: 실제·미연결 출처, 원격 DB 허용, 비우면 오늘(ET)
+둘 다 --quality: 실제 Haiku로 돌리고 카드 문장·초안·보류함·분류를 찍는다. 로컬 DB만(#14)"""
 
 import argparse
+import json
 import sys
+from collections import Counter
 from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
@@ -11,8 +14,11 @@ from m30.adapters.edgar import EdgarClient
 from m30.adapters.tiingo import TiingoPriceSource
 from m30.adapters.unavailable import NoPriceSource
 from m30.config import (
+    CLASSIFY_MODEL,
     DB_URL_VAR,
     ET,
+    NEWSLINE_MODEL,
+    REVIEW_MODEL,
     ConfigError,
     is_local_db,
     load_edgar_settings,
@@ -22,6 +28,7 @@ from m30.config import (
 )
 from m30.db.store import CardStore, DBConnectError, connect
 from m30.llm.anthropic import AnthropicLLM
+from m30.models import LineStatus, NewsKind
 from m30.pipeline.collect import filing_window
 from m30.pipeline.morning import MorningPipeline, RunSummary
 from m30.pipeline.production import run_failed, run_production
@@ -33,12 +40,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--scenario", type=Path, help="가짜 시나리오 JSON 경로 (로컬 DB만)")
     mode.add_argument("--production", action="store_true", help="실제 출처로 실행. 원격 DB를 쓸 수 있는 유일한 모드")
+    parser.add_argument("--quality", action="store_true",
+                        help="실제 Haiku로 돌리고 카드 문장·초안·보류함·분류를 찍는다. 로컬 DB만")
     args = parser.parse_args(argv)
     if args.production:
-        return _production(args.trading_day)
+        return _production(args.trading_day, args.quality)
     if args.trading_day is None:
         parser.error("trading_day is required with --scenario")
 
+    if args.quality:  # DB 설정·연결보다 먼저. 메시지에는 변수 이름만 있다
+        try:
+            llm_settings = load_llm_settings()
+        except ConfigError as e:
+            print(e, file=sys.stderr)
+            return 2
     try:
         settings = load_settings()
     except ConfigError as e:
@@ -68,10 +83,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             events=FakeEventSource(scenario),
             filings=FakeFilingSource(scenario),
             indicators=FakeIndicatorSource(scenario),
-            llm=FakeLLM(scenario),
+            llm=AnthropicLLM(llm_settings) if args.quality else FakeLLM(scenario),  # 품질 확인은 llm_replies를 쓰지 않는다
             store=store,
         ).run(args.trading_day)
+        quality = _quality_lines(summary, store, "scenario") if args.quality else []
     _print_summary(summary)
+    for line in quality:
+        print(line)
     return 0
 
 
@@ -104,9 +122,56 @@ def _print_summary(summary: RunSummary) -> None:
         ))
 
 
-def _production(requested: date | None) -> int:
+QUALITY_LINES = (("news", "news_line"), ("event", "event_line"), ("price", "price_fact_line"))  # 품질 블록 줄 이름 → 카드 필드
+
+
+def _quality_lines(summary: RunSummary, store: CardStore, prices: str) -> list[str]:
+    """--quality 품질 블록(#14 D5). DB 연결이 열린 동안 부른다(카드·보류함·분류를 읽는다). 로컬 DB 전용이라 카드 문장·검수 전 초안을
+    찍는 유일한 출력이다. 글자 필드는 json.dumps: 한 줄 유지, 제어 문자(터미널 이스케이프) 무력화. prices: "scenario" | "none"."""
+    def text(value: str | None) -> str:
+        return "-" if value is None else json.dumps(value, ensure_ascii=False)
+
+    day = summary.trading_day
+    out = [f"quality {day} classify={CLASSIFY_MODEL} newsline={NEWSLINE_MODEL} review={REVIEW_MODEL} prices={prices}"]
+    cards = store.list_cards(day)
+    for card in cards:
+        out.append(f"card {card.ticker}")
+        for name, attr in QUALITY_LINES:
+            line = getattr(card, attr)
+            out.append(f"  {name} " + ("- -" if line is None else f"{line.status} {text(line.text)}"))
+        if draft := summary.drafts.get(card.ticker):
+            out.append(f"  draft1 {draft.problem or 'ok'} {text(draft.sentence)}")
+        if review := summary.reviews.get(card.ticker):
+            if review.retried:
+                out.append(f"  draft2 {text(review.draft_text)}")
+            outcome = ("pass" if review.stage is None else f"hold:{review.stage}") + ("+retry" if review.retried else "")
+            out.append(f"  review {outcome} {' | '.join(review.rules) or '-'}")
+    for name, attr in QUALITY_LINES:
+        counts = Counter(line.status for line in (getattr(c, attr) for c in cards) if line is not None)
+        out.append(f"lines {name} " + " ".join(f"{status}={counts[status]}" for status in LineStatus))
+    reviews = summary.reviews.values()
+    out.append(f"review_counts pass_first={sum(r.stage is None and not r.retried for r in reviews)}"
+               f" pass_retry={sum(r.stage is None and r.retried for r in reviews)}"
+               f" replaced={sum(r.stage is not None for r in reviews)} retried={sum(r.retried for r in reviews)}")
+    out += [f"hold {h.ticker} {h.stage} {h.state} {h.accession}" for h in store.list_hold_items(day)] or ["hold -"]
+    rows = store.list_classifications(day)
+    out += [
+        f"classify {r.ticker} {r.accession} "
+        + (f"unclassified={r.unclassified}" if r.unclassified else f"{r.kind}/{r.importance} opinion={str(r.is_opinion).lower()}")
+        for r in rows
+    ] or ["classify -"]
+    kinds = Counter(r.kind for r in rows if r.kind)
+    importance = Counter(r.importance for r in rows if r.kind)
+    out.append("classify_counts kinds " + (" ".join(f"{k}={kinds[k]}" for k in NewsKind if kinds[k]) or "-")
+               + " importance " + (" ".join(f"{i}={n}" for i, n in sorted(importance.items(), reverse=True)) or "-")
+               + f" opinion={sum(bool(r.is_opinion) for r in rows)} unclassified={sum(r.unclassified is not None for r in rows)}")
+    return out
+
+
+def _production(requested: date | None, quality: bool = False) -> int:
     """날짜 확인 → 설정 → DB 연결 → CIK 갱신·파이프라인(SEC·Anthropic·Tiingo) → 요약 → exit 코드. 외부 출처는 DB 연결 뒤에만 부른다.
-    시세: TIINGO_API_KEY가 있으면 Tiingo, 없으면(유료 구독 전) 시세 없이(등락률·세 번째 줄 지연)."""
+    시세: TIINGO_API_KEY가 있으면 Tiingo, 없으면(유료 구독 전) 시세 없이(등락률·세 번째 줄 지연).
+    quality(#14): 로컬 DB만, 시세는 항상 없이(무료 키 시간당 50회 보호. 품질 확인 대상은 첫 번째 줄), 끝에 품질 블록."""
     now = datetime.now(ET)
     day = requested or now.date()
     if day.weekday() >= 5:  # 휴장일 달력은 #16이 같은 규칙(exit 0)으로 넓힌다
@@ -121,15 +186,21 @@ def _production(requested: date | None) -> int:
     except ConfigError as e:
         print(e, file=sys.stderr)
         return 2
+    if quality and not is_local_db(settings.database_url):  # 카드 문장을 찍으므로 공개 로그(Actions = 원격 DB)에서 돌지 않게
+        print("--quality는 로컬 DB에서만 씁니다", file=sys.stderr)
+        return 2
+    tiingo = tiingo_settings is not None and not quality
     try:
         with connect(settings) as conn:
+            store = CardStore(conn)
             summary, refreshed = run_production(
-                CardStore(conn),
+                store,
                 day,
                 get=EdgarClient(edgar_settings).get,
                 llm=AnthropicLLM(llm_settings),
-                prices=TiingoPriceSource(tiingo_settings) if tiingo_settings else NoPriceSource(),
+                prices=TiingoPriceSource(tiingo_settings) if tiingo else NoPriceSource(),
             )
+            lines = _quality_lines(summary, store, "none") if quality else []
     except (ConfigError, DBConnectError) as e:  # 우리가 쓴 문구(변수 이름·포트만): 6543 거부, 연결 실패
         print(e, file=sys.stderr)
         return 2 if isinstance(e, ConfigError) else 1
@@ -140,7 +211,9 @@ def _production(requested: date | None) -> int:
         return 1
     _print_summary(summary)
     print("coverage: refreshed" if refreshed else "coverage: NOT REFRESHED (sec ticker list failed), stored rows used")
-    print("prices=tiingo" if tiingo_settings else "prices=none")  # none = TIINGO_API_KEY 없음(구독 전)
+    print("prices=tiingo" if tiingo else "prices=none")  # none = TIINGO_API_KEY 없음(구독 전) 또는 --quality
+    for line in lines:
+        print(line)
     return 1 if run_failed(summary) else 0
 
 

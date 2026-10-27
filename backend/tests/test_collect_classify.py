@@ -264,6 +264,23 @@ def test_코드_펜스로_감싼_JSON은_깨진_것으로_보지_않는다(store
     assert store.list_classifications(FRI) == [Classification(f"{AAPL_CIK}-26-000001", "AAPL", NewsKind.EARNINGS, 5, False)]
 
 
+EARNINGS_REPLY = reply(label(1, kind="earnings", importance=5))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [f"```JSON\n{EARNINGS_REPLY}\n```", f"``` json\n{EARNINGS_REPLY}\n```", f"```\n{EARNINGS_REPLY}\n```",
+     f"Here is the JSON:\n{EARNINGS_REPLY}", f"{EARNINGS_REPLY}\n\nI labeled every filing."],
+    ids=["대문자_JSON", "띄운_json", "언어_없음", "앞_설명", "뒤_설명"],
+)
+def test_펜스_언어_표시가_달라도_앞뒤에_설명_문장이_붙어도_분류_JSON을_재시도_없이_받는다(store, text):
+    ran = run(store, scenario([AAPL], [filing(1)], [text]))  # 변형마다 재시도하면 호출 상한만 쓰고 묶음을 건너뛴다
+
+    assert len(ran.llm.requests) == 1
+    assert ran.summary.skipped_batches == ()
+    assert store.list_classifications(FRI) == [Classification(f"{AAPL_CIK}-26-000001", "AAPL", NewsKind.EARNINGS, 5, False)]
+
+
 @contextmanager
 def wall_clock_limit(seconds):
     """실제 시간 상한. 넘으면 그 자리에서 실패한다(SIGALRM은 정규식 엔진 안에서도 끊긴다. 2026-10-20 확인)."""

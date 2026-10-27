@@ -1,0 +1,42 @@
+{
+  "coverage": [
+    {"ticker": "LTWR", "name": "Litware", "cik": "0009990001"}
+  ],
+  "prices": {},
+  "filings": {
+    "0009990001": [
+      {"accession": "0009990001-26-000001", "form": "8-K", "accepted_at": "2026-10-15T08:00:00-04:00",
+       "items": ["2.06"],
+       "body": "Item 2.06 Material Impairments. On October 14, 2026, the Board of Directors of Litware concluded that a non-cash impairment charge of $2.0 billion is required for the goodwill of its hardware business. The charge will reduce the company's operating income for the third quarter by 15%.",
+       "exhibit99": null},
+      {"accession": "0009990001-26-000002", "form": "8-K", "accepted_at": "2026-10-15T09:00:00-04:00",
+       "items": ["2.06"],
+       "body": "Item 2.06 Material Impairments. On October 14, 2026, Litware concluded that an impairment charge is required for certain long-lived assets of its consumer software business. The company has not yet determined the amount of the charge. The impairment could have a material adverse effect on the company's results of operations.",
+       "exhibit99": null},
+      {"accession": "0009990001-26-000003", "form": "8-K", "accepted_at": "2026-10-15T10:00:00-04:00",
+       "items": ["8.01"],
+       "body": "Item 8.01 Other Events. Litware updated its investor presentation, which is posted on its website. The risk factors in the presentation state that if a key supplier were to file for bankruptcy, the company's production could be disrupted.",
+       "exhibit99": null},
+      {"accession": "0009990001-26-000004", "form": "8-K", "accepted_at": "2026-10-15T11:00:00-04:00",
+       "items": ["8.01"],
+       "body": "Item 8.01 Other Events. Litware completed a review of how it records revenue. The review found no errors that would cause the company's previously issued financial statements to no longer be reliable.",
+       "exhibit99": null},
+      {"accession": "0009990001-26-000005", "form": "8-K", "accepted_at": "2026-10-15T12:00:00-04:00",
+       "items": ["1.01"],
+       "body": "Item 1.01 Entry into a Material Definitive Agreement. On October 14, 2026, Litware entered into an agreement with a payments company to form a joint venture that will launch a mobile payments app.",
+       "exhibit99": null},
+      {"accession": "0009990001-26-000006", "form": "8-K/A", "accepted_at": "2026-10-15T13:00:00-04:00",
+       "items": ["5.02"],
+       "body": "Item 5.02 Departure of Directors or Certain Officers; Compensatory Arrangements of Certain Officers. This Amendment No. 1 amends the report filed on October 1, 2026 only to report the compensation of the company's new Chief Financial Officer, who will receive an annual base salary of $750,000.",
+       "exhibit99": null},
+      {"accession": "0009990001-26-000007", "form": "8-K", "accepted_at": "2026-10-15T14:00:00-04:00",
+       "items": ["8.01", "9.01"],
+       "body": "Item 8.01 Other Events. On October 14, 2026, Litware completed its offering of $1.5 billion of senior notes. Item 9.01 Financial Statements and Exhibits. Exhibit 5.1 Opinion of Adatum Legal LLP: In our opinion, the notes have been duly authorized and are valid and binding obligations of the company.",
+       "exhibit99": null},
+      {"accession": "0009990001-26-000008", "form": "8-K", "accepted_at": "2026-10-15T15:00:00-04:00",
+       "items": ["8.01"],
+       "body": "Item 8.01 Other Events. On October 14, 2026, Litware announced a new cloud storage product for small businesses. The company expects the product to double its cloud revenue.",
+       "exhibit99": null}
+    ]
+  }
+}

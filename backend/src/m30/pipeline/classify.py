@@ -9,7 +9,7 @@ from enum import StrEnum
 from m30.adapters import SourceError
 from m30.adapters.filings import Filing
 from m30.config import CLASSIFY_MODEL
-from m30.llm import LLMCallLimitReached, LLMRequest, data_json, unfenced
+from m30.llm import LLMCallLimitReached, LLMRequest, data_json, json_object_text
 from m30.models import IMPORTANCE_MAX, NewsKind, UnclassifiedReason
 
 BATCH_SIZE = 20  # 묶음 하나 = LLM 요청 하나
@@ -136,7 +136,7 @@ def classify_request(batch: Sequence[FilingItem], trading_day: date) -> LLMReque
 
 def parse_classification(text: str, batch: Sequence[FilingItem]) -> dict[str, Outcome] | None:
     """None = JSON 깨짐(재시도 대상). 아니면 batch의 모든 접수번호 → Classified 또는 미분류 사유."""
-    text = unfenced(text.strip())
+    text = json_object_text(text.strip())
     try:
         data = json.loads(text)
     except (ValueError, RecursionError):  # 아주 깊게 중첩된 응답은 RecursionError다. 실행을 멈추지 않고 깨짐으로 본다
