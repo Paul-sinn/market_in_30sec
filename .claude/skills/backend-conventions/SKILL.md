@@ -32,7 +32,7 @@ architect 스펙이 다르게 정하면 스펙을 따른다.
 | --- | --- |
 | 숫자는 전부 `pipeline/compute`에서 코드로 계산하고, LLM에는 계산된 값만 넘긴다 | LLM은 숫자를 틀리게 옮긴다. 검수 단계의 숫자 대조가 이 원본을 기준으로 한다 |
 | 외부 데이터는 `adapters/`의 인터페이스로만 접근한다. 모든 어댑터에 fake 구현을 둔다 | 시세 벤더가 아직 미정이다(HANDOFF 4장). fake로 개발·테스트하고 벤더는 나중에 끼운다 |
-| LLM 호출은 서버에서만 한다. 비밀값(Anthropic, 시세 벤더, Supabase service role, `DISCORD_WEBHOOK_URL`, `SEC_USER_AGENT`)은 환경 변수로만 읽는다. 로그에 키·키가 들어간 URL을 남기지 않는다 | 앱에 키를 넣으면 추출당한다(HANDOFF 3-7). Marketstack은 키가 URL 쿼리에 들어간다 |
+| LLM 호출은 서버에서만 한다. 비밀값(Anthropic, 시세 벤더, Supabase service role, `DISCORD_WEBHOOK_URL`, `SEC_USER_AGENT`)은 환경 변수로만 읽는다. 로그에 키·키가 들어간 URL을 남기지 않는다. live 실행 때 값은 명령 줄 안에서만 넣고 파일(scratchpad 도우미 스크립트 포함)에 쓰지 않는다 | 앱에 키를 넣으면 추출당한다(HANDOFF 3-7). Marketstack은 키가 URL 쿼리에 들어간다 |
 | 뉴스 원문은 프롬프트에 데이터로만 넣는다 | 원문 안의 지시문이 모델을 조종하지 못하게 한다 |
 | 무료/Plus 노출은 API 응답을 만들 때 서버가 결정한다. 애플 영수증으로 판단한다 | 앱에서 판단하면 우회된다 |
 | 방향 의견(콜, 토크)은 아레나 API 응답에만 넣는다. 카드·알림·위젯 응답에 넣지 않는다 | ADR-0001 |

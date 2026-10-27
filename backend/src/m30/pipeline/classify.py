@@ -53,8 +53,9 @@ For each filing, return an object with:
   2: a product or service announcement, a regular dividend at the same level, or shareholder vote results
   1: routine or administrative filings
   If nothing fits, use the closest row.
-  For a sale of a business, a partnership or joint venture (scored like a major agreement), a closure, a write-down, a regulatory action, a security incident, a loan agreement, or a dividend change, you may move the score up or down based on the size and effect the filing states. If the filing does not state them, use the default. Do not guess the effect.
-  Give 5 for bankruptcy or for past financial statements that can no longer be relied on only if the filing reports that it has happened. A general risk warning or a mention of a past event is not enough.
+  For a sale of a business, a partnership or joint venture (scored like a major agreement), a closure, a write-down, a regulatory action, a security incident, a loan agreement, or a dividend change, you may move the score one point up or down based on the size and effect the filing states. If the filing does not state them, use the default. Do not guess the effect.
+  For every other filing, use the table score.
+  Give 5 for bankruptcy or for past financial statements that can no longer be relied on only if the filing reports that it has happened. A general risk warning or a mention of a past event is not enough: score the filing by the main event it reports instead.
   Do not raise the score because of an expected stock price move or dramatic wording.
   For an 8-K/A, rate what the amendment adds or corrects.
 - "opinion": true only if the filing is mainly someone's opinion or analysis, such as a column or an analyst view, instead of a report of what the company did. A company's own filing is false. A legal or tax opinion attached to a filing, such as Exhibit 5.1 or 8.1, is not an opinion piece. Statements, outlooks, or forecasts by the company's management inside a company announcement are not opinion pieces. If unsure, use false.

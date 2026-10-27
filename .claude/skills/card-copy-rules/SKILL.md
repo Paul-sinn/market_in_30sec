@@ -16,6 +16,7 @@ description: "30초 종목 리포트 앱에 나가는 문장의 규칙. 첫 번�
 2. 15단어 이내, 주어 + 동사
 3. 과거형. 일정만 미래형
 4. 숫자는 줄당 하나, **코드가 계산한 값만** 쓴다. LLM이 숫자를 만들거나 바꾸지 않는다. 연도(2026, FY2026)는 값으로 센다 — 연도 대신 `Q3`·`full-year`로 쓴다(2026-10-20). 서식 이름(`8-K`, `10-Q`, `Item 2.02`)은 값으로 세지 않지만 카드 문장에 쓰지 않는다(5번 전문용어, 출처는 꼬리표로)
+   - 숫자 단어(`one`…`nineteen`, `twenty`…`ninety`, `hundred`, 목록은 `card.toml` `number_words`)도 같이 센다. `twenty-five`는 하나, `twelve-month`는 `twelve`만, `ten-for-one`은 둘이다. 서수(`second quarter`)·`a`·`single`·`double`·`billion`은 세지 않고 `one-time`·`one-off`는 빼고 센다(#14). 검사기는 종목명을 가리지 않으므로 이름에 숫자 단어가 든 종목(Five Below)은 수동 검사 때 이름을 가리고 돌린다
 5. 전문용어를 쓰지 않는다
 6. 중립 동사만 쓴다: rose, fell, announced, reported, filed. soars/plunges 같은 감정 동사는 쓰지 않는다
 7. 끝에 출처 꼬리표를 단다: `(Company)`, `(SEC filing)`만(2026-10-20 정해진 목록. 출처가 늘면 목록과 검사기에 같이 추가). `+N more`가 있으면 그 뒤에 단다(`… +2 more (SEC filing)`). 검사기는 목록에 있는 줄 끝 꼬리표만 단어 수에서 빼고, 그 외 괄호는 본문으로 센다

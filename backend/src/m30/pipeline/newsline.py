@@ -57,7 +57,7 @@ Lines that follow these rules, for made-up companies:
 Before you reply, check the line: one fact, at most one number, and 15 words or fewer. If it breaks one of these, rewrite it: keep the main fact and leave out the rest.
 
 Reply with one JSON object and nothing else. No code fences, no text before or after it. The shape is:
-{"sentence": "<the line>"}
+{"number": <one value from "numbers", or null>, "sentence": "<the line>"}
 If "text" has no fact you can state under these rules, reply with {"sentence": null}."""
 
 NEWSLINE_USER = "Trading day: {trading_day}\n\n<news>\n{news}\n</news>"
@@ -73,6 +73,7 @@ RETRY_REASONS = {  # 키: DraftProblem 값(REVIEW_FAILURES) + "numbers" + FactLa
     "leftover": "The line had a # sign or a count such as +2 more. Write neither.",
     "multiple_sentences": "The line had more than one sentence. A period inside the line, such as in Inc. or Corp., also ends a sentence. Write one sentence.",
     "too_long": "The line had {words} words. Use 15 or fewer: leave out details, not the main fact.",  # draft_retry_reason가 채운다
+    "comma": "The line had a comma. Write one fact with no comma.",  # 쉼표 = 두 번째 사실(#14)
     "numbers": 'The line had a number that is not in "numbers". Years, dates, counts, and form names such as 8-K count as numbers. Copy one value from "numbers" exactly, or write no number.',
     "forecast": 'The line stated a forecast or used a number from one. Write only what the company did, such as raised, lowered, kept, or issued its forecast, with no forecast numbers, or state another fact from "text".',
     "opinion": "The line judged the news or the company. State only what happened.",
@@ -97,6 +98,7 @@ class DraftProblem(StrEnum):
     MULTIPLE_SENTENCES = "multiple_sentences"  # 두 문장 이상
     TOO_LONG = "too_long"  # 15단어 초과
     LEFTOVER = "leftover"  # 가린 숫자 자리(#)나 문장 중간 +N more가 남음. 검사기는 둘 다 통과시킨다
+    COMMA = "comma"  # 종목명을 가린 문장에 쉼표(1,234 같은 숫자 안 쉼표는 뺀다). 이름을 아는 review가 판정한다
     JSON_INVALID = "json_invalid"  # 같은 요청 2번 모두 형식 깨짐
     LLM_FAILED = "llm_failed"  # 전송 실패(재시도 소진·401·403·기타·이상한 값·차단된 출처)
     CALL_LIMIT = "call_limit"  # 실행당 LLM 호출 상한
@@ -105,7 +107,8 @@ class DraftProblem(StrEnum):
 
 # 티켓의 "검수 실패로 처리" = #7이 이유를 넣어 1회 재생성하는 대상. 나머지는 문장이 없어 바로 대체 줄
 REVIEW_FAILURES = frozenset({
-    DraftProblem.EMPTY, DraftProblem.REFUSAL, DraftProblem.LEFTOVER, DraftProblem.MULTIPLE_SENTENCES, DraftProblem.TOO_LONG
+    DraftProblem.EMPTY, DraftProblem.REFUSAL, DraftProblem.LEFTOVER, DraftProblem.MULTIPLE_SENTENCES, DraftProblem.TOO_LONG,
+    DraftProblem.COMMA,
 })
 
 _INITIAL = r"(?<!\b[A-Z])"  # 단어 경계의 대문자 한 글자 뒤 마침표(U.S.)는 문장 끝이 아니다

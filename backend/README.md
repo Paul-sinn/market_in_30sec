@@ -76,7 +76,7 @@ ANTHROPIC_API_KEY="$(security find-generic-password -s m30-anthropic -w)" \
   uv run python -m m30.pipeline 2026-10-16 --scenario scenarios/filings_day.json --quality > ../_workspace/issue-14/runs/<이름>.txt 2>&1
 # 실제 EDGAR 공시 + 실제 Haiku. 시세는 항상 없이 돈다(TIINGO_API_KEY가 있어도 부르지 않는다: 무료 키 시간당 50회 보호)
 ANTHROPIC_API_KEY="$(security find-generic-password -s m30-anthropic -w)" \
-SEC_USER_AGENT="$(security find-generic-password -s <SEC User-Agent 항목 이름> -w)" \
+SEC_USER_AGENT="<app name> <contact email>" \
   uv run python -m m30.pipeline --production 2026-10-22 --quality > ../_workspace/issue-14/runs/<이름>.txt 2>&1
 ```
 

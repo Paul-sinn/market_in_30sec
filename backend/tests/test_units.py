@@ -454,7 +454,9 @@ def test_Anthropic_요청은_사고를_끄고_응답의_사고_블록은_버리�
 
     assert anthropic_complete(monkeypatch, urlopen) == "ab"
     # 사고를 켜 두면 Haiku 5.5가 답 크기로 잡은 max_tokens를 사고에 다 써 text 없이 끝난다(PR #32)
-    assert sent == [{"model": "claude-haiku-5-5", "max_tokens": 200, "thinking": {"type": "disabled"}, "system": "sys",
+    # system은 캐시 표시를 단 블록 하나: Haiku 5.5는 우리 지시문 길이(1,393·1,605토큰)에서 캐시를 만들고 읽었다(#14 M0)
+    assert sent == [{"model": "claude-haiku-5-5", "max_tokens": 200, "thinking": {"type": "disabled"},
+                     "system": [{"type": "text", "text": "sys", "cache_control": {"type": "ephemeral"}}],
                      "messages": [{"role": "user", "content": "usr"}]}]
 
 

@@ -48,6 +48,7 @@ Reply with one JSON object and nothing else. No code fences, no text before or a
 FACTCHECK_USER = "<line>\n{line}\n</line>"
 
 MASK = "Name"  # 가린 종목명 단어 하나 = 이 단어 하나: 단어 수는 그대로, 금지어·숫자·2인칭에 안 걸린다
+_COMMA = re.compile(r"(?<!\d),|,(?!\d)")  # 숫자 사이 쉼표($1,234)는 천 단위 구분이라 뺀다
 
 
 
@@ -181,6 +182,8 @@ def _check(
 ) -> tuple[HoldStage | None, list[str], list[str] | None]:
     """한 시도의 검수(스펙 #7 D2 표). (걸린 단계 — None = 통과, 규칙(시도 번호 없이), 재생성 이유 — None = 재생성 대상 아님).
     숫자·금지어는 둘 다 돌려 이유를 한 번에 모은다(코드 검사라 비용 0). 둘 중 하나라도 걸리면 판정 LLM을 부르지 않는다."""
+    if problem is None and _COMMA.search(mask_names(sentence, terms)):  # LLM 초안만 여기를 지난다: 대체 줄·템플릿 줄은 해당 없음
+        problem = DraftProblem.COMMA
     if problem is not None:
         return HoldStage.DRAFT, [f"draft: {problem}"], [draft_retry_reason(problem, sentence)] if problem in REVIEW_FAILURES else None
     numbers_ok = numbers_from_source(mask_names(sentence, terms), numbers)

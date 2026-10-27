@@ -183,7 +183,9 @@ def test_첫_번째_줄_지시문이_문구_규칙을_지시한다(store, filing
                  "raised, lowered, kept, or issued its forecast", "Do not write the forecast's numbers.",
                  "Do not add a second fact with and, including", "aim for 12 or fewer", "use only the single figure that matters most, usually revenue",
                  "Before you reply, check the line", "If it breaks one of these, rewrite it: keep the main fact and leave out the rest.",
-                 "<last_line>"):
+                 "<last_line>",
+                 # 대안 B(#14 D8): 첫 시도 위반 46%(13초안 중 6) → 고른 숫자 하나를 문장보다 먼저 적게 한다
+                 '{"number": <one value from "numbers", or null>, "sentence": "<the line>"}'):
         assert rule in system  # 문장 해석은 copy-reviewer가 지시문 전문으로 검수한다
     assert "shorten" not in system  # 숫자·둘째 사실 위반에는 "줄여라"가 맞지 않는다
 
@@ -411,6 +413,27 @@ def test_코드_펜스로_감싼_첫_번째_줄_JSON은_깨진_것으로_보지_
 
     assert len(line_requests(ran)) == 1
     assert (ran.summary.drafts["AAPL"].problem, ran.summary.drafts["AAPL"].sentence) == (None, CFO)
+
+
+NUMBERED_CFO = '{"number": "$12.4B", "sentence": "Apple named a new CFO"}'
+NO_NUMBER_CFO = '{"number": null, "sentence": "Apple named a new CFO"}'  # 숫자 없는 정상 문장(#14 qa 변이 M4)
+NUMBERED_REFUSAL = '{"number": null, "sentence": null}'
+
+
+@pytest.mark.parametrize(
+    "replies, problem, text, line",
+    [((NUMBERED_CFO, FACT), None, CFO, f"{CFO} (SEC filing)"),
+     ((NO_NUMBER_CFO, FACT), None, CFO, f"{CFO} (SEC filing)"),
+     ((NUMBERED_REFUSAL, NUMBERED_REFUSAL), DraftProblem.REFUSAL, None, REPLACEMENT)],  # 재생성도 거절 → 대체 줄
+    ids=["숫자_칸", "숫자_칸_null", "숫자_칸_거절"],
+)
+def test_답_모양의_숫자_칸은_카드에_쓰지_않고_문장만_쓴다(store, replies, problem, text, line):
+    # 대안 B(#14 D8)는 지시문만 바꾼다: 숫자 칸은 모델이 고른 값을 먼저 적게 할 뿐, 카드·검수는 문장만 본다
+    ran = run(store, one_filing(*replies))
+
+    assert (ran.summary.drafts["AAPL"].problem, ran.summary.drafts["AAPL"].sentence) == (problem, text)
+    assert news_line(cards(store)["AAPL"])[0] == line
+    assert len(ran.llm.requests) == 1 + len(replies)  # 분류 + 응답마다 한 번. 형식 재시도 없음
 
 
 def test_첫_번째_줄_LLM_호출이_실패해도_다른_종목과_카드_저장은_계속한다(store):

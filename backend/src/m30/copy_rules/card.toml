@@ -16,3 +16,12 @@ emotion_verbs = [
 # 첫 번째 줄 끝 출처 꼬리표 (card-copy-rules 1장 7번). 줄 끝의 "(Company)"·"(SEC filing)"만 단어·숫자 수에서 뺀다.
 # 그 외 줄 끝 괄호는 본문으로 센다. 출처가 늘면 여기에 더한다
 source_tags = ["Company", "SEC filing"]
+# 숫자 단어(#14). 숫자판(3%, $94B)과 합쳐 "숫자는 줄당 하나"로 센다. 대소문자 무시, 단어 경계.
+# 서수(first, second)·a/an/single·double/twice·단위(million, billion)는 값이 아니라 넣지 않는다. one-time·one-off는 코드가 빼고 센다
+# 순서를 지킨다: 앞 아홉 개(one…nine)가 twenty-five 같은 십 단위 복합의 뒷자리다
+number_words = [
+  "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+  "ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen",
+  "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety",
+  "hundred",
+]

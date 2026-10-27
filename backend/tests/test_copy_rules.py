@@ -160,6 +160,19 @@ def test_값이_아닌_표기를_빼고도_값이_두_개면_숫자_개수에_�
 
 
 @pytest.mark.parametrize(
+    "line",
+    [
+        "Apple hired twenty-five staff and paid $2B (SEC filing)",
+        "Tesla reported trailing twelve-month revenue above $100B (SEC filing)",
+        "Apple announced a ten-for-one stock split (SEC filing)",
+    ],
+    ids=["십_단위_복합은_하나", "기수_뒤_하이픈_단어는_기수만", "10-for-1처럼_둘"],
+)
+def test_하이픈으로_이은_숫자_단어는_십_단위_복합만_한_숫자로_센다(line):
+    assert check_card(line) == ["숫자 2개 — 줄당 하나"]
+
+
+@pytest.mark.parametrize(
     "mode, line, code, expected",
     [
         ("card", "No new SEC filings found", 0, "위반 0줄"),

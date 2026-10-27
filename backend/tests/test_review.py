@@ -144,6 +144,46 @@ def test_15단어를_넘으면_센_단어_수를_넣어_재생성한다(store):
     assert ran.summary.reviews["AAPL"].rules == ("1 draft: too_long",)
 
 
+@pytest.mark.parametrize(
+    "coverage, body, comma_line, one_fact",
+    [(Coverage("XOM", "Exxon Mobil Corporation", cik=AAPL_CIK), "Exxon Mobil issued earnings considerations.",
+      "Exxon Mobil issued a preview of its Q3 earnings factors, citing planned maintenance",  # #14 M2 카드 줄
+      "Exxon Mobil issued a preview of its Q3 earnings factors"),
+     (Coverage("META", "Meta Platforms, Inc.", cik=AAPL_CIK), "Revenue was $64.6 billion.",
+      "Meta reported Q3 revenue of $64.6B, up from a year earlier",  # #14 M5 카드 줄
+      "Meta reported Q3 revenue of $64.6B")],
+    ids=["XOM_citing", "META_up_from"],
+)
+def test_쉼표로_두_번째_사실을_붙인_첫_번째_줄은_이유를_넣어_재생성한다(store, coverage, body, comma_line, one_fact):
+    ticker = coverage.ticker
+    ran = run(store, scenario([coverage], [filing(1, body=body)],
+                              [reply(label(1, ticker)), sentence(comma_line), sentence(one_fact), FACT]))
+
+    first, second = line_requests(ran)
+    assert second.user == first.user + retry_note(comma_line, "The line had a comma. Write one fact with no comma.")
+    assert len(check_requests(ran)) == 1  # 1차는 쉼표에서 걸려 판정을 부르지 않는다
+    assert news_line(cards(store)[ticker])[0] == f"{one_fact} (SEC filing)"
+    assert store.list_hold_items(FRI) == []
+    review = ran.summary.reviews[ticker]
+    assert (review.retried, review.rules, review.stage) == (True, ("1 draft: comma",), None)
+
+
+@pytest.mark.parametrize(
+    "coverage, body, written, card_line",
+    [(AAPL, "Revenue was $1,234 million.", "Apple reported Q3 revenue of $1,234M", "Apple reported Q3 revenue of $1.2B (SEC filing)"),
+     (Coverage("TT", "Tailspin Toys, LLC", cik=AAPL_CIK), "Tailspin Toys named a new CFO.", "Tailspin Toys, LLC named a new CFO",
+      "Tailspin Toys, LLC named a new CFO (SEC filing)")],
+    ids=["숫자_안_쉼표", "종목명_속_쉼표"],
+)
+def test_쉼표가_숫자나_종목명_안에만_있으면_재생성하지_않고_통과한다(store, coverage, body, written, card_line):
+    ticker = coverage.ticker
+    ran = run(store, scenario([coverage], [filing(1, body=body)], [reply(label(1, ticker)), sentence(written), FACT]))
+
+    assert len(line_requests(ran)) == 1
+    assert news_line(cards(store)[ticker])[0] == card_line
+    assert ran.summary.reviews[ticker].rules == ()
+
+
 def test_문장이_없던_재생성에는_직전_줄_블록이_없다(store):
     ran = run(store, one_filing('{"sentence": null}', sentence(CFO), FACT))
 
@@ -287,6 +327,7 @@ DRAFT_FAILURES = {  # REVIEW_FAILURES마다 (응답, 받은 문장)
     DraftProblem.LEFTOVER: (sentence("Apple repurchased # shares"), "Apple repurchased # shares"),
     DraftProblem.MULTIPLE_SENTENCES: (sentence("Apple named a new CFO. Revenue rose 8.0%"), "Apple named a new CFO. Revenue rose 8.0%"),
     DraftProblem.TOO_LONG: (sentence(SIXTEEN), SIXTEEN),
+    DraftProblem.COMMA: (sentence("Apple named a new CFO, a former bank executive"), "Apple named a new CFO, a former bank executive"),
 }
 
 
