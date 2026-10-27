@@ -49,24 +49,55 @@ class DBConnectError(psycopg.OperationalError):
     """connect()가 다시 던지는 연결 실패. 문구는 이 모듈이 쓴 것뿐(주소·비밀번호 없음)이라 공개 로그에 찍어도 된다."""
 
 
+# 연결 실패 이유 코드(목록 순서로 처음 맞는 것). (E…) 형식은 최신 Supavisor 문구 추정(확인 못 함)
+_CONNECT_REASONS = (
+    ("auth_blocked", ("circuit breaker", "ecircuitbreaker")),  # Supavisor: 비밀번호를 여러 번 틀려 잠김
+    ("auth_failed", ("password authentication failed",)),
+    ("tenant_not_found", ("tenant or user not found", "tenant/user")),  # Supavisor: 사용자 이름의 프로젝트 ref·리전 호스트·일시정지
+    ("host_not_found", ("failed to resolve host", "could not translate host name", "nodename nor servname",
+                        "name or service not known")),
+    ("network_unreachable", ("network is unreachable", "no route to host")),  # 예: IPv6 전용 Direct connection
+    ("refused", ("connection refused",)),
+    ("timeout", ("timeout expired",)),
+)
+
+
+def connect_failure_reason(message: str) -> str:
+    """psycopg 연결 실패 메시지 → 고정 이유 코드. 메시지(호스트·사용자)는 공개 로그에 찍지 않고 코드만 찍는다."""
+    message = message.lower()
+    return next((code for code, marks in _CONNECT_REASONS if any(m in message for m in marks)), "other")
+
+
+def _connect_error(reason: str) -> DBConnectError:
+    return DBConnectError(
+        f"{DB_URL_VAR}로 DB에 연결하지 못했습니다. 로컬이면 supabase start와 README의 export 줄을,"
+        f" 운영이면 세션 풀러(포트 5432) 주소와 비밀번호를 확인하세요 (reason={reason})"
+    )
+
+
 def connect(settings: Settings) -> psycopg.Connection:
     """autocommit 연결 후 service_role로 권한을 낮춘다(서버 코드는 DDL을 못 한다).
     비로컬: 트랜잭션 풀러(6543)는 거부(문장마다 서버 연결이 바뀌어 set role이 유지되지 않는다), sslmode=require로 덮어쓴다.
     shortcut: require는 서버 인증서를 검증하지 않는다, 검증이 필요하면 Supabase CA 인증서 + verify-full."""
     local = is_local_db(settings.database_url)
+    # URI에는 공백이 올 수 없다(secret 붙여넣기 앞뒤 공백·줄바꿈). 키=값 형식은 공백이 구분자라 제외
+    if "://" in settings.database_url and any(c.isspace() for c in settings.database_url):
+        raise _connect_error("bad_url")
+    # 원래 예외를 끊고(from None, 지역 변수에서도 지움) 다시 던진다: psycopg 프레임 인자(conninfo)·주소 파싱 오류 메시지에 비밀번호가 있다
     try:
         ports = (conninfo_to_dict(settings.database_url).get("port") or "").split(",")  # 여러 호스트면 "5432,6543"
-        if not local and any(p.strip().isdigit() and int(p) == 6543 for p in ports):
-            raise ConfigError(
-                f"{DB_URL_VAR}이 트랜잭션 풀러(포트 6543)입니다. 세션 풀러(포트 5432) 주소를 쓰세요: set role이 연결 내내 유지돼야 합니다"
-            )
-        conn = psycopg.connect(settings.database_url, autocommit=True, **({} if local else {"sslmode": "require"}))
     except psycopg.Error:
-        # psycopg 프레임 인자(conninfo)·주소 파싱 오류 메시지에 비밀번호가 있어 원래 예외를 끊고 다시 던진다
-        raise DBConnectError(
-            f"{DB_URL_VAR}로 DB에 연결하지 못했습니다. 로컬이면 supabase start와 README의 export 줄을,"
-            " 운영이면 세션 풀러(포트 5432) 주소와 비밀번호를 확인하세요"
-        ) from None
+        raise _connect_error("bad_url") from None  # 파싱 메시지는 비밀번호를 담을 수 있어 읽지 않고 실패 위치로 정한다
+    if not local and any(p.strip().isdigit() and int(p) == 6543 for p in ports):
+        raise ConfigError(
+            f"{DB_URL_VAR}이 트랜잭션 풀러(포트 6543)입니다. 세션 풀러(포트 5432) 주소를 쓰세요: set role이 연결 내내 유지돼야 합니다"
+        )
+    try:
+        conn = psycopg.connect(settings.database_url, autocommit=True, **({} if local else {"sslmode": "require"}))
+    except psycopg.Error as e:
+        reason = connect_failure_reason(str(e))
+        del e
+        raise _connect_error(reason) from None
     try:
         conn.execute("set role service_role")
     except BaseException:

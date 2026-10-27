@@ -54,6 +54,7 @@ uv run python -m m30.pipeline --production 2026-10-16   # 지난 거래일 다�
 - 출처: 공시 = SEC EDGAR, LLM = Anthropic. 실제 출처가 아직 없는 자리는 가짜 데이터 없이 데이터 상태 문구만: 시세(#18 전) → 등락률 지연·세 번째 줄 `Update delayed`, 일정(#21 전) → 두 번째 줄 `Not covered yet`, 지표 일정 → 저장 안 함. 실행 전에 실험 종목 CIK를 SEC 티커 목록으로 갱신하고, 실패하면 저장된 행을 쓴다(`coverage: NOT REFRESHED …`).
 - 필요한 환경 변수 셋: `SUPABASE_DB_URL`, `ANTHROPIC_API_KEY`, `SEC_USER_AGENT`. 하나라도 없으면 DB에 붙기 전에 이름만 알리고 exit 2.
 - 원격 DB 주소는 Supabase **Session pooler**(포트 5432) URI만. Transaction pooler(6543)는 연결 전에 거부한다(`set role service_role`이 연결 내내 유지돼야 한다). Direct connection은 IPv6 전용이라 GitHub 러너에서 붙지 못한다. 비로컬 연결은 항상 `sslmode=require`.
+- DB 연결 실패 줄 끝의 `(reason=…)`(원래 메시지는 호스트·사용자가 들어 있어 찍지 않는다)와 확인할 것: `bad_url` URI 형식(앞뒤 공백·줄바꿈 없이 붙여 넣기, 비밀번호 특수문자는 퍼센트 인코딩) / `auth_failed` 비밀번호 / `auth_blocked` 비밀번호를 여러 번 틀려 풀러가 잠금 → 올바른 비밀번호로 고치고 잠시 뒤 다시 / `tenant_not_found` 사용자 이름 `postgres.<프로젝트 ref>`·풀러 호스트의 리전·프로젝트 일시정지 / `host_not_found` 호스트 이름 / `network_unreachable` Direct connection(IPv6 전용) → Session pooler URI로 / `refused` 호스트·포트(5432) / `timeout` 프로젝트 상태·네트워크 / `other` 그 밖(Supabase 대시보드 로그).
 - exit 코드: 0 = 정상·주말, 2 = 인자 오류·이른/미래 날짜(그날 04:00 ET 전)·설정 누락·값 형식 오류·트랜잭션 풀러(6543), 1 = DB 연결 실패·예외·재시도 뒤에도 실패한 출처 호출(401·403 포함)·카드 0장. 1이면 워크플로가 실패로 끝난다.
 - 예상 못 한 예외는 `RUN FAILED: <예외 이름> [sqlstate=<코드>]` 한 줄만 찍는다(메시지·traceback 없음: DB 오류 DETAIL에 행 내용, 라이브러리 메시지에 키가 섞일 수 있다). 원인을 보려면 로컬 DB에서 같은 날짜로 `run_production`을 직접 부른다.
 - **레포가 공개라 Actions 로그도 공개다.** CLI는 결과 코드·건수·티커만 찍는다. 카드 문장·공시 본문·가격·URL·키·환경 변수 값을 출력에 더하지 않는다(#17·#18·#21도 같은 규칙).
