@@ -71,6 +71,38 @@ def test_운영_모드를_켜면_원격_DB_주소도_가드를_지나_접속_단
     assert not [c for c in CANARIES if c in out]
 
 
+@pytest.mark.parametrize(
+    "url, reason",
+    [
+        (f"postgresql://postgres:{CANARY}%zz@127.0.0.1:54322/postgres", "bad_url"),  # 파싱 오류 메시지는 비밀번호를 그대로 담는다
+        (None, "auth_failed"),  # 로컬 DB, 틀린 비밀번호
+        (f"postgresql://postgres:{CANARY}@127.0.0.1:1/postgres", "refused"),  # 닫힌 로컬 포트
+        (REMOTE_URL, "host_not_found"),  # .invalid는 오프라인에서도 바로 실패한다
+    ],
+    ids=["bad_url", "auth_failed", "refused", "host_not_found"],
+)
+def test_운영_모드_DB_연결_실패는_고정_문구와_이유_코드_한_줄만_찍고_주소·비밀값은_찍지_않는다(settings, url, reason):
+    url = url or make_conninfo(settings.database_url, password=CANARY)
+    code, out = run_cli(["--production", "2026-10-16"], SECRETS | {"SUPABASE_DB_URL": url})
+
+    assert code == 1
+    assert len(out.strip().splitlines()) == 1  # 원래 psycopg 메시지(호스트·사용자) 줄이 섞이지 않았다
+    assert out.startswith("SUPABASE_DB_URL로 DB에 연결하지 못했습니다")
+    assert out.strip().endswith(f"(reason={reason})")
+    assert not [c for c in CANARIES if c in out]
+    assert "127.0.0.1" not in out and "m30-test.invalid" not in out  # 호스트(원래 메시지에 있다)
+
+
+@pytest.mark.parametrize("url", [REMOTE_URL + "\n", REMOTE_URL + " ", " " + REMOTE_URL, REMOTE_URL + "\r\n"],
+                         ids=["trailing_newline", "trailing_space", "leading_space", "trailing_crlf"])
+def test_운영_모드_DB_URL에_붙여넣기_공백이_있으면_접속하지_않고_bad_url로_알린다(url):
+    code, out = run_cli(["--production", "2026-10-16"], SECRETS | {"SUPABASE_DB_URL": url})
+
+    assert code == 1
+    assert out.strip().endswith("(reason=bad_url)")  # 접속했다면 .invalid라 host_not_found가 나온다
+    assert not [c for c in CANARIES if c in out]
+
+
 def test_운영_모드와_시나리오는_같이_쓸_수_없다():
     code, out = run_cli(["--production", "--scenario", "scenarios/first_card.json", "2026-10-16"])
 

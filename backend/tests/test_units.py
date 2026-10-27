@@ -11,6 +11,7 @@ from m30.adapters.events import Earnings, EarningsTiming, ExDividend
 from m30.adapters.prices import DailyBar
 from m30.config import ET, ConfigError, is_local_db, load_llm_settings, load_settings
 from m30.copy_rules import ALWAYS_BANNED, CARD_BANNED, EMOTION_VERBS, SOURCE_TAG, check_card
+from m30.db.store import connect_failure_reason
 from m30.llm.anthropic import AnthropicLLM
 from m30.models import CardLine, LineStatus
 from m30.pipeline.compute import card_numbers, change_pct, format_per_share, format_usd, round_pct, streak
@@ -64,6 +65,47 @@ def test_설정을_출력해도_Anthropic_키가_보이지_않는다():
 )
 def test_로컬_DB_주소만_로컬로_인정한다(url, local):
     assert is_local_db(url) is local
+
+
+AT = 'connection failed: connection to server at "52.8.172.168", port 5432 failed: '  # psycopg 3.3 + libpq 18 앞부분
+AUTH = AT + 'FATAL:  password authentication failed for user "postgres"'  # 로컬에서 본 그대로
+UNREACHABLE = 'connection failed: connection to server at "2600:1f18::1", port 5432 failed: Network is unreachable'
+
+
+def multi(*failures):
+    """psycopg가 여러 주소(IPv6·IPv4) 시도 실패를 잇는 모양: 맨 앞 줄 = 마지막 시도, 아래에 전부."""
+    return "\n".join([failures[-1], "Multiple connection attempts failed. All failures were:",
+                      *(f"- host: 'h', port: '5432', hostaddr: 'a{i}': {f}" for i, f in enumerate(failures))])
+
+
+@pytest.mark.parametrize(
+    "message, reason",
+    [
+        (AT + "FATAL:  Circuit breaker open: Too many authentication errors", "auth_blocked"),
+        (AT + "FATAL:  (ECIRCUITBREAKER) too many authentication errors, new connections are temporarily blocked", "auth_blocked"),
+        (AUTH, "auth_failed"),
+        (AT + "FATAL:  Tenant or user not found", "tenant_not_found"),
+        (AT + "FATAL:  (ENOTFOUND) tenant/user postgres.abcdefgh not found", "tenant_not_found"),
+        ("failed to resolve host 'db.m30-test.invalid': [Errno 8] nodename nor servname provided, or not known", "host_not_found"),
+        ("failed to resolve host 'aws-0-us-east-1.pooler.supabase.com': [Errno -2] Name or service not known", "host_not_found"),
+        ("failed to resolve host 'aws-0-us-east-1.pooler.supabase.com': [Errno -3] Temporary failure in name resolution",
+         "host_not_found"),
+        ('could not translate host name "db.abcdefgh.supabase.co" to address: Name or service not known', "host_not_found"),
+        (UNREACHABLE + "\n\tIs the server running on that host and accepting TCP/IP connections?", "network_unreachable"),
+        (AT + "No route to host", "network_unreachable"),
+        (AT + "could not receive data from server: Connection refused", "refused"),  # 로컬에서 본 그대로
+        ("connection timeout expired", "timeout"),
+        (AT + "timeout expired", "timeout"),
+        (AT + 'FATAL:  database "nope" does not exist', "other"),
+        (AT + "server does not support SSL, but SSL was required", "other"),
+        ("", "other"),
+        (multi(AUTH, UNREACHABLE), "auth_failed"),  # 맨 앞 줄이 아니라 전체에서 목록 순서로 처음 맞는 것
+        (multi(UNREACHABLE, UNREACHABLE), "network_unreachable"),
+        (multi(AUTH, AT + "FATAL:  Circuit breaker open: Too many authentication errors"), "auth_blocked"),
+    ],
+)
+def test_DB_연결_실패_메시지는_정해진_이유_코드_하나로만_바뀐다(message, reason):
+    assert connect_failure_reason(message) == reason
 
 
 @pytest.mark.parametrize(
