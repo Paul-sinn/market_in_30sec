@@ -9,7 +9,7 @@ from enum import StrEnum
 from m30.adapters import SourceError
 from m30.adapters.filings import Filing
 from m30.config import CLASSIFY_MODEL
-from m30.llm import LLMCallLimitReached, LLMRequest, data_json, unfenced
+from m30.llm import LLMCallLimitReached, LLMRequest, data_json, json_object_text
 from m30.models import IMPORTANCE_MAX, NewsKind, UnclassifiedReason
 
 BATCH_SIZE = 20  # 묶음 하나 = LLM 요청 하나
@@ -53,8 +53,9 @@ For each filing, return an object with:
   2: a product or service announcement, a regular dividend at the same level, or shareholder vote results
   1: routine or administrative filings
   If nothing fits, use the closest row.
-  For a sale of a business, a partnership or joint venture (scored like a major agreement), a closure, a write-down, a regulatory action, a security incident, a loan agreement, or a dividend change, you may move the score up or down based on the size and effect the filing states. If the filing does not state them, use the default. Do not guess the effect.
-  Give 5 for bankruptcy or for past financial statements that can no longer be relied on only if the filing reports that it has happened. A general risk warning or a mention of a past event is not enough.
+  For a sale of a business, a partnership or joint venture (scored like a major agreement), a closure, a write-down, a regulatory action, a security incident, a loan agreement, or a dividend change, you may move the score one point up or down based on the size and effect the filing states. If the filing does not state them, use the default. Do not guess the effect.
+  For every other filing, use the table score.
+  Give 5 for bankruptcy or for past financial statements that can no longer be relied on only if the filing reports that it has happened. A general risk warning or a mention of a past event is not enough: score the filing by the main event it reports instead.
   Do not raise the score because of an expected stock price move or dramatic wording.
   For an 8-K/A, rate what the amendment adds or corrects.
 - "opinion": true only if the filing is mainly someone's opinion or analysis, such as a column or an analyst view, instead of a report of what the company did. A company's own filing is false. A legal or tax opinion attached to a filing, such as Exhibit 5.1 or 8.1, is not an opinion piece. Statements, outlooks, or forecasts by the company's management inside a company announcement are not opinion pieces. If unsure, use false.
@@ -136,7 +137,7 @@ def classify_request(batch: Sequence[FilingItem], trading_day: date) -> LLMReque
 
 def parse_classification(text: str, batch: Sequence[FilingItem]) -> dict[str, Outcome] | None:
     """None = JSON 깨짐(재시도 대상). 아니면 batch의 모든 접수번호 → Classified 또는 미분류 사유."""
-    text = unfenced(text.strip())
+    text = json_object_text(text.strip())
     try:
         data = json.loads(text)
     except (ValueError, RecursionError):  # 아주 깊게 중첩된 응답은 RecursionError다. 실행을 멈추지 않고 깨짐으로 본다

@@ -215,3 +215,22 @@ def test_운영_모드에서_Anthropic_키_끝에_줄바꿈이_있으면_DB에_�
     assert "ANTHROPIC_API_KEY must be one line" in out
     assert "DB에 연결하지 못했습니다" not in out
     assert not [c for c in CANARIES if c in out]
+
+
+def test_품질_확인_모드에서_Anthropic_키가_없으면_DB에_붙기_전에_이름만_알리고_멈춘다():
+    secrets = {k: v for k, v in SECRETS.items() if k != "ANTHROPIC_API_KEY"}
+    code, out = run_cli(["2026-10-16", "--scenario", "scenarios/filings_day.json", "--quality"], secrets)
+
+    assert code == 2
+    assert "ANTHROPIC_API_KEY is not set" in out
+    assert "DB에 연결하지 못했습니다" not in out and "로컬 DB가 아니라" not in out  # DB 설정·가드보다 먼저 멈췄다
+    assert not [c for c in CANARIES if c in out]
+
+
+def test_운영_모드_품질_확인은_로컬이_아닌_DB면_접속하기_전에_멈춘다():
+    code, out = run_cli(["--production", "2026-10-16", "--quality"])  # 원격 캐너리 주소
+
+    assert code == 2
+    assert "--quality는 로컬 DB에서만 씁니다" in out
+    assert "DB에 연결하지 못했습니다" not in out  # .invalid라 접속을 시도했으면 접속 실패 문구가 나온다
+    assert not [c for c in CANARIES if c in out]

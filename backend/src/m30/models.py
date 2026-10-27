@@ -112,7 +112,7 @@ class StockCard:
 class HoldStage(StrEnum):
     """보류함 행이 걸린 단계. 바꾸면 마이그레이션 enum도 같이."""
 
-    DRAFT = "draft"  # 초안 형식(빈 응답·거절·남은 #·두 문장·15단어 초과) 또는 문장 없음(JSON 깨짐·전송 실패·상한·본문 없음)
+    DRAFT = "draft"  # 초안 형식(빈 응답·거절·남은 #·두 문장·15단어 초과·쉼표) 또는 문장 없음(JSON 깨짐·전송 실패·상한·본문 없음)
     NUMBERS = "numbers"  # 숫자 대조
     COPY_RULES = "copy_rules"  # 금지어 검사(m30.copy_rules)
     FACT_CHECK = "fact_check"  # 사실/예측 판정: 예측·의견, 또는 판정 LLM 실패

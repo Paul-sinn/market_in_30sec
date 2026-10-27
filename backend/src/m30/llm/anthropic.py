@@ -1,4 +1,4 @@
-"""LLM 프로토콜의 실제 Anthropic 구현. 표준 라이브러리만 쓴다. 재시도는 하지 않는다(SourceCalls가 한다). 캐시 표시·토큰 수는 #14.
+"""LLM 프로토콜의 실제 Anthropic 구현. 표준 라이브러리만 쓴다. 재시도는 하지 않는다(SourceCalls가 한다). system에 캐시 표시를 단다(#14). 토큰 수 반환은 #17.
 
 키 노출 방지(2026-10-18 DB 비밀번호 사고와 같은 교훈): 키는 LLMSettings(repr 숨김) 안에만 있다. 헤더는 요청을 만드는
 도우미 안에서만 만들고, 예외가 올라가는 complete 프레임의 지역 변수에 키·헤더를 두지 않는다(pytest --showlocals가 찍는다).
@@ -49,7 +49,8 @@ class AnthropicLLM:
             "max_tokens": request.max_tokens,
             # Haiku 5.5는 기본이 적응형 사고: 답 크기로 잡은 max_tokens(200·50)를 사고에 다 쓰면 text 블록 없이 끝난다(#14)
             "thinking": {"type": "disabled"},
-            "system": request.system,
+            # 캐시 표시: Haiku 5.5는 우리 지시문 길이에서도 캐시를 만들고 읽는다(#14 M0). 최소 길이보다 짧으면 API가 표시를 무시한다
+            "system": [{"type": "text", "text": request.system, "cache_control": {"type": "ephemeral"}}],
             "messages": [{"role": "user", "content": request.user}],
         }
         return urllib.request.Request(

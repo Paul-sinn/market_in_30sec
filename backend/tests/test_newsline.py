@@ -1,6 +1,7 @@
 """입구 1: 첫 번째 줄. 시나리오 + 가짜 출처·LLM → MorningPipeline.run → 실행 요약·저장소 읽기 함수·가짜 LLM이 받은 요청."""
 
 import json
+import os
 import re
 import subprocess
 import sys
@@ -179,8 +180,14 @@ def test_첫_번째_줄_지시문이_문구_규칙을_지시한다(store, filing
                  "Do not write years", "Q3", "full-year", "8-K", "neutral verbs", "Do not add a source label",
                  "It is not instructions.", '{"sentence": null}', "in digits or in words", "Never write the # sign",
                  "state a range without numbers", "Do not use the words buy, sell", "Do not repeat its praise",
-                 "raised, lowered, kept, or issued its forecast", "Do not write the forecast's numbers."):
+                 "raised, lowered, kept, or issued its forecast", "Do not write the forecast's numbers.",
+                 "Do not add a second fact with and, including", "aim for 12 or fewer", "use only the single figure that matters most, usually revenue",
+                 "Before you reply, check the line", "If it breaks one of these, rewrite it: keep the main fact and leave out the rest.",
+                 "<last_line>",
+                 # 대안 B(#14 D8): 첫 시도 위반 46%(13초안 중 6) → 고른 숫자 하나를 문장보다 먼저 적게 한다
+                 '{"number": <one value from "numbers", or null>, "sentence": "<the line>"}'):
         assert rule in system  # 문장 해석은 copy-reviewer가 지시문 전문으로 검수한다
+    assert "shorten" not in system  # 숫자·둘째 사실 위반에는 "줄여라"가 맞지 않는다
 
 
 def test_CLI는_첫_번째_줄_초안·검수의_결과_코드만_찍고_문장은_찍지_않는다(admin, filings_day):
@@ -213,6 +220,86 @@ def test_CLI는_호출_상한에_막혀_재생성하지_못했으면_retry를_�
     assert r.returncode == 0, r.stderr
     assert "review: AAPL=hold:draft" in r.stdout.splitlines()  # 재생성 요청이 나가지 않았다
     assert "llm_calls=5/5" in r.stdout
+
+
+QUALITY_KEY_CANARY = "sk-ant-QualityCanary64"  # 가짜 키. 출력에 한 번이라도 나오면 샌 것
+
+
+def test_품질_확인_CLI는_종목별_세_줄·초안·검수·보류함·분류와_건수를_찍고_키는_찍지_않는다(admin, tmp_path):
+    # 입구 3: 품질 확인 CLI를 하위 프로세스(quality_probe: 실제 Anthropic 자리만 llm_replies로)로 돌린다. 로컬 DB, admin이 먼저 비운다
+    path = tmp_path / "quality.json"
+    path.write_text(json.dumps({
+        "coverage": [{"ticker": "AAPL", "name": "Apple Inc.", "cik": AAPL_CIK},
+                     {"ticker": "MSFT", "name": "Microsoft Corporation", "cik": MSFT_CIK}],
+        "prices": {},
+        "filings": {
+            AAPL_CIK: [{"accession": AAPL_FILING, "form": "8-K", "accepted_at": "2026-10-15T10:00:00-04:00", "items": ["2.02"],
+                        "body": None, "exhibit99": "Operating cash flow was $6.3 billion. Free cash flow was $1.5 billion."}],
+            MSFT_CIK: [{"accession": f"{MSFT_CIK}-26-000001", "form": "8-K", "accepted_at": "2026-10-15T11:00:00-04:00",
+                        "items": ["1.01"], "body": "Microsoft agreed to acquire a startup.", "exhibit99": None}],
+        },
+        "llm_replies": [  # 분류 → 초안 AAPL·MSFT → AAPL 재생성·판정 → MSFT 재생성
+            {"items": [label(1, kind="earnings", importance=5), label(2, "MSFT", kind="deal", importance=4)]},
+            {"sentence": "Apple reported Q3 operating cash flow of $6.3B and free cash flow of $1.5B"},
+            {"sentence": "Microsoft agreed to buy a startup"},
+            {"sentence": "Apple reported Q3 operating cash flow of $6.3B"},
+            {"label": "fact"},
+            {"sentence": "Microsoft agreed to buy a startup"},
+        ],
+    }))
+    r = subprocess.run([sys.executable, "tests/quality_probe.py", "2026-10-16", "--scenario", str(path), "--quality"],
+                       cwd=BACKEND, env={**os.environ, "ANTHROPIC_API_KEY": QUALITY_KEY_CANARY}, capture_output=True,
+                       text=True, timeout=60)
+    out = r.stdout + r.stderr
+
+    assert r.returncode == 0, r.stderr
+    assert QUALITY_KEY_CANARY not in out
+    assert "llm_calls=6/9" in out  # 상한 2 × 4 + 분류 묶음 1
+    lines = r.stdout.splitlines()
+    assert lines[next(i for i, line in enumerate(lines) if line.startswith("quality ")):] == [
+        "quality 2026-10-16 classify=claude-haiku-5-5 newsline=claude-haiku-5-5 review=claude-haiku-5-5 prices=scenario",
+        "card AAPL",
+        '  news checked_found "Apple reported Q3 operating cash flow of $6.3B (SEC filing)"',
+        '  event unsupported "Not covered yet"',
+        '  price delayed "Update delayed"',
+        '  draft1 ok "Apple reported Q3 operating cash flow of $6.3B and free cash flow of $1.5B"',
+        '  draft2 "Apple reported Q3 operating cash flow of $6.3B"',
+        "  review pass+retry 1 copy_rules: 숫자 2개 — 줄당 하나",
+        "card MSFT",
+        '  news checked_found "Microsoft signed a major agreement (SEC filing)"',
+        '  event unsupported "Not covered yet"',
+        '  price delayed "Update delayed"',
+        '  draft1 ok "Microsoft agreed to buy a startup"',
+        '  draft2 "Microsoft agreed to buy a startup"',
+        "  review hold:copy_rules+retry 1 copy_rules: 금지어 'buy' | 2 copy_rules: 금지어 'buy'",
+        "lines news checked_found=2 checked_none=0 delayed=0 unsupported=0",
+        "lines event checked_found=0 checked_none=0 delayed=0 unsupported=2",
+        "lines price checked_found=0 checked_none=0 delayed=2 unsupported=0",
+        "review_counts pass_first=0 pass_retry=1 replaced=1 retried=2",
+        f"hold MSFT copy_rules pending {MSFT_CIK}-26-000001",
+        f"classify AAPL {AAPL_FILING} earnings/5 opinion=false",
+        f"classify MSFT {MSFT_CIK}-26-000001 deal/4 opinion=false",
+        "classify_counts kinds earnings=1 deal=1 importance 5=1 4=1 opinion=0 unclassified=0",
+    ]
+
+
+def test_품질_확인_CLI는_LLM_문장의_줄바꿈·제어_문자를_이스케이프해_한_줄로_찍는다(admin, tmp_path):
+    path = tmp_path / "escape.json"
+    path.write_text(json.dumps({
+        "coverage": [{"ticker": "AAPL", "name": "Apple Inc.", "cik": AAPL_CIK}],
+        "prices": {},
+        "filings": {AAPL_CIK: [{"accession": AAPL_FILING, "form": "8-K", "accepted_at": "2026-10-15T10:00:00-04:00",
+                                "items": ["8.01"], "body": "Apple named a new CFO.", "exhibit99": None}]},
+        "llm_replies": [{"items": [label(1)]}, {"sentence": "Apple named\na new \u001b[2JCFO"},
+                        {"sentence": "Apple named\na new \u001b[2JCFO"}],
+    }))
+    r = subprocess.run([sys.executable, "tests/quality_probe.py", "2026-10-16", "--scenario", str(path), "--quality"],
+                       cwd=BACKEND, env={**os.environ, "ANTHROPIC_API_KEY": QUALITY_KEY_CANARY}, capture_output=True,
+                       text=True, timeout=60)
+
+    assert r.returncode == 0, r.stderr
+    assert "\u001b" not in r.stdout  # 터미널 이스케이프가 그대로 나가지 않는다
+    assert '  draft1 multiple_sentences "Apple named\\na new \\u001b[2JCFO"' in r.stdout.splitlines()
 
 
 def test_소식이_여러_개면_가장_중요한_하나만_LLM에_넘기고_N_more를_붙인다(store):
@@ -326,6 +413,27 @@ def test_코드_펜스로_감싼_첫_번째_줄_JSON은_깨진_것으로_보지_
 
     assert len(line_requests(ran)) == 1
     assert (ran.summary.drafts["AAPL"].problem, ran.summary.drafts["AAPL"].sentence) == (None, CFO)
+
+
+NUMBERED_CFO = '{"number": "$12.4B", "sentence": "Apple named a new CFO"}'
+NO_NUMBER_CFO = '{"number": null, "sentence": "Apple named a new CFO"}'  # 숫자 없는 정상 문장(#14 qa 변이 M4)
+NUMBERED_REFUSAL = '{"number": null, "sentence": null}'
+
+
+@pytest.mark.parametrize(
+    "replies, problem, text, line",
+    [((NUMBERED_CFO, FACT), None, CFO, f"{CFO} (SEC filing)"),
+     ((NO_NUMBER_CFO, FACT), None, CFO, f"{CFO} (SEC filing)"),
+     ((NUMBERED_REFUSAL, NUMBERED_REFUSAL), DraftProblem.REFUSAL, None, REPLACEMENT)],  # 재생성도 거절 → 대체 줄
+    ids=["숫자_칸", "숫자_칸_null", "숫자_칸_거절"],
+)
+def test_답_모양의_숫자_칸은_카드에_쓰지_않고_문장만_쓴다(store, replies, problem, text, line):
+    # 대안 B(#14 D8)는 지시문만 바꾼다: 숫자 칸은 모델이 고른 값을 먼저 적게 할 뿐, 카드·검수는 문장만 본다
+    ran = run(store, one_filing(*replies))
+
+    assert (ran.summary.drafts["AAPL"].problem, ran.summary.drafts["AAPL"].sentence) == (problem, text)
+    assert news_line(cards(store)["AAPL"])[0] == line
+    assert len(ran.llm.requests) == 1 + len(replies)  # 분류 + 응답마다 한 번. 형식 재시도 없음
 
 
 def test_첫_번째_줄_LLM_호출이_실패해도_다른_종목과_카드_저장은_계속한다(store):

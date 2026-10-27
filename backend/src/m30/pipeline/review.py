@@ -12,7 +12,7 @@ from enum import StrEnum
 from m30.adapters import SourceError
 from m30.config import REVIEW_MODEL
 from m30.copy_rules import check_card
-from m30.llm import LLMCallLimitReached, LLMRequest, data_json, unfenced
+from m30.llm import LLMCallLimitReached, LLMRequest, data_json, json_object_text
 from m30.models import HoldStage, NewsCandidate, TickerNews
 from m30.pipeline.classify import FilingItem
 from m30.pipeline.compute import card_numbers
@@ -23,6 +23,7 @@ from m30.pipeline.newsline import (
     DraftProblem,
     NewsDraft,
     copy_retry_reasons,
+    draft_retry_reason,
     news_text,
     write_news,
 )
@@ -47,6 +48,7 @@ Reply with one JSON object and nothing else. No code fences, no text before or a
 FACTCHECK_USER = "<line>\n{line}\n</line>"
 
 MASK = "Name"  # 가린 종목명 단어 하나 = 이 단어 하나: 단어 수는 그대로, 금지어·숫자·2인칭에 안 걸린다
+_COMMA = re.compile(r"(?<!\d),|,(?!\d)")  # 숫자 사이 쉼표($1,234)는 천 단위 구분이라 뺀다
 
 
 
@@ -115,7 +117,7 @@ def factcheck_request(sentence: str) -> LLMRequest:
 def parse_factcheck_reply(text: str) -> FactLabel | None:
     """None = 형식 깨짐(같은 요청 1회 재시도 대상): JSON 아님, 객체 아님, "label"이 세 값이 아님. 다른 키는 무시."""
     try:
-        data = json.loads(unfenced(text.strip()))
+        data = json.loads(json_object_text(text.strip()))
     except (ValueError, RecursionError):  # 아주 깊게 중첩된 응답은 RecursionError다
         return None
     label = data.get("label") if isinstance(data, dict) else None
@@ -160,7 +162,7 @@ def _review(
     rules = [f"1 {r}" for r in found]
     retried = False
     if stage is not None and reasons is not None:
-        sentence, _, problem = write_news(item, candidate, trading_day, send, reasons)
+        sentence, _, problem = write_news(item, candidate, trading_day, send, reasons, last=draft.sentence)
         retried = problem is not DraftProblem.CALL_LIMIT  # 상한에 막혀 끝났으면 재생성하지 못한 것으로 본다
         last = last if sentence is None else sentence
         stage, found, _ = check(sentence, problem)
@@ -180,8 +182,10 @@ def _check(
 ) -> tuple[HoldStage | None, list[str], list[str] | None]:
     """한 시도의 검수(스펙 #7 D2 표). (걸린 단계 — None = 통과, 규칙(시도 번호 없이), 재생성 이유 — None = 재생성 대상 아님).
     숫자·금지어는 둘 다 돌려 이유를 한 번에 모은다(코드 검사라 비용 0). 둘 중 하나라도 걸리면 판정 LLM을 부르지 않는다."""
+    if problem is None and _COMMA.search(mask_names(sentence, terms)):  # LLM 초안만 여기를 지난다: 대체 줄·템플릿 줄은 해당 없음
+        problem = DraftProblem.COMMA
     if problem is not None:
-        return HoldStage.DRAFT, [f"draft: {problem}"], [RETRY_REASONS[problem]] if problem in REVIEW_FAILURES else None
+        return HoldStage.DRAFT, [f"draft: {problem}"], [draft_retry_reason(problem, sentence)] if problem in REVIEW_FAILURES else None
     numbers_ok = numbers_from_source(mask_names(sentence, terms), numbers)
     issues = check_card(mask_names(news_text(sentence, more), terms))  # 카드에 보이는 조립 줄 그대로(종목명만 가림)
     rules = ([] if numbers_ok else ["numbers: not from source"]) + [f"copy_rules: {i}" for i in issues]

@@ -72,3 +72,10 @@ This stock cannot lose
 NVDA is easy money
 Get rich with this stock
 Double your money this year
+# 숫자 단어(one…nineteen, twenty…ninety, hundred)도 숫자판과 합쳐 줄당 하나로 센다(#14 fix round 3). twelve-month는 twelve만 센다
+Tesla reported trailing twelve-month revenue above $100B for a second straight quarter (SEC filing)
+Tesla reported trailing twelve-month revenue above $100B (SEC filing)
+Apple announced two new directors and a $60B share buyback (SEC filing)
+# 하이픈: 십 단위 복합(twenty-five)은 한 숫자, ten-for-one은 ten·one 둘(10-for-1과 같음)
+Apple hired twenty-five staff and paid $2B (SEC filing)
+Apple announced a ten-for-one stock split (SEC filing)

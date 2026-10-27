@@ -140,6 +140,17 @@ def test_분류_지시문은_날짜·데이터와_관계없이_같다(store, fil
     assert fri.llm.requests[0].system == thu.llm.requests[0].system  # 캐싱 접두가 실행마다 같다
 
 
+def test_분류_지시문은_중요도를_1점까지만_조정하고_목록_밖은_표_점수_일어나지_않은_사건은_주된_사건으로_매기게_한다(store, filings_day):
+    # #14 D6 ①②③. 문장 해석은 copy-reviewer가 지시문 전문으로 검수한다
+    system = run(store, filings_day).llm.requests[0].system
+
+    for rule in ("you may move the score one point up or down based on the size and effect the filing states.",
+                 "For every other filing, use the table score.",
+                 "A general risk warning or a mention of a past event is not enough: score the filing by the main event it reports instead."):
+        assert rule in system
+    assert "move the score up or down" not in system  # 폭 없는 옛 문장이 남지 않는다
+
+
 def test_분류_요청은_설정의_claude_haiku_5_5_모델과_응답_2000토큰_상한을_쓴다(store, filings_day):
     ran = run(store, filings_day)
 
@@ -261,6 +272,23 @@ def test_코드_펜스로_감싼_JSON은_깨진_것으로_보지_않는다(store
     ran = run(store, scenario([AAPL], [filing(1)], [text]))  # 모델 응답은 끝에 줄바꿈이 붙는 일이 흔하다
 
     assert len(ran.llm.requests) == 1
+    assert store.list_classifications(FRI) == [Classification(f"{AAPL_CIK}-26-000001", "AAPL", NewsKind.EARNINGS, 5, False)]
+
+
+EARNINGS_REPLY = reply(label(1, kind="earnings", importance=5))
+
+
+@pytest.mark.parametrize(
+    "text",
+    [f"```JSON\n{EARNINGS_REPLY}\n```", f"``` json\n{EARNINGS_REPLY}\n```", f"```\n{EARNINGS_REPLY}\n```",
+     f"Here is the JSON:\n{EARNINGS_REPLY}", f"{EARNINGS_REPLY}\n\nI labeled every filing."],
+    ids=["대문자_JSON", "띄운_json", "언어_없음", "앞_설명", "뒤_설명"],
+)
+def test_펜스_언어_표시가_달라도_앞뒤에_설명_문장이_붙어도_분류_JSON을_재시도_없이_받는다(store, text):
+    ran = run(store, scenario([AAPL], [filing(1)], [text]))  # 변형마다 재시도하면 호출 상한만 쓰고 묶음을 건너뛴다
+
+    assert len(ran.llm.requests) == 1
+    assert ran.summary.skipped_batches == ()
     assert store.list_classifications(FRI) == [Classification(f"{AAPL_CIK}-26-000001", "AAPL", NewsKind.EARNINGS, 5, False)]
 
 

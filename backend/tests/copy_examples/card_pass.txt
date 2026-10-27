@@ -67,3 +67,12 @@ Apple filed Item 2.02 with Q3 revenue of $94B (SEC filing)
 너도 사랑해
 그분은 의사세요
 애플이 새 아이폰을 발표했다
+# 숫자 단어로 세지 않는 것(#14 fix round 3): 분기·기간 이름의 서수, one-time·one-off(값이 아닌 형용사), 금액 단위, a/single, 단독 one
+Apple reported fourth quarter revenue of $102.5B (SEC filing)
+Apple reported revenue of $94B in its second quarter (SEC filing)
+Apple reported first half revenue of $94B (SEC filing)
+Apple booked a one-time charge of $2B (SEC filing)
+Apple booked a one-off charge of $2B (SEC filing)
+Apple reported revenue of $1.2 billion (SEC filing)
+Apple named a single new director (SEC filing)
+Apple said one of its directors resigned (SEC filing)

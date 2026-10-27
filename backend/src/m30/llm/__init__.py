@@ -46,9 +46,10 @@ def data_json(value: object) -> str:
     return json.dumps(value, ensure_ascii=False).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
 
 
-def unfenced(text: str) -> str:
-    """```json … ``` 로 감싼 응답이면 안쪽만. Haiku가 지시와 달리 펜스로 감싸는 일이 흔하고, 그때마다 재시도하면 호출만 쓴다.
-    정규식을 쓰지 않는다: 겹치는 \\s*가 펜스 뒤 긴 공백에서 백트래킹해 실행이 멈춘다. 안쪽 앞뒤 공백은 json.loads가 무시한다."""
-    if len(text) < 6 or not (text.startswith("```") and text.endswith("```")):
-        return text
-    return text[3:-3].removeprefix("json")
+def json_object_text(text: str) -> str:
+    """처음 '{'부터 마지막 '}'까지(둘 다 있고 순서가 맞을 때). 아니면 text 그대로(json.loads가 깨짐으로 본다).
+    세 호출(분류·첫 번째 줄·판정)의 답이 모두 JSON 객체 하나라, 펜스(```json·```JSON·``` json·```)·앞 설명·뒤 설명을 한 규칙으로
+    벗긴다(변형마다 재시도하면 호출 상한만 쓴다, #14 D4). 객체가 둘이면 여전히 깨짐. 정규식을 쓰지 않는다: 겹치는 \\s*가 긴 공백에서
+    백트래킹해 실행이 멈췄다. find·rfind라 선형."""
+    start, end = text.find("{"), text.rfind("}")
+    return text[start : end + 1] if 0 <= start < end else text

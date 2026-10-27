@@ -25,6 +25,11 @@ NUMBER = re.compile(r"(?<![A-Za-z&])[-−+]?\$?\d[\d,]*(\.\d+)?(%|[BMK]\b)?(?![A
 NOT_A_VALUE = re.compile(
     r"S&P 500|\b\d+-(day|week|month|year)\b|\b\d{1,2}/\d{1,2}\b|\b\d{1,2}:\d{2}\b|\b\d{1,2}-[KQ]\b|\bItem \d\.\d{2}\b", re.I
 )
+NUMBER_WORDS = _card["number_words"]
+_TENS, _UNITS = [w for w in NUMBER_WORDS if w.endswith("ty")], NUMBER_WORDS[:9]  # twenty…ninety, one…nine(목록 앞 아홉 개)
+# 십 단위-일 단위(twenty-five)는 한 숫자. 다른 하이픈 뒤(twelve-month, ten-for-one)는 \b에서 끊겨 기수만 센다
+NUMBER_WORD = re.compile(rf"\b(({'|'.join(_TENS)})-({'|'.join(_UNITS)})|{'|'.join(NUMBER_WORDS)})\b", re.I)
+ONE_OFF = re.compile(r"\bone-(time|off)\b", re.I)  # 값이 아닌 형용사. 지우고 숫자 단어를 센다
 
 HANGUL = re.compile(r"[가-힣]")
 MAX_WORDS = 15
@@ -70,9 +75,10 @@ def check_card(line: str) -> list[str]:
     words = len(body.split())
     if words > MAX_WORDS:
         issues.append(f"{words}단어 — 최대 {MAX_WORDS}")
-    numbers = NUMBER.findall(NOT_A_VALUE.sub("", body))
-    if len(numbers) > 1:
-        issues.append(f"숫자 {len(numbers)}개 — 줄당 하나")
+    text = NOT_A_VALUE.sub("", body)
+    numbers = len(NUMBER.findall(text)) + len(NUMBER_WORD.findall(ONE_OFF.sub("", text)))
+    if numbers > 1:
+        issues.append(f"숫자 {numbers}개 — 줄당 하나")
     return issues
 
 

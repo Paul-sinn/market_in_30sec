@@ -16,7 +16,7 @@ uv run python -m m30.pipeline 2026-10-13 --scenario scenarios/events_and_tags.js
 uv run python -m m30.pipeline 2026-10-16 --scenario scenarios/filings_day.json       # 공시 수집·분류 확인용
 ```
 
-- LLM은 시나리오의 `llm_replies`(가짜, 호출 순서대로: 분류 묶음 → 첫 번째 줄 초안 종목 순 → 공시마다 사실/예측 판정(걸리면 재생성 → 재판정))를 쓴다. `ANTHROPIC_API_KEY` 없이 돈다. 실제 Anthropic은 운영 모드(아래)만 쓴다. CLI는 문장을 찍지 않는다(`drafts:`·`review:` 줄은 결과 코드만).
+- LLM은 시나리오의 `llm_replies`(가짜, 호출 순서대로: 분류 묶음 → 첫 번째 줄 초안 종목 순 → 공시마다 사실/예측 판정(걸리면 재생성 → 재판정))를 쓴다. `ANTHROPIC_API_KEY` 없이 돈다. 실제 Anthropic은 운영 모드(아래)와 품질 확인 모드(`--quality`, 맨 아래)만 쓴다. CLI는 문장을 찍지 않는다(`drafts:`·`review:` 줄은 결과 코드만. 예외는 `--quality`뿐).
 - 검수: 초안 → 숫자 대조(계산 원본 `numbers`) → 금지어(`m30.copy_rules`, 종목명을 가리고) → 사실/예측 판정(LLM) → 걸리면 이유를 넣어 1회 재생성. 그래도 걸리면 카드에 8-K 항목 대체 줄(`Apple reported quarterly results (SEC filing)` 등)을 쓰고 `hold_queue`(보류함)에 행을 남긴다. 문장 없이 대체 줄만 나간 경우(본문 없음·LLM 실패)도 행이 생긴다. 8-K/A가 앞선 카드가 쓴 공시(같은 CIK·같은 `report_date` = EDGAR reportDate. 가짜 시나리오는 공시의 선택 키 `"report_date": "YYYY-MM-DD"`)를 정정하면 그 카드는 그대로 두고 `amended_filing` 행(`정정 공시 있음`)을 남긴다.
 - 보류함 `rules` 읽는 법: 한 칸 = `{시도} {단계}: {이유}`.
   - 시도: `1` 처음 쓴 줄, `2` 걸린 이유를 넣어 한 번 다시 쓴 줄(`2 draft: call_limit`이면 다시 쓰려다, `2 fact_check: call_limit`이면 다시 쓴 줄을 판정받으려다 실행당 호출 상한에 막힘). `2`가 없으면 다시 쓰지 않은 것(문장이 없었거나 판정을 못 받음)
@@ -61,5 +61,41 @@ uv run python -m m30.pipeline --production 2026-10-16   # 지난 거래일 다�
 - DB 연결 실패 줄 끝의 `(reason=…)`(원래 메시지는 호스트·사용자가 들어 있어 찍지 않는다)와 확인할 것: `bad_url` URI 형식(앞뒤 공백·줄바꿈 없이 붙여 넣기, 비밀번호 특수문자는 퍼센트 인코딩) / `auth_failed` 비밀번호 / `auth_blocked` 비밀번호를 여러 번 틀려 풀러가 잠금 → 올바른 비밀번호로 고치고 잠시 뒤 다시 / `tenant_not_found` 사용자 이름 `postgres.<프로젝트 ref>`·풀러 호스트의 리전·프로젝트 일시정지 / `host_not_found` 호스트 이름 / `network_unreachable` Direct connection(IPv6 전용) → Session pooler URI로 / `refused` 호스트·포트(5432) / `timeout` 프로젝트 상태·네트워크 / `other` 그 밖(Supabase 대시보드 로그).
 - exit 코드: 0 = 정상·주말, 2 = 인자 오류·이른/미래 날짜(그날 04:00 ET 전)·설정 누락·값 형식 오류·트랜잭션 풀러(6543), 1 = DB 연결 실패·예외·재시도 뒤에도 실패한 출처 호출(401·403 포함)·카드 0장. 1이면 워크플로가 실패로 끝난다.
 - 예상 못 한 예외는 `RUN FAILED: <예외 이름> [sqlstate=<코드>]` 한 줄만 찍는다(메시지·traceback 없음: DB 오류 DETAIL에 행 내용, 라이브러리 메시지에 키가 섞일 수 있다). 원인을 보려면 로컬 DB에서 같은 날짜로 `run_production`을 직접 부른다.
-- **레포가 공개라 Actions 로그도 공개다.** CLI는 결과 코드·건수·티커만 찍는다. 카드 문장·공시 본문·가격·URL·키·환경 변수 값을 출력에 더하지 않는다(#17·#18·#21도 같은 규칙).
+- **레포가 공개라 Actions 로그도 공개다.** CLI는 결과 코드·건수·티커만 찍는다(예외: 로컬 DB 전용 `--quality`, 맨 아래). 카드 문장·공시 본문·가격·URL·키·환경 변수 값을 출력에 더하지 않는다(#17·#18·#21도 같은 규칙).
 - 사용자 설정(값은 채팅·파일·커밋에 쓰지 않는다): ① Supabase Connect → Session pooler URI(비밀번호 칸 채움, 특수문자는 퍼센트 인코딩) ② GitHub Settings → Environments → `production`(배포 브랜치 `main`만) + environment secrets 셋(Tiingo 유료 구독 뒤에 `TIINGO_API_KEY` 추가) ③ 실패한 Actions 알림 켜기 ④ main 병합 뒤 첫 실행은 수동으로.
+
+## 품질 확인 모드 (실제 Haiku, 로컬 DB만, #14)
+
+통과/실패 판정이 아니라 Paul이 실제 Haiku의 카드 문장·검수 전 초안·검수 결과·보류함·분류를 눈으로 보는 명령이다. 기존 명령에 `--quality`만 붙인다.
+
+```bash
+# 위 "실행"의 eval 줄로 로컬 SUPABASE_DB_URL을 넣은 셸에서. 키는 명령 안에서 Keychain으로만 읽는다(값을 쓰거나 export하지 않는다)
+cd backend && mkdir -p ../_workspace/issue-14/runs
+# 시나리오(가짜 시세·공시·일정) + 실제 Haiku. 시나리오의 llm_replies는 쓰지 않는다
+ANTHROPIC_API_KEY="$(security find-generic-password -s m30-anthropic -w)" \
+  uv run python -m m30.pipeline 2026-10-16 --scenario scenarios/filings_day.json --quality > ../_workspace/issue-14/runs/<이름>.txt 2>&1
+# 실제 EDGAR 공시 + 실제 Haiku. 시세는 항상 없이 돈다(TIINGO_API_KEY가 있어도 부르지 않는다: 무료 키 시간당 50회 보호)
+ANTHROPIC_API_KEY="$(security find-generic-password -s m30-anthropic -w)" \
+SEC_USER_AGENT="<app name> <contact email>" \
+  uv run python -m m30.pipeline --production 2026-10-22 --quality > ../_workspace/issue-14/runs/<이름>.txt 2>&1
+```
+
+- **로컬 DB에서만 돈다.** `--scenario`는 원래 로컬 전용이고, `--production --quality`는 DB가 로컬이 아니면 DB·SEC에 닿기 전에 `--quality는 로컬 DB에서만 씁니다`로 exit 2. 카드 문장을 찍는 유일한 출력이라 Actions(원격 DB, 공개 로그)에서는 돌지 않는다. `ANTHROPIC_API_KEY`가 없으면 DB에 붙기 전에 `ANTHROPIC_API_KEY is not set`으로 exit 2.
+- 출력은 `_workspace/`(git에 안 올라감)로 바로 받는다. pytest는 로컬 DB를 비우므로 측정 실행과 출력 확인 사이에 pytest를 돌리지 않는다. 실행은 그 날짜의 로컬 카드를 다시 쓴다(로컬 웹 미리보기가 같은 DB를 본다).
+- **출력 파일에는 검수 전 모델 문장이 들어 있다. 레포가 공개라 이슈·PR에 그대로 붙이지 않고 `_workspace/`(gitignore 대상)에만 둔다.**
+- 호출 수 상한은 운영과 같다(`llm_calls=`, 커버 범위 × 4 + 분류 묶음 수). 실제 비용이 든다.
+- `scenarios/classify_probe.json`: 가상 회사 Litware(`LTWR`) 공시 8건, 분류 중요도 규칙 확인용(거래일 2026-10-16). `llm_replies`가 없어 `--quality`로만 돈다. 로컬 커버 범위에 `LTWR` 행이 남는다(다음 pytest가 비운다).
+- 기존 요약 줄 뒤에 품질 블록이 붙는다. 글자 칸은 JSON 문자열(따옴표·`\n`·제어 문자 이스케이프)이다. 줄 머리는 고정이라 `grep '^  draft1 '`처럼 셀 수 있다.
+
+| 줄 | 뜻 |
+| --- | --- |
+| `quality <거래일> classify=… newsline=… review=… prices=scenario\|none` | 블록 시작. 쓴 모델과 시세 출처 |
+| `card <티커>` 아래 `  news`·`  event`·`  price <상태> "<카드 문구>"` | 저장된 카드의 세 줄(티커 순). 줄이 없으면 `- -` |
+| `  draft1 <ok\|문제 코드> "<문장>"` | 첫 시도 초안(검수 전, 꼬리표 없음). 소식 있는 종목만. 문장이 없으면 `-` |
+| `  draft2 "<문장>"` | 재생성한 경우의 마지막 LLM 문장 |
+| `  review <pass\|hold:단계>[+retry] <규칙 \| …>` | 검수 결과. 규칙 읽는 법은 위 "보류함 `rules` 읽는 법". 1차 통과면 `-` |
+| `lines news\|event\|price checked_found=… checked_none=… delayed=… unsupported=…` | 데이터 상태별 줄 수(있음·없음·지연·미지원) |
+| `review_counts pass_first=… pass_retry=… replaced=… retried=…` | 첫 시도 통과 / 재생성 뒤 통과 / 대체 줄 / 재생성한 종목 수 |
+| `hold <티커> <단계> <상태> <접수번호>` | 보류함 행(정정 행 포함). 없으면 `hold -` |
+| `classify <티커> <접수번호> <종류>/<중요도> opinion=…` 또는 `unclassified=<사유>` | 분류 행. 없으면 `classify -` |
+| `classify_counts kinds … importance … opinion=… unclassified=…` | 분류 분포 |
