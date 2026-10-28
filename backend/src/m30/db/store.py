@@ -155,6 +155,27 @@ class CardStore:
         rows = self._conn.execute("select ticker, name, leverage, cik from public.coverage order by ticker")
         return [Coverage(ticker=t, name=n, leverage=lev, cik=cik) for t, n, lev, cik in rows]
 
+    def add_default_tickers(self, day: date, tickers: Iterable[str]) -> None:
+        """day가 속한 분기(첫날)의 기본 종목에 tickers를 더한다. 이미 있으면 그대로, 지우지 않는다. 커버 범위에 없는 티커는 넣지 않는다."""
+        self._conn.execute(
+            "insert into public.default_ticker (quarter, ticker)"
+            " select date_trunc('quarter', %s::timestamp)::date, ticker from public.coverage where ticker = any(%s)"
+            " on conflict do nothing",
+            (day, list(tickers)),
+        )
+
+    def list_generation_targets(self, trading_day: date) -> list[Coverage]:
+        """생성 대상 = 활성 종목(잠기지 않은 내 종목 행이 있는 티커) ∪ trading_day가 속한 분기의 기본 종목. list_coverage와 같은 모양·순서."""
+        rows = self._conn.execute(
+            "select c.ticker, c.name, c.leverage, c.cik from public.coverage c"
+            " where exists (select from public.my_stock s where s.ticker = c.ticker and not s.locked)"
+            " or exists (select from public.default_ticker d"
+            "  where d.ticker = c.ticker and d.quarter = date_trunc('quarter', %s::timestamp)::date)"
+            " order by c.ticker",
+            (trading_day,),
+        )
+        return [Coverage(ticker=t, name=n, leverage=lev, cik=cik) for t, n, lev, cik in rows]
+
     def save_filings(self, trading_day: date, filings: Iterable[Filing]) -> frozenset[str]:
         """공시 원본 저장. 이미 있는 접수번호는 건드리지 않는다(처음 받은 원본·거래일 유지).
         돌려주는 값: 넘긴 접수번호 중 처음 받은 거래일이 trading_day인 것 = 이번 카드의 새 소식."""

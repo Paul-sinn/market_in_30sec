@@ -19,6 +19,7 @@ from m30.adapters.prices import DailyBar
 from m30.config import ET
 from m30.models import CardStatus, Coverage, LineStatus
 from m30.pipeline.morning import MorningPipeline
+from test_my_stock import add, set_plan
 
 TUE = date(2026, 10, 13)
 THU = date(2026, 10, 15)
@@ -30,6 +31,7 @@ def run(store, scenario, day=FRI):
     if not isinstance(scenario, Scenario):
         scenario = load_scenario(scenario)
     store.upsert_coverage(scenario.coverage)
+    store.add_default_tickers(day, [c.ticker for c in scenario.coverage])  # 유저 없음 → 시나리오 커버 범위 전체가 대상
     return MorningPipeline(
         prices=FakePriceSource(scenario),
         events=FakeEventSource(scenario),
@@ -377,3 +379,33 @@ def test_가격_사실_후보가_여럿이면_정해진_우선순위로_하나�
 
     [card] = store.list_cards(FRI)
     assert card.price_fact_line.text == text
+
+
+def test_생성_대상은_활성_종목과_기본_종목의_합집합이다(store, admin, make_user):
+    ciks = {"AAPL": "0000320193", "MSFT": "0000789019", "NVDA": "0001045810", "KO": "0000021344", "PFE": "0000078003"}
+    store.upsert_coverage([Coverage(t, t, cik=cik) for t, cik in ciks.items()])
+    store.add_default_tickers(FRI, ["AAPL", "MSFT"])  # 2026Q4
+    store.add_default_tickers(date(2026, 9, 30), ["PFE"])  # 2026Q3: 다른 분기
+    free, downgraded = make_user("free"), make_user("plus")
+    for uid, tickers in ((free, ["MSFT", "NVDA"]), (downgraded, ["AAPL", "MSFT", "NVDA", "KO"])):
+        for ticker in tickers:
+            add(admin, uid, ticker)
+    set_plan(admin, downgraded, "free")  # KO만 잠김 = 잠긴 것만 있는 종목
+    # 기본 종목을 손으로 정하려고 run 도우미(시나리오 커버 범위 전체 = 기본 종목)를 쓰지 않는다
+    scenario = Scenario(coverage=[], prices={})
+    filings = FakeFilingSource(scenario)
+
+    summary = MorningPipeline(
+        prices=FakePriceSource(scenario),
+        events=FakeEventSource(scenario),
+        filings=filings,
+        indicators=FakeIndicatorSource(scenario),
+        llm=FakeLLM(scenario),
+        store=store,
+        sleep=lambda seconds: None,
+    ).run(FRI)
+
+    assert [c.ticker for c in store.list_cards(FRI)] == ["AAPL", "MSFT", "NVDA"]  # KO(잠긴 것만)·PFE(다른 분기) 없음
+    assert summary.cards_saved == 3  # MSFT는 셋 다에 있어도 하나
+    assert sorted(filings.calls) == [ciks["AAPL"], ciks["MSFT"], ciks["NVDA"]]  # 수집도 대상만
+    assert summary.llm_call_limit == 3 * 4 + 0  # 대상 3종목 × 4 + 묶음 0

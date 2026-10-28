@@ -141,6 +141,7 @@ def run(store, monkeypatch, responses):
     prices, opener = source(monkeypatch, responses)
     scenario = Scenario(coverage=[Coverage(t, t) for t in responses], prices={})
     store.upsert_coverage(scenario.coverage)
+    store.add_default_tickers(FRI, [c.ticker for c in scenario.coverage])  # 유저 없음 → 시나리오 커버 범위 전체가 대상
     summary = MorningPipeline(
         prices=prices,
         events=FakeEventSource(scenario),

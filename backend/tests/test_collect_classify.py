@@ -50,6 +50,7 @@ def run(store, scenario, day=FRI):
     if not isinstance(scenario, Scenario):
         scenario = load_scenario(scenario)
     store.upsert_coverage(scenario.coverage)
+    store.add_default_tickers(day, [c.ticker for c in scenario.coverage])  # 유저 없음 → 시나리오 커버 범위 전체가 대상
     fakes = {
         "prices": FakePriceSource(scenario),
         "events": FakeEventSource(scenario),

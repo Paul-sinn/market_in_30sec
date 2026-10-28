@@ -66,7 +66,7 @@ class RunSummary:
     skipped_batches: tuple[SkippedBatch, ...]  # 건너뛴 분류 묶음
     llm_calls: int  # 보낸 LLM 요청 수(재시도 포함)
     llm_call_limit: int  # 실행당 LLM 호출 상한
-    news: dict[str, TickerNews]  # 커버 범위 티커 → 첫 번째 줄 상태·후보 (#6의 입력)
+    news: dict[str, TickerNews]  # 생성 대상 티커 → 첫 번째 줄 상태·후보 (#6의 입력)
     drafts: dict[str, NewsDraft]  # 소식 있는 종목 → 첫 번째 줄 초안(검수 전). 카드에는 reviews의 줄만 간다
     reviews: dict[str, NewsReview]  # 소식 있는 종목 → 검수 결과(통과한 줄 또는 대체 줄)
 
@@ -98,10 +98,10 @@ class MorningPipeline:
             raise TypeError("trading_day must be a date, not a datetime")
         checked_at = datetime.now(ET)  # 이 실행의 모든 줄이 같은 확인 시각을 쓴다
         calls = SourceCalls(self._sleep)
-        coverage = self._store.list_coverage()
-        items, failed_ciks = self._collect_filings(coverage, trading_day, calls)
+        targets = self._store.list_generation_targets(trading_day)  # 활성 종목 ∪ 기본 종목
+        items, failed_ciks = self._collect_filings(targets, trading_day, calls)
         self._collect_indicators(trading_day, calls)
-        budget = LLMBudget(self._llm, len(coverage) * 4 + batch_count(items))  # 생성 대상 = 커버 범위 전체(#8 전)
+        budget = LLMBudget(self._llm, len(targets) * 4 + batch_count(items))
 
         def send(subject: str, request: LLMRequest) -> str:
             """LLM 호출 창구 하나: 분류(묶음 번호)·첫 번째 줄·판정(접수번호)이 같은 상한·재시도·차단을 쓴다."""
@@ -109,14 +109,14 @@ class MorningPipeline:
 
         outcomes, skipped = classify(items, trading_day, lambda n, request: send(str(n), request))
         self._store.replace_classifications(trading_day, _classification_rows(items, outcomes))
-        news = {cov.ticker: _ticker_news(cov, failed_ciks, items, outcomes) for cov in coverage}
+        news = {cov.ticker: _ticker_news(cov, failed_ciks, items, outcomes) for cov in targets}
         by_accession = {i.filing.accession: i for i in items}
         drafts = write_news_drafts(news, by_accession, trading_day, send)
-        reviews = review_drafts(drafts, news, by_accession, {c.ticker: c.name for c in coverage}, trading_day, send)
+        reviews = review_drafts(drafts, news, by_accession, {c.ticker: c.name for c in targets}, trading_day, send)
         kept = self._store.republished_news(trading_day)  # 사람이 재발행한 첫 번째 줄은 재실행이 덮지 않는다
         saved = 0
         delayed = []
-        for cov in coverage:
+        for cov in targets:
             try:
                 bars = calls.call(
                     Source.PRICES,

@@ -114,7 +114,7 @@ def test_RLS가_꺼진_테이블이_없다(admin):
         "select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace"
         " where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity")]
     tables = {"coverage", "stock_card", "sec_filing", "indicator_release", "filing_classification", "hold_queue",
-              "stock_card_revision"}
+              "stock_card_revision", "user_profile", "my_stock", "my_stock_history", "default_ticker"}
     assert tables <= set(public_tables(admin))  # 검사 대상이 비어서 통과하는 것을 막는다
     assert rls_off == []
 
@@ -204,7 +204,8 @@ def test_anon·authenticated는_public_함수를_실행할_수_없다(admin, rol
         " where n.nspname = 'public' and has_function_privilege(%s, p.oid, 'EXECUTE')", (role,))]
     functions = [r[0] for r in admin.execute(
         "select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'")]
-    assert {"keep_card_revision", "republish_from_hold_queue"} <= set(functions)  # 검사 대상이 비어서 통과하지 않게
+    assert {"keep_card_revision", "republish_from_hold_queue", "user_local_date", "user_profile_timezone",
+            "lock_my_stocks_on_plan_change", "my_stock_rules", "log_my_stock_change"} <= set(functions)  # 검사 대상이 비어서 통과하지 않게
     assert executable == []
 
 
