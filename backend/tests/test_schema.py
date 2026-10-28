@@ -114,7 +114,8 @@ def test_RLS가_꺼진_테이블이_없다(admin):
         "select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace"
         " where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity")]
     tables = {"coverage", "stock_card", "sec_filing", "indicator_release", "filing_classification", "hold_queue",
-              "stock_card_revision", "user_profile", "my_stock", "my_stock_history", "default_ticker", "pipeline_run"}
+              "stock_card_revision", "user_profile", "my_stock", "my_stock_history", "default_ticker", "pipeline_run",
+              "fund_holdings"}
     assert tables <= set(public_tables(admin))  # 검사 대상이 비어서 통과하는 것을 막는다
     assert rls_off == []
 
@@ -456,3 +457,23 @@ def test_재발행한_행의_고친_문장을_다시_고치면_카드도_따라_
     as_service_role(admin, "update public.hold_queue set rules = rules")  # 상태·문장이 그대로인 갱신은 카드를 건드리지 않는다
 
     assert len(revisions(admin)) == 2
+
+
+@pytest.mark.parametrize("holdings_ticker", ["qqq", "", "ABCDEFGHIJK", "Q QQ"], ids=["소문자", "빈_값", "11자", "공백"])
+def test_편입_종목을_읽을_ETF_티커가_티커_형식이_아니면_커버_범위에_넣을_수_없다(admin, holdings_ticker):
+    with pytest.raises(errors.CheckViolation):
+        admin.execute("insert into public.coverage (ticker, name, holdings_ticker) values ('TQQQ', 'ProShares UltraPro QQQ', %s)",
+                      (holdings_ticker,))
+
+
+def test_편입_종목_보고는_서버가_추가만_하고_고치거나_지울_수_없다(admin):
+    admin.execute("insert into public.coverage (ticker, name, holdings_ticker) values ('SPY', 'SPDR S&P 500 ETF Trust', 'SPY')")
+    as_service_role(admin, "insert into public.fund_holdings (accession, fund, period_end, holdings, payload)"
+                           " values ('0000884394-26-000101', 'SPY', '2026-06-30', '[]', '<edgarSubmission/>')")
+    allowed = [p for p in ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE")
+               if admin.execute("select has_table_privilege('service_role', 'public.fund_holdings', %s)", (p,)).fetchone()[0]]
+
+    assert allowed == ["SELECT", "INSERT"]  # 원본은 처음 받은 그대로 둔다
+    for sql in ("update public.fund_holdings set payload = ''", "delete from public.fund_holdings"):
+        with pytest.raises(errors.InsufficientPrivilege):
+            as_service_role(admin, sql)

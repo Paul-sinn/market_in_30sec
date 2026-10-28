@@ -1,12 +1,14 @@
 """숫자 계산·표기. 프로젝트의 %·금액 반올림은 여기 한 곳뿐이다."""
 
 import re
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from itertools import pairwise
 
+from m30.adapters.holdings import HoldingsReport
 from m30.adapters.prices import DailyBar
+from m30.models import Coverage, FundHoldings, LineStatus
 from m30.trading_day import previous_trading_day
 
 
@@ -66,6 +68,29 @@ def week52_gaps(bars: Sequence[DailyBar]) -> tuple[Decimal, Decimal] | None:
     below = max(round_pct((high - last.close) / high * 100), zero)
     above = max(round_pct((last.close - low) / low * 100), zero)
     return below, above
+
+
+TOP_HOLDINGS = 10  # ETF 첫 번째 줄이 보는 편입 회사 수(#10 D3)
+
+
+def top_holdings(report: HoldingsReport, coverage: Iterable[Coverage]) -> FundHoldings:
+    """보통주(EC) 롱만, 회사(cik, 없으면 이름) 단위로 비중을 더해 큰 순(같으면 이름 → 키) 앞 TOP_HOLDINGS개.
+    그 회사 cik를 가진 커버 범위 티커를 전부 쓰고, cik가 없거나 커버 범위에 없는 회사는 unmatched로 센다. 찾은 회사 0 → UNSUPPORTED."""
+    companies: dict[tuple[str, str], tuple[Decimal, str]] = {}  # (cik|name, 값) → (비중 합, 이름)
+    for h in report.holdings:
+        if h.asset_category == "EC" and h.pct > 0:
+            key = ("cik", h.cik) if h.cik is not None else ("name", h.name)
+            weight, name = companies.get(key, (Decimal(0), h.name))
+            companies[key] = (weight + h.pct, min(name, h.name))
+    top = sorted(companies, key=lambda key: (-companies[key][0], companies[key][1], key))[:TOP_HOLDINGS]
+    tickers_by_cik: dict[str, list[str]] = {}
+    for c in coverage:
+        if c.cik is not None:
+            tickers_by_cik.setdefault(c.cik, []).append(c.ticker)
+    found = [tickers_by_cik[value] for kind, value in top if kind == "cik" and value in tickers_by_cik]
+    if not found:
+        return FundHoldings(LineStatus.UNSUPPORTED, unmatched=len(top))
+    return FundHoldings(LineStatus.CHECKED_FOUND, tuple(sorted(t for ts in found for t in ts)), len(found), len(top) - len(found))
 
 
 USD_UNITS = (("", 1, "1"), ("K", 10**3, "0.1"), ("M", 10**6, "0.1"), ("B", 10**9, "0.1"), ("T", 10**12, "0.1"))

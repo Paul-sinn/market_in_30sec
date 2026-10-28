@@ -22,6 +22,8 @@ class Coverage:
     name: str
     leverage: Decimal | None = None  # 레버리지·인버스 배율. 부호 = 방향(음수 = 인버스). 일반 종목은 None
     cik: str | None = None  # 공시 제출 회사 SEC CIK(10자리). 같은 회사의 여러 티커는 같은 값. None = 공시 출처 미지원
+    # 편입 종목을 읽을 ETF(#10 D2). 일반 ETF = 자기 자신, 레버리지·인버스 = 같은 지수의 일반 ETF(TQQQ → QQQ). None = 편입 소식 대상 아님
+    holdings_ticker: str | None = None
 
 
 class NewsKind(StrEnum):
@@ -77,6 +79,16 @@ class TickerNews:
 
     status: LineStatus
     candidates: tuple[NewsCandidate, ...] = ()  # 중요도 높은 순 → 접수 시각 늦은 순 → 접수번호
+
+
+@dataclass(frozen=True)
+class FundHoldings:
+    """ETF 하나의 상위 편입 종목(#10 D3·D4). 상태는 CHECKED_FOUND(읽음) / UNSUPPORTED / DELAYED만."""
+
+    status: LineStatus
+    tickers: tuple[str, ...] = ()  # 커버 범위에서 찾은 편입 티커, 정렬
+    companies: int = 0  # tickers의 회사 수(CIK 기준) = holdings_scope의 k
+    unmatched: int = 0  # 상위 TOP_HOLDINGS개 중 커버 범위에서 못 찾은 회사 수(실행 요약)
 
 
 @dataclass(frozen=True)

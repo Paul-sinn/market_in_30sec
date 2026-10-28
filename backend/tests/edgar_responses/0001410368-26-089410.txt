@@ -1,0 +1,550 @@
+<SEC-DOCUMENT>0001410368-26-089410.txt : 20260828
+<SEC-HEADER>0001410368-26-089410.hdr.sgml : 20260828
+<ACCEPTANCE-DATETIME>20260828122547
+ACCESSION NUMBER:		0001410368-26-089410
+CONFORMED SUBMISSION TYPE:	NPORT-P
+PUBLIC DOCUMENT COUNT:		3
+CONFORMED PERIOD OF REPORT:	20260630
+FILED AS OF DATE:		20260828
+DATE AS OF CHANGE:		20260828
+PERIOD START:           	20260930
+
+FILER:
+
+	COMPANY DATA:	
+		COMPANY CONFORMED NAME:			SPDR S&P 500 ETF TRUST
+		CENTRAL INDEX KEY:			0000884394
+		ORGANIZATION NAME:           	
+		EIN:				000000000
+		STATE OF INCORPORATION:			NY
+		FISCAL YEAR END:			0930
+
+	FILING VALUES:
+		FORM TYPE:		NPORT-P
+		SEC ACT:		1940 Act
+		SEC FILE NUMBER:	811-06125
+		FILM NUMBER:		261336892
+
+	BUSINESS ADDRESS:	
+		STREET 1:		11 WALL STREET
+		STREET 2:		PDR SERVICES LLC C/O NYSE EURONEXT
+		CITY:			NEW YORK
+		STATE:			NY
+		ZIP:			10005
+		BUSINESS PHONE:		212-656-4440
+
+	MAIL ADDRESS:	
+		STREET 1:		11 WALL STREET
+		STREET 2:		PDR SERVICES LLC C/O NYSE EURONEXT
+		CITY:			NEW YORK
+		STATE:			NY
+		ZIP:			10005
+
+	FORMER COMPANY:	
+		FORMER CONFORMED NAME:	SPDR TRUST SERIES 1
+		DATE OF NAME CHANGE:	19920929
+</SEC-HEADER>
+<DOCUMENT>
+<TYPE>NPORT-P
+<SEQUENCE>1
+<FILENAME>primary_doc.xml
+<TEXT>
+<XML>
+<?xml version="1.0" encoding="UTF-8"?><edgarSubmission xmlns="http://www.sec.gov/edgar/nport" xmlns:com="http://www.sec.gov/edgar/common" xmlns:ncom="http://www.sec.gov/edgar/nportcommon" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.sec.gov/edgar/nport eis_NPORT_Filer.xsd">
+  <headerData>
+    <submissionType>NPORT-P</submissionType>
+    <isConfidential>false</isConfidential>
+    <filerInfo>
+
+      <filer>
+        <issuerCredentials>
+          <cik>0000884394</cik>
+          <ccc>XXXXXXXX</ccc>
+        </issuerCredentials>
+      </filer>
+
+
+
+
+    </filerInfo>
+  </headerData>
+  <formData>
+    <genInfo>
+      <regName>State Street(R) SPDR(R) S&amp;P 500(R) ETF Trust</regName>
+      <regFileNumber>811-06125</regFileNumber>
+      <regCik>0000884394</regCik>
+      <regLei>549300NZAMSJ8FXPQQ63</regLei>
+      <regStreet1>11 WALL STREET</regStreet1>
+      <regStreet2>PDR SERVICES LLC C/O NYSE EURONEXT</regStreet2>
+      <regCity>New York</regCity>
+      <regStateConditional regCountry="US" regState="US-NY"/>
+      <regZipOrPostalCode>10005</regZipOrPostalCode>
+      <regPhone>212-656-4440</regPhone>
+      <seriesName>N/A</seriesName>
+      <seriesLei>549300NZAMSJ8FXPQQ63</seriesLei>
+      <repPdEnd>2026-09-30</repPdEnd>
+      <repPdDate>2026-06-30</repPdDate>
+      <isFinalFiling>N</isFinalFiling>
+    </genInfo>
+    <fundInfo>
+      <totAssets>783339902049.69</totAssets>
+      <totLiabs>2151029942.93</totLiabs>
+      <netAssets>781188872106.76</netAssets>
+      <assetsAttrMiscSec>0.00000000</assetsAttrMiscSec>
+      <assetsInvested>0.00000000</assetsInvested>
+      <amtPayOneYrBanksBorr>0.00000000</amtPayOneYrBanksBorr>
+      <amtPayOneYrCtrldComp>0.00000000</amtPayOneYrCtrldComp>
+      <amtPayOneYrOthAffil>0.00000000</amtPayOneYrOthAffil>
+      <amtPayOneYrOther>0.00000000</amtPayOneYrOther>
+      <amtPayAftOneYrBanksBorr>0.00000000</amtPayAftOneYrBanksBorr>
+      <amtPayAftOneYrCtrldComp>0.00000000</amtPayAftOneYrCtrldComp>
+      <amtPayAftOneYrOthAffil>0.00000000</amtPayAftOneYrOthAffil>
+      <amtPayAftOneYrOther>0.00000000</amtPayAftOneYrOther>
+      <delayDeliv>0.00000000</delayDeliv>
+      <standByCommit>0.00000000</standByCommit>
+      <liquidPref>0.00000000</liquidPref>
+      <cshNotRptdInCorD>1878453015.00000000</cshNotRptdInCorD>
+      <isNonCashCollateral>N</isNonCashCollateral>
+      <returnInfo>
+        <monthlyTotReturns>
+          <monthlyTotReturn rtn1="10.48000000" rtn2="5.25000000" rtn3="-0.96000000"/>
+        </monthlyTotReturns>
+        <monthlyReturnCats>
+          <equityContracts>
+            <mon1 netRealizedGain="0.00000000" netUnrealizedAppr="0.00000000"/>
+            <mon2 netRealizedGain="0.00000000" netUnrealizedAppr="0.00000000"/>
+            <mon3 netRealizedGain="0.00000000" netUnrealizedAppr="0.00000000"/>
+            <warrantCategory>
+              <instrMon1 netRealizedGain="0.00000000" netUnrealizedAppr="0.00000000"/>
+              <instrMon2 netRealizedGain="0.00000000" netUnrealizedAppr="0.00000000"/>
+              <instrMon3 netRealizedGain="0.00000000" netUnrealizedAppr="0.00000000"/>
+            </warrantCategory>
+            <otherCategory>
+              <instrMon1 netRealizedGain="0.00000000" netUnrealizedAppr="0.00000000"/>
+              <instrMon2 netRealizedGain="0.00000000" netUnrealizedAppr="0.00000000"/>
+              <instrMon3 netRealizedGain="0.00000000" netUnrealizedAppr="0.00000000"/>
+            </otherCategory>
+          </equityContracts>
+        </monthlyReturnCats>
+        <othMon1 netRealizedGain="11561491955.48000000" netUnrealizedAppr="56960414386.05000000"/>
+        <othMon2 netRealizedGain="12766433560.45000000" netUnrealizedAppr="25261396020.06000000"/>
+        <othMon3 netRealizedGain="14766312167.05000000" netUnrealizedAppr="-23004030189.54000000"/>
+      </returnInfo>
+      <mon1Flow redemption="106822374029.05000000" reinvestment="0.00000000" sales="121393713302.60000000"/>
+      <mon2Flow redemption="103589923878.65000000" reinvestment="0.00000000" sales="113494270849.20000000"/>
+      <mon3Flow redemption="161982960949.05000000" reinvestment="0.00000000" sales="168709868513.65000000"/>
+
+
+
+    </fundInfo>
+    <invstOrSecs>
+      <invstOrSec>
+        <name>Advanced Micro Devices Inc</name>
+        <lei>R2I72C950HOYXII45366</lei>
+        <title>Advanced Micro Devices Inc</title>
+        <cusip>007903107</cusip>
+        <identifiers>
+          <isin value="US0079031078"/>
+        </identifiers>
+        <balance>19760238.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>11478919856.58000000</valUSD>
+        <pctVal>1.469416714247</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Alphabet Inc</name>
+        <lei>5493006MHB84DD0ZWV18</lei>
+        <title>Alphabet Inc</title>
+        <cusip>02079K107</cusip>
+        <identifiers>
+          <isin value="US02079K1079"/>
+        </identifiers>
+        <balance>57272523.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>20236100551.59000000</valUSD>
+        <pctVal>2.590423554935</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Alphabet Inc</name>
+        <lei>5493006MHB84DD0ZWV18</lei>
+        <title>Alphabet Inc</title>
+        <cusip>02079K305</cusip>
+        <identifiers>
+          <isin value="US02079K3059"/>
+        </identifiers>
+        <balance>71052257.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>25391945084.09000000</valUSD>
+        <pctVal>3.250423295919</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Amazon.com Inc</name>
+        <lei>ZXTILKJKG63JELOEG630</lei>
+        <title>Amazon.com Inc</title>
+        <cusip>023135106</cusip>
+        <identifiers>
+          <isin value="US0231351067"/>
+        </identifiers>
+        <balance>118615562.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>28270833047.08000000</valUSD>
+        <pctVal>3.618949790060</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Apple Inc</name>
+        <lei>HWUPKR0MPOU8FGXBT394</lei>
+        <title>Apple Inc</title>
+        <cusip>037833100</cusip>
+        <identifiers>
+          <isin value="US0378331005"/>
+        </identifiers>
+        <balance>177966046.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>51496255070.56000000</valUSD>
+        <pctVal>6.592036434374</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Broadcom Inc</name>
+        <lei>549300WV6GIDOZJTV909</lei>
+        <title>Broadcom Inc</title>
+        <cusip>11135F101</cusip>
+        <identifiers>
+          <isin value="US11135F1012"/>
+        </identifiers>
+        <balance>57372235.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>21672361771.25000000</valUSD>
+        <pctVal>2.774279376612</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Meta Platforms Inc</name>
+        <lei>BQ4BKCS1HXDV9HN80Z93</lei>
+        <title>Meta Platforms Inc</title>
+        <cusip>30303M102</cusip>
+        <identifiers>
+          <isin value="US30303M1027"/>
+        </identifiers>
+        <balance>26611450.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>14989963670.50000000</valUSD>
+        <pctVal>1.918865488966</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>CONTRA HOLOGIC INCORPO</name>
+        <lei>549300DYP6F5ZJL0LB74</lei>
+        <title>CONTRA HOLOGIC INCORPO</title>
+        <cusip>436CVR021</cusip>
+        <identifiers>
+          <isin value="US436CVR0216"/>
+        </identifiers>
+        <balance>2578626.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>25786.26000000</valUSD>
+        <pctVal>0.000003300899</pctVal>
+        <payoffProfile>N/A</payoffProfile>
+        <assetCat>DE</assetCat>
+        <issuerConditional desc="derivative" issuerCat="OTHER"/>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>2</fairValLevel>
+        <derivativeInfo>
+          <othDeriv derivCat="OTH" othDesc="rights">
+            <counterparties>
+              <counterpartyName>N/A</counterpartyName>
+              <counterpartyLei>N/A</counterpartyLei>
+            </counterparties>
+            <descRefInstrmnt>
+              <otherRefInst>
+                <issuerName>Hologic, Inc.</issuerName>
+                <issueTitle>Hologic, Inc.</issueTitle>
+                <identifiers>
+                  <cusip value="436440101"/>
+                  <isin value="US4364401012"/>
+                </identifiers>
+              </otherRefInst>
+            </descRefInstrmnt>
+            <terminationDt>2099-12-31</terminationDt>
+            <notionalAmts>
+              <notionalAmt amt="2578626.00000000" curCd="USD"/>
+            </notionalAmts>
+            <delta>XXXX</delta>
+            <unrealizedAppr>0.00000000</unrealizedAppr>
+          </othDeriv>
+        </derivativeInfo>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Eli Lilly &amp; Co</name>
+        <lei>FRDRIPF3EKNDJ2CQJL29</lei>
+        <title>Eli Lilly &amp; Co</title>
+        <cusip>532457108</cusip>
+        <identifiers>
+          <isin value="US5324571083"/>
+        </identifiers>
+        <balance>9586306.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>11498103005.58000000</valUSD>
+        <pctVal>1.471872349457</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Microsoft Corp</name>
+        <lei>INR2EJN1ERAN0W5ZP974</lei>
+        <title>Microsoft Corp</title>
+        <cusip>594918104</cusip>
+        <identifiers>
+          <isin value="US5949181045"/>
+        </identifiers>
+        <balance>90011517.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>33576096071.34000000</valUSD>
+        <pctVal>4.298076594561</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Micron Technology Inc</name>
+        <lei>B3DXGBC8GAIYWI2Z0172</lei>
+        <title>Micron Technology Inc</title>
+        <cusip>595112103</cusip>
+        <identifiers>
+          <isin value="US5951121038"/>
+        </identifiers>
+        <balance>13665726.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>15774210864.54000000</valUSD>
+        <pctVal>2.019256984805</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>NVIDIA Corp</name>
+        <lei>549300S4KLFTLO7GSQ80</lei>
+        <title>NVIDIA Corp</title>
+        <cusip>67066G104</cusip>
+        <identifiers>
+          <isin value="US67066G1040"/>
+        </identifiers>
+        <balance>293478235.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>58722060041.15000000</valUSD>
+        <pctVal>7.517011844111</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Tesla Inc</name>
+        <lei>54930043XZGB27CTOV49</lei>
+        <title>Tesla Inc</title>
+        <cusip>88160R101</cusip>
+        <identifiers>
+          <isin value="US88160R1014"/>
+        </identifiers>
+        <balance>34115935.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>14349162261.00000000</valUSD>
+        <pctVal>1.836836490297</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+    </invstOrSecs>
+    <explntrNotes>
+
+
+
+    </explntrNotes>
+    <signature>
+      <ncom:dateSigned>2026-07-30</ncom:dateSigned>
+      <ncom:nameOfApplicant>State Street(R) SPDR(R) S&amp;P 500(R) ETF Trust</ncom:nameOfApplicant>
+      <ncom:signature>Arthur Jensen</ncom:signature>
+      <ncom:signerName>Arthur Jensen</ncom:signerName>
+      <ncom:title>Deputy Treasurer</ncom:title>
+    </signature>
+  </formData>
+  <documents>XXXX</documents>
+</edgarSubmission>
+</XML>
+</TEXT>
+</DOCUMENT>
+<DOCUMENT>
+<TYPE>NPORT-EX
+<SEQUENCE>2
+<FILENAME>NPORT_J905_66407841_0626.htm
+<TEXT>
+<html>
+<head>
+<title>EDGAR HTML</title>
+<meta charset="ISO-8859-1"><!-- Document created using ArcReporting --><!-- Copyright 2026 DFIN --></head>
+<body style="margin-top:0.0pt;width:541.19pt;" bgcolor="white">
+<div>
+<div><a name="xx_be5b0901-3675-4e47-a0e3-0f41314d1fd8_FOC-CommonContent-Continued_1
+</TEXT>
+</DOCUMENT>
+<DOCUMENT>
+<TYPE>GRAPHIC
+<SEQUENCE>3
+<FILENAME>img30e19c1e1.jpg
+<TEXT>
+begin 644 img30e19c1e1.jpg
+M_]C_X  02D9)1@ ! 0$"6 )8  #_X@H@24-#7U!23T9)3$4  0$   H0
+M  (0  !M;G1R4D="(%A96B                !A8W-P05!03
+M                        ]M4  0    #3+
+M                                              ID97-C    _
+M 'QC<')T   !>    "AW='!T   !H    !1B:W!T   !M    !1R6%E:   !
+MR  
+</TEXT>
+</DOCUMENT>
+</SEC-DOCUMENT>

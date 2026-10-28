@@ -19,6 +19,12 @@ class NoEventSource:  # #21이 실제 일정 어댑터로 바꾼다
         return None
 
 
+class NoHoldingsSource:  # #10 B가 실제 N-PORT 어댑터로 바꾼다
+    def latest_report(self, fund: str) -> None:
+        """항상 None(미지원) → ETF 첫 번째 줄 Not covered yet."""
+        return None
+
+
 class NoIndicatorSource:
     def releases(self, start: date, end: date) -> list[IndicatorRelease]:
         """항상 [] → indicator_release 0행. 카드 줄 없음.

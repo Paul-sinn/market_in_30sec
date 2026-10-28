@@ -4,11 +4,15 @@ from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from datetime import date, datetime
 
+from decimal import Decimal
+
 import psycopg
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from m30.adapters.filings import Filing
+from m30.adapters.holdings import Holding, HoldingsReport
 from m30.adapters.indicators import IndicatorRelease
 from m30.config import DB_URL_VAR, ET, ConfigError, Settings, is_local_db
 from m30.models import (
@@ -179,9 +183,10 @@ class CardStore:
     def upsert_coverage(self, rows: Iterable[Coverage]) -> None:
         with self._conn.cursor() as cur:
             cur.executemany(
-                "insert into public.coverage (ticker, name, leverage, cik) values (%s, %s, %s, %s)"
-                " on conflict (ticker) do update set name = excluded.name, leverage = excluded.leverage, cik = excluded.cik",
-                [(r.ticker, r.name, r.leverage, r.cik) for r in rows],
+                "insert into public.coverage (ticker, name, leverage, cik, holdings_ticker) values (%s, %s, %s, %s, %s)"
+                " on conflict (ticker) do update set name = excluded.name, leverage = excluded.leverage, cik = excluded.cik,"
+                " holdings_ticker = excluded.holdings_ticker",
+                [(r.ticker, r.name, r.leverage, r.cik, r.holdings_ticker) for r in rows],
             )
 
     def upsert_card(self, card: StockCard) -> None:
@@ -202,8 +207,8 @@ class CardStore:
         self._conn.execute(_UPSERT_CARD, values)
 
     def list_coverage(self) -> list[Coverage]:
-        rows = self._conn.execute("select ticker, name, leverage, cik from public.coverage order by ticker")
-        return [Coverage(ticker=t, name=n, leverage=lev, cik=cik) for t, n, lev, cik in rows]
+        rows = self._conn.execute("select ticker, name, leverage, cik, holdings_ticker from public.coverage order by ticker")
+        return [Coverage(*row) for row in rows]
 
     def add_default_tickers(self, day: date, tickers: Iterable[str]) -> None:
         """day가 속한 분기(첫날)의 기본 종목에 tickers를 더한다. 이미 있으면 그대로, 지우지 않는다. 커버 범위에 없는 티커는 넣지 않는다."""
@@ -217,14 +222,14 @@ class CardStore:
     def list_generation_targets(self, trading_day: date) -> list[Coverage]:
         """생성 대상 = 활성 종목(잠기지 않은 내 종목 행이 있는 티커) ∪ trading_day가 속한 분기의 기본 종목. list_coverage와 같은 모양·순서."""
         rows = self._conn.execute(
-            "select c.ticker, c.name, c.leverage, c.cik from public.coverage c"
+            "select c.ticker, c.name, c.leverage, c.cik, c.holdings_ticker from public.coverage c"
             " where exists (select from public.my_stock s where s.ticker = c.ticker and not s.locked)"
             " or exists (select from public.default_ticker d"
             "  where d.ticker = c.ticker and d.quarter = date_trunc('quarter', %s::timestamp)::date)"
             " order by c.ticker",
             (trading_day,),
         )
-        return [Coverage(ticker=t, name=n, leverage=lev, cik=cik) for t, n, lev, cik in rows]
+        return [Coverage(*row) for row in rows]
 
     def save_filings(self, trading_day: date, filings: Iterable[Filing]) -> frozenset[str]:
         """공시 원본 저장. 이미 있는 접수번호는 건드리지 않는다(처음 받은 원본·거래일 유지).
@@ -254,6 +259,30 @@ class CardStore:
                 " values (%s, %s, %s, %s) on conflict (name, released_at) do nothing",
                 [(r.name, r.released_at, trading_day, r.raw) for r in releases],
             )
+
+    def save_holdings(self, report: HoldingsReport) -> None:
+        """편입 종목 보고 저장. 이미 있는 접수번호는 건드리지 않는다(처음 받은 원본 유지). pct는 Decimal 그대로 문자열로."""
+        rows = [{"name": h.name, "cik": h.cik, "pct": str(h.pct), "asset_category": h.asset_category} for h in report.holdings]
+        self._conn.execute(
+            "insert into public.fund_holdings (accession, fund, period_end, holdings, payload) values (%s, %s, %s, %s, %s)"
+            " on conflict (accession) do nothing",
+            (report.accession, report.fund, report.period_end, Jsonb(rows), report.raw),
+        )
+
+    def latest_holdings(self, fund: str) -> HoldingsReport | None:
+        """fund의 저장된 보고 중 기준일이 가장 늦은 것(같으면 늦게 받은 것). 없으면 None."""
+        row = self._conn.execute(
+            "select accession, period_end, holdings, payload from public.fund_holdings where fund = %s"
+            " order by period_end desc, received_at desc limit 1",
+            (fund,),
+        ).fetchone()
+        if row is None:
+            return None
+        accession, period_end, holdings, payload = row
+        return HoldingsReport(
+            fund, accession, period_end,
+            tuple(Holding(h["name"], h["cik"], Decimal(h["pct"]), h["asset_category"]) for h in holdings), payload,
+        )
 
     def replace_classifications(self, trading_day: date, tickers: Iterable[str], rows: Iterable[Classification]) -> None:
         """한 트랜잭션: trading_day 공시(처음 받은 거래일 기준)의 분류 행 중 ticker ∈ tickers인 것만 지우고 rows를 넣는다."""

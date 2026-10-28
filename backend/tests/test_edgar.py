@@ -38,7 +38,15 @@ from m30.adapters import (
     error_for_status,
 )
 from m30.adapters.edgar import SUBMISSIONS_URL, TICKERS_URL, EdgarClient, EdgarFilingSource, Throttle, ticker_ciks
-from m30.adapters.fake import FailurePlan, FakeEventSource, FakeIndicatorSource, FakeLLM, FakePriceSource, Scenario
+from m30.adapters.fake import (
+    FailurePlan,
+    FakeEventSource,
+    FakeHoldingsSource,
+    FakeIndicatorSource,
+    FakeLLM,
+    FakePriceSource,
+    Scenario,
+)
 from m30.config import ET, ConfigError, load_edgar_settings
 from m30.experiment import experiment_coverage
 from m30.models import Coverage, LineStatus
@@ -376,6 +384,7 @@ def run_edgar(store, get, day=FRI):
         events=FakeEventSource(scenario),
         filings=EdgarFilingSource(get),
         indicators=FakeIndicatorSource(scenario),
+        holdings=FakeHoldingsSource(scenario),
         llm=llm,
         store=store,
         sleep=sleeps.append,

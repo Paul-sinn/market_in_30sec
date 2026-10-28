@@ -12,6 +12,7 @@ import pytest
 
 from m30.adapters import AccessDeniedError, RateLimitedError, SourceError, TransientSourceError, error_for_status
 from m30.adapters.events import Earnings, EarningsTiming, ExDividend
+from m30.adapters.holdings import Holding, HoldingsReport
 from m30.adapters.prices import DailyBar
 from m30.config import ET, ConfigError, is_local_db, load_llm_settings, load_settings
 from m30.copy_rules import ALWAYS_BANNED, CARD_BANNED, EMOTION_VERBS, SOURCE_TAG, check_card
@@ -19,8 +20,16 @@ from m30.db.store import connect_failure_reason
 from m30.experiment import EXPERIMENT_COVERAGE
 from m30.llm import LLMRequest
 from m30.llm.anthropic import AnthropicLLM
-from m30.models import CardLine, LineStatus
-from m30.pipeline.compute import card_numbers, change_pct, format_per_share, format_usd, round_pct, streak
+from m30.models import CardLine, Coverage, FundHoldings, LineStatus
+from m30.pipeline.compute import (
+    card_numbers,
+    change_pct,
+    format_per_share,
+    format_usd,
+    round_pct,
+    streak,
+    top_holdings,
+)
 from m30.pipeline.lines import (
     EVENT_WINDOW,
     REPLACEMENT_PHRASES,
@@ -679,3 +688,63 @@ def test_종목명은_단어_전체일_때만_가린다():
 
     assert mask_names("PineApple Applesauce xBBY BBYx", terms) == "PineApple Applesauce xBBY BBYx"  # 앞·뒤 경계 각각
     assert mask_names("(BBY) Apple's", terms) == "(Name) Name's"
+
+
+# 상위 편입 종목(#10 D3). CIK는 손으로 정한 가짜 10자리
+def holding(name, pct, cik=None, category="EC"):
+    return Holding(name, cik, Decimal(str(pct)), category)
+
+
+def holdings_report(*holdings):
+    return HoldingsReport("SPY", "0000884394-26-000101", date(2026, 6, 30), holdings, "<edgarSubmission/>")
+
+
+def test_상위_편입_종목은_보통주_롱만_회사로_묶고_커버_범위에서_찾은_회사의_티커를_전부_쓴다():
+    report = holdings_report(
+        holding("Apple Inc", 5.0, "0000000002"),
+        holding("Alphabet Inc Class A", 3.0, "0000000001"),
+        holding("Alphabet Inc Class C", 2.5, "0000000001"),  # 같은 회사: 합 5.5
+        holding("Short Co", -9.0, "0000000003"),  # 숏
+        holding("Bond Co", 8.0, "0000000004", "DBT"),  # 보통주 아님
+        holding("Cash Co", 7.0, "0000000005", None),  # 분류 없음
+        holding("Amazon.com Inc", 4.0),  # 출처가 CIK를 못 찾음
+        holding("NVIDIA Corp", 3.5, "0000000007"),  # 커버 범위 밖
+    )
+    coverage = [Coverage("AAPL", "Apple", cik="0000000002"), Coverage("GOOGL", "Alphabet", cik="0000000001"),
+                Coverage("GOOG", "Alphabet", cik="0000000001"), Coverage("SHRT", "Short", cik="0000000003"),
+                Coverage("BOND", "Bond", cik="0000000004"), Coverage("CASH", "Cash", cik="0000000005"),
+                Coverage("SPY", "SPDR S&P 500 ETF Trust", holdings_ticker="SPY")]
+
+    assert top_holdings(report, coverage) == FundHoldings(LineStatus.CHECKED_FOUND, ("AAPL", "GOOG", "GOOGL"), 2, 2)
+
+
+NATO = ("Kilo", "Juliet", "India", "Hotel", "Golf", "Foxtrot", "Echo", "Delta", "Charlie")  # 비중 9 … 1
+
+
+@pytest.mark.parametrize(
+    "ties, kept",
+    [
+        ([holding("Bravo", 0.5, "0000000020"), holding("Alpha", 0.5, "0000000021")], "ALPHA"),  # 이름 순
+        ([holding("Twin", 0.5, "0000000020"), holding("Twin", 0.5, "0000000010")], "TWIN10"),  # 이름도 같으면 CIK 순
+    ],
+    ids=["비중_같으면_이름_순", "이름도_같으면_CIK_순"],
+)
+def test_상위_편입_종목은_10개까지이고_11번째는_빠지며_입력_순서와_관계없다(ties, kept):
+    big = [holding(name, 9 - i, f"00000000{i:02d}") for i, name in enumerate(NATO)]
+    tickers = {"0000000020": "BRAVO" if ties[0].name == "Bravo" else "TWIN20", "0000000021": "ALPHA", "0000000010": "TWIN10"}
+    coverage = [Coverage(h.name.upper(), h.name, cik=h.cik) for h in big] + [Coverage(t, t, cik=c) for c, t in tickers.items()]
+
+    for order in (big + ties, list(reversed(big + ties))):
+        found = top_holdings(holdings_report(*order), coverage)
+        assert found == FundHoldings(LineStatus.CHECKED_FOUND, tuple(sorted([*(n.upper() for n in NATO), kept])), 10, 0)
+
+
+@pytest.mark.parametrize(
+    "holdings, unmatched",
+    [((holding("Amazon.com Inc", 4.0), holding("NVIDIA Corp", 3.5, "0000000007")), 2), ((), 0)],
+    ids=["찾은_회사_없음", "보통주_없음"],
+)
+def test_커버_범위에서_찾은_편입_회사가_없으면_미지원이다(holdings, unmatched):
+    found = top_holdings(holdings_report(*holdings), [Coverage("AAPL", "Apple", cik="0000000002")])
+
+    assert found == FundHoldings(LineStatus.UNSUPPORTED, unmatched=unmatched)

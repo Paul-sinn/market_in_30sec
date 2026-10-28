@@ -22,6 +22,7 @@ from m30.adapters.fake import (
     FailurePlan,
     FakeEventSource,
     FakeFilingSource,
+    FakeHoldingsSource,
     FakeIndicatorSource,
     FakeLLM,
     FakePriceSource,
@@ -70,6 +71,7 @@ def run(store, scenario, day=FRI, **replaced):
         "events": FakeEventSource(scenario),
         "filings": FakeFilingSource(scenario),
         "indicators": FakeIndicatorSource(scenario),
+        "holdings": FakeHoldingsSource(scenario),
         "llm": FakeLLM(scenario),
     } | replaced
     sleeps = []
@@ -548,7 +550,8 @@ ERRORS = {  # 실패 종류 → (가짜 호출 수, 대기, 실패 사유)
     "access_denied": (1, [], FailureReason.ACCESS_DENIED),
     "rate_limited": (4, [1.0, 2.0, 4.0], FailureReason.RETRIES_EXHAUSTED),  # 429: 일시 실패처럼 다시 시도
 }
-FAILURE_CASES = [(source, error) for source in Source for error in ERRORS]
+# 편입 종목(ETF)은 종목 둘 시나리오에 없다: 실패 종류별 재시도·지연은 test_morning_pipeline의 ETF 시나리오가 본다
+FAILURE_CASES = [(source, error) for source in Source if source is not Source.HOLDINGS for error in ERRORS]
 
 
 @pytest.mark.parametrize("source, error", FAILURE_CASES, ids=[f"{s}_{e}" for s, e in FAILURE_CASES])

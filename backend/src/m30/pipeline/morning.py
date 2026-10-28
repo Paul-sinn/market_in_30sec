@@ -8,6 +8,7 @@ from datetime import date, datetime, timedelta
 from m30.adapters import Source, SourceError
 from m30.adapters.events import EventSource
 from m30.adapters.filings import FilingForm, FilingSource
+from m30.adapters.holdings import HoldingsSource
 from m30.adapters.indicators import IndicatorSource
 from m30.adapters.prices import PriceSource
 from m30.config import ET
@@ -18,6 +19,7 @@ from m30.models import (
     CardStatus,
     Classification,
     Coverage,
+    FundHoldings,
     HoldItem,
     LineStatus,
     NewsCandidate,
@@ -32,16 +34,19 @@ from m30.pipeline.collect import (
     valid_bars,
     valid_events,
     valid_filings,
+    valid_holdings,
     valid_releases,
 )
-from m30.pipeline.compute import bars_usable, change_pct
+from m30.pipeline.compute import bars_usable, change_pct, top_holdings
 from m30.pipeline.lines import (
     EVENT_SCOPE,
     EVENT_WINDOW,
+    HOLDINGS_SCOPE,
     NEWS_SCOPE,
     PRICE_SCOPE,
     delayed_line,
     event_line,
+    holdings_scope,
     leverage_tag,
     news_template_line,
     price_fact_line,
@@ -52,6 +57,9 @@ from m30.trading_day import is_trading_day, previous_trading_day
 
 CHECKED = (LineStatus.CHECKED_FOUND, LineStatus.CHECKED_NONE)
 LOOKBACK = timedelta(weeks=53)  # 52주 이력 + 52주 전 날이 휴장일이어도 거래일이 들어가는 1주
+# N-PORT는 분기 말 보고를 60일 뒤 공개한다(#10 D4). 다음 공개 예정은 기준일 약 152일 뒤
+HOLDINGS_REFRESH_AFTER = timedelta(days=140)  # 저장분 기준일 + 이 기간 전에는 출처를 부르지 않는다
+HOLDINGS_MAX_AGE = timedelta(days=270)  # 쓸 보고의 기준일 + 이 기간을 넘으면 지연(한 분기를 놓친 여유)
 
 
 @dataclass(frozen=True)
@@ -72,6 +80,7 @@ class RunSummary:
     news: dict[str, TickerNews]  # 생성 대상 티커 → 첫 번째 줄 상태·후보 (#6의 입력)
     drafts: dict[str, NewsDraft]  # 소식 있는 종목 → 첫 번째 줄 초안(검수 전). 카드에는 reviews의 줄만 간다
     reviews: dict[str, NewsReview]  # 소식 있는 종목 → 검수 결과(통과한 줄 또는 대체 줄)
+    funds: dict[str, FundHoldings]  # ETF 생성 대상(holdings_ticker 있음) → 상위 편입 종목
 
 
 class MorningPipeline:
@@ -82,6 +91,7 @@ class MorningPipeline:
         events: EventSource,
         filings: FilingSource,
         indicators: IndicatorSource,
+        holdings: HoldingsSource,
         llm: LLM,
         store: CardStore,
         sleep: Callable[[float], None] = time.sleep,
@@ -91,6 +101,7 @@ class MorningPipeline:
         self._events = events
         self._filings = filings
         self._indicators = indicators
+        self._holdings = holdings
         self._llm = llm
         self._store = store
         self._sleep = sleep
@@ -116,7 +127,19 @@ class MorningPipeline:
         calls = SourceCalls(self._sleep)
         # 활성 종목 ∪ 기본 종목. 건너뛴 종목은 공시 수집·분류·초안·검수·저장을 전부 하지 않는다
         targets = [c for c in self._store.list_generation_targets(trading_day) if c.ticker not in resumed]
-        items, failed_ciks = self._collect_filings(targets, trading_day, calls)
+        coverage = {c.ticker: c for c in self._store.list_coverage()}
+        funds = self._fund_holdings(targets, coverage, trading_day, calls)
+        # 첫 번째 줄이 보는 (티커, CIK) 묶음(D5): 종목 = 자기 자신, ETF = 상위 편입 종목. 편입 종목을 못 읽은 ETF는 묶음이 없다
+        groups = {}
+        for cov in targets:
+            if cov.ticker not in funds:
+                groups[cov.ticker] = (frozenset({cov.ticker}), frozenset({cov.cik} - {None}))
+            elif funds[cov.ticker].status is LineStatus.CHECKED_FOUND:
+                tickers = frozenset(funds[cov.ticker].tickers)
+                groups[cov.ticker] = (tickers, frozenset(coverage[t].cik for t in tickers))
+        # 공시 수집·분류 대상 = 묶음의 티커 전부(생성 대상이 아닌 편입 종목 포함, 카드는 만들지 않는다). 편입 경로가 있는 ETF 자신의 CIK는 받지 않는다
+        collected = [coverage[t] for t in sorted(set().union(*(tickers for tickers, _ in groups.values())))]
+        items, failed_ciks = self._collect_filings(collected, trading_day, calls)
         # 카드 루프 전: 카드가 하나라도 저장됐으면 정정 공시 행은 이미 있다(이어 하기가 그 CIK를 다시 받지 않아도)
         self._store.flag_amended_cards(trading_day, [i.filing for i in items if i.filing.form is FilingForm.EIGHT_K_A])
         self._collect_indicators(trading_day, calls)
@@ -128,12 +151,17 @@ class MorningPipeline:
 
         outcomes, skipped = classify(items, trading_day, lambda n, request: send(str(n), request))
         # 이번에 공시를 받은 종목의 분류만 바꾼다(건너뛴 종목·수집 실패 CIK의 지난 분류 행은 그대로)
-        handled = [c.ticker for c in targets if c.cik not in failed_ciks]
+        handled = [c.ticker for c in collected if c.cik not in failed_ciks]
         self._store.replace_classifications(trading_day, handled, _classification_rows(items, outcomes))
-        news = {cov.ticker: _ticker_news(cov, failed_ciks, items, outcomes) for cov in targets}
+        # 초안·검수는 생성 대상만(ETF는 조합한 값). 편입 종목 쪽 1등이 아닌 공시는 LLM을 부르지 않는다
+        news = {
+            cov.ticker: _ticker_news(*groups[cov.ticker], failed_ciks, items, outcomes) if cov.ticker in groups
+            else TickerNews(funds[cov.ticker].status)
+            for cov in targets
+        }
         by_accession = {i.filing.accession: i for i in items}
         drafts = write_news_drafts(news, by_accession, trading_day, send)
-        reviews = review_drafts(drafts, news, by_accession, {c.ticker: c.name for c in targets}, trading_day, send)
+        reviews = review_drafts(drafts, news, by_accession, {c.ticker: c.name for c in collected}, trading_day, send)
         kept = self._store.republished_news(trading_day)  # 사람이 재발행한 첫 번째 줄은 재실행이 덮지 않는다
         saved = 0
         delayed = []
@@ -153,22 +181,25 @@ class MorningPipeline:
             # 첫 번째 줄의 출처는 넷뿐: 사람이 재발행한 줄, 앞 실행이 확인한 줄(CIK 실패), 검수 결과(통과한 줄·대체 줄), 데이터 상태 문구
             # holds: 이 카드의 보류함 행. None = 이번에 첫 번째 줄을 만들지 않았다 → 보류함 행을 건드리지 않는다
             old = stored.get(cov.ticker)
+            scope = _news_scope(funds.get(cov.ticker))
+            ciks = groups[cov.ticker][1] if cov.ticker in groups else frozenset()
             if cov.ticker in kept:
                 text, accession = kept[cov.ticker]
-                news_line, holds = CardLine(text, LineStatus.CHECKED_FOUND, checked_at, NEWS_SCOPE), None
-            elif cov.cik in failed_ciks and old and old.news_line and old.news_line.status in CHECKED:
-                # 공시 기간은 고정이고 수집 실패는 새 정보가 아니다: 앞 실행이 확인한 줄(확인 시각 포함)을 그대로 둔다(D6)
+                news_line, holds = CardLine(text, LineStatus.CHECKED_FOUND, checked_at, scope), None
+            elif ciks & failed_ciks and old and old.news_line and old.news_line.status in CHECKED:
+                # 공시 기간은 고정이고 수집 실패는 새 정보가 아니다: 앞 실행이 확인한 줄(확인 시각 포함)을 그대로 둔다(D6).
+                # ETF는 편입 종목 CIK 중 하나라도 실패하면(#10 D5)
                 news_line, accession, holds = old.news_line, old.news_line_accession, None
             elif cov.ticker in reviews:
                 review = reviews[cov.ticker]
                 accession = review.accession
-                news_line = CardLine(review.line, LineStatus.CHECKED_FOUND, checked_at, NEWS_SCOPE)
+                news_line = CardLine(review.line, LineStatus.CHECKED_FOUND, checked_at, scope)
                 # U1 = A: 대체 줄이 카드에 들어간 종목마다 보류함 행 하나
                 holds = [] if review.stage is None else [
                     HoldItem(cov.ticker, trading_day, review.accession, review.stage, review.draft_text, review.rules, review.line)
                 ]
             else:
-                accession, news_line, holds = None, news_template_line(news[cov.ticker], checked_at), []
+                accession, news_line, holds = None, news_template_line(news[cov.ticker], checked_at, scope), []
             self._store.save_card(
                 StockCard(
                     ticker=cov.ticker,
@@ -206,6 +237,7 @@ class MorningPipeline:
             news=news,
             drafts=drafts,
             reviews=reviews,
+            funds=funds,
         )
 
     def _collect_filings(
@@ -240,6 +272,38 @@ class MorningPipeline:
             linked = tuple(sorted(tickers[accession]))
             items.append(FilingItem(filings[accession], linked, names[linked[0]]))
         return sorted(items, key=lambda i: (i.filing.accepted_at, i.filing.accession)), failed
+
+    def _fund_holdings(
+        self, targets: list[Coverage], coverage: dict[str, Coverage], trading_day: date, calls: SourceCalls
+    ) -> dict[str, FundHoldings]:
+        """ETF 생성 대상(holdings_ticker 있음) → 상위 편입 종목. 같은 fund를 가리키는 ETF가 여럿이어도(QQQ·TQQQ) fund마다 한 번."""
+        by_fund: dict[str, FundHoldings] = {}
+        for cov in targets:
+            fund = cov.holdings_ticker
+            if fund is not None and fund not in by_fund:
+                by_fund[fund] = self._read_fund(fund, coverage, trading_day, calls)
+        return {cov.ticker: by_fund[cov.holdings_ticker] for cov in targets if cov.holdings_ticker is not None}
+
+    def _read_fund(self, fund: str, coverage: dict[str, Coverage], trading_day: date, calls: SourceCalls) -> FundHoldings:
+        """스펙 #10 D4 표, 위에서부터."""
+        if fund not in coverage:  # 없는 티커를 가리킴(FK 없음): 출처를 부르지 않는다
+            return FundHoldings(LineStatus.UNSUPPORTED)
+        report = self._store.latest_holdings(fund)
+        if report is None or trading_day >= report.period_end + HOLDINGS_REFRESH_AFTER:
+            try:
+                fresh = calls.call(
+                    Source.HOLDINGS, fund, lambda: self._holdings.latest_report(fund), lambda r: valid_holdings(r, fund)
+                )
+            except SourceError:
+                pass  # 저장분을 쓴다(없으면 지연). 실패는 요약 failed:에 남았다
+            else:
+                if fresh is None:
+                    return FundHoldings(LineStatus.UNSUPPORTED)
+                self._store.save_holdings(fresh)
+                report = self._store.latest_holdings(fund)  # 저장분과 비교해 period_end가 늦은 쪽
+        if report is None or trading_day > report.period_end + HOLDINGS_MAX_AGE:
+            return FundHoldings(LineStatus.DELAYED)
+        return top_holdings(report, coverage.values())
 
     def _collect_indicators(self, trading_day: date, calls: SourceCalls) -> None:
         try:
@@ -278,13 +342,23 @@ def _classification_rows(items: list[FilingItem], outcomes: dict) -> list[Classi
     return rows
 
 
-def _ticker_news(cov: Coverage, failed_ciks: set[str], items: list[FilingItem], outcomes: dict) -> TickerNews:
-    """첫 번째 줄 상태와 후보(스펙 D11 표, 위에서부터)."""
-    if cov.cik is None:
+def _news_scope(fund: FundHoldings | None) -> str:
+    """첫 번째 줄 출처 범위. 종목(None) = SEC filings, ETF = 확인한 편입 회사 수, 편입 보고를 못 읽은 ETF = 고정 문구(#10 D6)."""
+    if fund is None:
+        return NEWS_SCOPE
+    return holdings_scope(fund.companies) if fund.status is LineStatus.CHECKED_FOUND else HOLDINGS_SCOPE
+
+
+def _ticker_news(
+    tickers: frozenset[str], ciks: frozenset[str], failed_ciks: set[str], items: list[FilingItem], outcomes: dict
+) -> TickerNews:
+    """첫 번째 줄 상태와 후보(스펙 D11 표, 위에서부터). 종목은 ({티커}, {CIK}), ETF는 (편입 티커들, 그 CIK들)(#10 D5).
+    CIK 하나라도 수집 실패면 지연: 일부를 확인 못 했으면 "가장 중요한 것"이라고 말할 수 없다."""
+    if not ciks:
         return TickerNews(LineStatus.UNSUPPORTED)
-    if cov.cik in failed_ciks:
+    if ciks & failed_ciks:
         return TickerNews(LineStatus.DELAYED)  # 수집 실패를 "없음"으로 두지 않는다
-    mine = [i for i in items if cov.ticker in i.tickers]
+    mine = [i for i in items if tickers.intersection(i.tickers)]
     if not mine:
         return TickerNews(LineStatus.CHECKED_NONE)
     # 의견글은 후보에도 +N more 개수에도 들어가지 않는다

@@ -23,14 +23,16 @@ EXPERIMENT_COVERAGE: tuple[Coverage, ...] = (
     Coverage("XOM", "Exxon Mobil"),
     Coverage("KO", "Coca-Cola"),
     Coverage("PFE", "Pfizer"),
-    Coverage("SPY", "SPDR S&P 500 ETF"),
-    Coverage("QQQ", "Invesco QQQ"),
-    Coverage("TQQQ", "ProShares UltraPro QQQ", leverage=Decimal("3")),
-    Coverage("SCHD", "Schwab U.S. Dividend Equity ETF"),
+    # 편입 종목을 읽을 ETF(#10 D2): 일반 ETF는 자기 자신, TQQQ는 같은 지수의 QQQ(대부분 스왑이라 자기 N-PORT 비중이 지수 편입이 아니다)
+    Coverage("SPY", "SPDR S&P 500 ETF", holdings_ticker="SPY"),
+    Coverage("QQQ", "Invesco QQQ", holdings_ticker="QQQ"),
+    Coverage("TQQQ", "ProShares UltraPro QQQ", leverage=Decimal("3"), holdings_ticker="QQQ"),
+    Coverage("SCHD", "Schwab U.S. Dividend Equity ETF", holdings_ticker="SCHD"),
 )
 # 2026Q4 기본 종목(#8 D7). SPY·QQQ 포함(테스트로 고정). 아레나 종목은 목록이 생기면 포함 검사 추가(#13 보류)
 EXPERIMENT_DEFAULT_TICKERS: tuple[str, ...] = tuple(c.ticker for c in EXPERIMENT_COVERAGE)
-# U3 = A: ETF는 CIK를 비운다 → 첫 번째 줄 Not covered yet. ETF 카드의 소식은 신탁 공시가 아니라 편입 종목 소식이다(#10)
+# U3 = A: ETF는 CIK를 비운다. ETF 카드의 소식은 신탁 공시가 아니라 holdings_ticker의 상위 편입 종목 소식이다(#10).
+# 편입 출처가 없거나 편입 종목을 못 찾으면 첫 번째 줄 Not covered yet
 EXPERIMENT_ETFS = frozenset({"SPY", "QQQ", "TQQQ", "SCHD"})
 
 

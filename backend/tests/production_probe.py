@@ -16,7 +16,8 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from m30.adapters import AccessDeniedError, SourceError, tiingo
-from m30.adapters.edgar import SUBMISSIONS_URL, TICKERS_URL
+from m30.adapters.edgar import SUBMISSION_TEXT_URL, SUBMISSIONS_URL, TICKERS_URL
+from m30.adapters.nport import MF_TICKERS_URL
 
 RESPONSES = Path(__file__).resolve().parent / "edgar_responses"
 # 실험 회사 11개의 CIK (company_tickers.json fixture, #19 test_실험_종목_15개…와 같은 값). ETF 4개는 CIK 없음
@@ -26,6 +27,9 @@ COMPANY_CIKS = {
     "PFE": "0000078003",
 }
 ETFS = ("SPY", "QQQ", "TQQQ", "SCHD")
+# 녹화 N-PORT(#10, test_nport docstring): 신탁 CIK → 그 submissions에 남긴 NPORT-P 접수번호
+NPORT = {"0000884394": ("0001410368-26-089410",), "0001067839": ("0001067839-26-000030",),
+         "0001454889": ("0001410368-26-108627", "0001410368-26-108609")}
 DRAFT_CANARY = "DraftCanary58 Apple will surely beat estimates"  # 검수 전 AI 문장 자리. 공개 로그에 나오면 샌 것
 
 
@@ -43,11 +47,22 @@ def empty_submissions(cik):
     return json.dumps(data).encode()
 
 
+def nport_responses():
+    """ETF 편입 보고: 펀드 티커 목록 + 신탁 3개 submissions + NPORT-P 전체 제출 파일 4개(녹화)."""
+    responses = {MF_TICKERS_URL: (RESPONSES / "company_tickers_mf.json").read_bytes()}
+    for cik, accessions in NPORT.items():
+        responses[SUBMISSIONS_URL.format(cik=cik)] = (RESPONSES / f"CIK{cik}.json").read_bytes()
+        for a in accessions:
+            url = SUBMISSION_TEXT_URL.format(cik_number=int(cik), accession_digits=a.replace("-", ""), accession=a)
+            responses[url] = (RESPONSES / f"{a}.txt").read_bytes()
+    return responses
+
+
 def quiet_day(**changes):
-    """공시가 하나도 없는 날의 SEC 응답: 티커 목록 + 회사 11개의 빈 submissions."""
+    """공시가 하나도 없는 날의 SEC 응답: 티커 목록 + 회사 11개의 빈 submissions + ETF 편입 보고(녹화)."""
     return {TICKERS_URL: (RESPONSES / "company_tickers.json").read_bytes()} | {
         SUBMISSIONS_URL.format(cik=cik): empty_submissions(cik) for cik in COMPANY_CIKS.values()
-    } | changes
+    } | nport_responses() | changes
 
 
 def tiingo_day():

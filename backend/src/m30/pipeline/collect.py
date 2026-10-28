@@ -11,6 +11,7 @@ from itertools import pairwise
 from m30.adapters import AccessDeniedError, RateLimitedError, Source, SourceError, TransientSourceError
 from m30.adapters.events import Earnings, EarningsTiming, ExDividend
 from m30.adapters.filings import ACCESSION, Filing, FilingForm
+from m30.adapters.holdings import Holding, HoldingsReport
 from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.prices import DailyBar
 from m30.config import ET
@@ -20,6 +21,7 @@ from m30.trading_day import previous_trading_day
 RETRY_DELAYS = (1.0, 2.0, 4.0)  # U5 = A. 길이 = 재시도 횟수(3) → 최대 4번 호출. 지터 없음(서버 1대, 결정적 테스트)
 CUTOFF = time(4, 0)  # 수집 시각(HANDOFF 3-6). 공시 기간의 경계
 ITEM = re.compile(r"[0-9]\.[0-9]{2}")
+CIK = re.compile(r"[0-9]{10}")
 
 
 def filing_window(trading_day: date) -> tuple[datetime, datetime]:
@@ -164,6 +166,28 @@ def valid_filings(filings: object, cik: str) -> bool:
         and f.raw != ""
         and (f.report_date is None or _is_day(f.report_date))
         for f in filings
+    )
+
+
+def valid_holdings(report: object, fund: str) -> bool:
+    """None 또는 그 ETF의 보고. 이름·분류는 jsonb에 들어가므로 NUL 없는 글자."""
+    return report is None or (
+        isinstance(report, HoldingsReport)
+        and report.fund == fund
+        and isinstance(report.accession, str)
+        and ACCESSION.fullmatch(report.accession) is not None
+        and _is_day(report.period_end)
+        and isinstance(report.holdings, tuple)
+        and all(
+            isinstance(h, Holding)
+            and _is_text(h.name)
+            and h.name != ""
+            and (h.cik is None or (isinstance(h.cik, str) and CIK.fullmatch(h.cik) is not None))
+            and _is_finite(h.pct)
+            and (h.asset_category is None or _is_text(h.asset_category))
+            for h in report.holdings
+        )
+        and _is_text(report.raw)
     )
 
 
