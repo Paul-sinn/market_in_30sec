@@ -32,7 +32,7 @@ export async function createTestUser(): Promise<TestUser> {
   return { id: data.user.id, email, password };
 }
 
-/** 프로필·내 종목은 FK cascade로 같이 지워진다 */
+/** 프로필·내 종목·이력은 FK cascade로 같이 지워진다 */
 export async function deleteTestUsers(ids: string[]) {
   for (const id of ids) {
     const { error } = await admin.auth.admin.deleteUser(id);

@@ -8,6 +8,7 @@ import {
   type CardView,
   type DashboardView,
   type LineStatus,
+  type Stock,
 } from "@/lib/card-view";
 
 import { db } from "./db";
@@ -56,6 +57,13 @@ export async function getDashboard(): Promise<DashboardView> {
   if (error) throw new Error(`stock_card read failed: ${error.message}`);
   if (data.length >= MAX_ROWS) throw new Error(`stock_card has ${MAX_ROWS}+ rows for ${day}; paginate the read`);
   return { tradingDay: formatTradingDay(day), cards: data.map(toCardView) };
+}
+
+/** 커버 범위 전부, 종목순(내 종목 고르기 목록, #38) */
+export async function getCoverage(): Promise<Stock[]> {
+  const { data, error } = await db().from("coverage").select("ticker, name").order("ticker");
+  if (error) throw new Error(`coverage read failed: ${error.message}`);
+  return data;
 }
 
 function toCardView(r: Row): CardView {

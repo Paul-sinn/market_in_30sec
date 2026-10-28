@@ -1,12 +1,13 @@
 # m30 웹 (랜딩 + 카드 대시보드)
 
 - `/` 랜딩(#27, 정적 페이지, DB를 읽지 않는다)
-- `/cards` 가장 최근 거래일의 카드 전부를 종목순으로 보여주는 비공개 대시보드(#24). 위에 Google 로그인·로그아웃 버튼(#37)
+- `/cards` 가장 최근 거래일의 카드 전부를 종목순으로 보여주는 비공개 대시보드(#24). 위에 Google 로그인·로그아웃 버튼(#37). 로그인하면 위 "My stocks", 아래 "Browse"(#38, 아래 "내 종목" 절)
 - `/auth/sign-in`(POST)·`/auth/callback`(GET)·`/auth/sign-out`(POST) 로그인 라우트(#37, 아래 "로그인" 절)
+- `/my-stocks`(POST) 내 종목 넣기·빼기(#38)
 
 Next.js App Router + TypeScript + Tailwind. 규칙은 `.claude/skills/web-conventions/SKILL.md`. 디자인 기준은 사용자 시안 `design-system/user-mockup/landing.dc.html`, 그 값을 옮긴 토큰은 `src/app/globals.css` 한 곳(카드 화면 메모: `design-system/market_in_30sec/pages/dashboard.md`). 글꼴 Inter는 `next/font`가 빌드 때 받아 자체 제공한다.
 
-DB는 서버 전용 모듈만 만진다: 읽기 `src/server/cards.ts`, 쓰기 `src/server/my-stocks.ts` 한 곳(#37, 지금은 유저 프로필 보장만), 로그인 `src/server/auth.ts`. 브라우저 번들에는 Supabase 클라이언트도 키도 없다(ADR-0003).
+DB는 서버 전용 모듈만 만진다: 카드·커버 범위 읽기 `src/server/cards.ts`, 유저 데이터(프로필 보장·내 종목 읽기·넣기·빼기)는 `src/server/my-stocks.ts` 한 곳(웹의 유일한 쓰기 지점), 로그인 `src/server/auth.ts`. 브라우저 번들에는 Supabase 클라이언트도 키도 없다(ADR-0003).
 
 ## 로컬에서 띄우기
 
@@ -94,15 +95,29 @@ Google 로그인(Supabase Auth)은 전부 웹 서버에서 돈다. 브라우저�
 
 운영 확인: `/cards` → Sign in → Google → `/cards`로 돌아와 `Sign out` 버튼이 보인다 → Supabase Table Editor `user_profile`에 본인 행(`free`, 브라우저 타임존) → Sign out → Sign in 버튼으로 돌아온다. 실패하면 Vercel 로그에서 `auth: reason=` 줄을 본다. Preview 배포에서는 로그인이 안 된다(돌아갈 주소가 허용 목록 밖, 스펙 #37 R5).
 
+## 내 종목 (#38)
+
+- 로그인 화면: 거래일 제목 → **My stocks**(잠기지 않은 내 종목을 넣은 순서로. 그날 카드가 없으면 같은 자리에 `Summary arrives tomorrow morning`, 카드마다 `Remove`) → **Browse**(나머지 카드). 무료면 제목 옆에 `Swaps left today: N`
+- 고르기: My stocks 아래 `Pick your stocks` 펼침(커버 범위 중 내 종목이 아닌 것마다 `Add`). 내 종목이 0개면 열린 채로 나온다(첫 방문). 로그인 전 화면은 #37 그대로
+- 넣기·빼기는 일반 폼 `POST /my-stocks`(`change=add|remove`, `ticker`) → 303 `/cards`(실패하면 `/cards?my_stock=<코드>`). JS 없이 돌고 브라우저에 Supabase가 없다. 유저는 세션(`getVerifiedUserId`)으로만 알고 본문의 유저 id는 읽지 않는다. 세션이 없으면 쓰지 않고 `/cards`로
+- 규칙은 DB 트리거만 지킨다(ADR-0004): 무료 잠기지 않은 내 종목 3개, 빼기 = 교체 1회·하루 3회(프로필 타임존 자정), 넣기는 교체가 아님, 이미 내 종목이면 아무 일 없음(이력 없음). 웹은 거절 이름만 문구로 바꾼다
+  - `free_swap_limit` → `Free plan can swap stocks 3 times a day. Plus has no limit.`
+  - `free_my_stock_limit` → `Free plan can pick 3 stocks. Remove one to add another.`
+  - 그 밖(커버 범위 밖 티커, DB 오류) → `My stocks could not be updated`. 서버 로그는 `my_stock: reason=write_failed code=<DB 코드>` 한 줄
+- 남은 교체 = 3 − 오늘(`user_local_date`) 빼기 수, 0 미만은 0. 표시용이고 막는 건 DB다. Plus는 그리지 않는다
+- 웹은 AI를 부르지 않는다. 넣은 종목의 카드는 다음 아침 실행부터 생긴다(생성 대상, #8)
+- 원격에 `supabase/migrations/20261028043018_my_stock_readd_noop.sql`이 없으면 3개가 찬 무료 유저의 다시 넣기가 `free_my_stock_limit`로 거절된다(원격 적용은 사용자 확인 후)
+
 ## 검사
 
 ```bash
 cd web && npm run lint && npm test && npm run build
 ```
 
-- `npm test`의 `tests/*.db.test.ts`는 위 `eval` 줄의 환경 변수(`SUPABASE_PUBLISHABLE_KEY` 포함)가 있어야 돌고, 로컬 주소(127.0.0.1·localhost)가 아니면 멈춘다. `cards.db.test.ts`는 2099-12-31 거래일과 `ZZW*` 테스트 티커만 넣고 끝나면 지운다(시드한 카드는 그대로). `auth.db.test.ts`·`my-stocks.db.test.ts`는 로컬 Auth admin으로 `…@example.test` 유저를 만들고 끝나면 지운다(프로필은 cascade).
-- `tests/auth.db.test.ts`: 진짜 세션으로 확인(정상·없음·위조 3종·만료), 프록시 갱신(새 쿠키가 응답과 같은 요청의 페이지 둘 다에), 로그아웃(쿠키 삭제 + Auth에서 폐기), 콜백 실패(code 없음·공급자 오류·가짜 code). `tests/my-stocks.db.test.ts`: 프로필 보장(첫 로그인·재로그인 그대로·이상한 타임존 → NY·빈 타임존 → NY)
-- `tests/auth.test.ts`(DB 없음): 로그인 미설정·Google 꺼짐·Auth 응답 없음 → 실패 문구, Google 켜짐 → PKCE authorize + HttpOnly 검증값 쿠키, 콜백 → 프로필 보장 연결, 프로필 실패 → 세션 삭제
+- `npm test`의 `tests/*.db.test.ts`는 위 `eval` 줄의 환경 변수(`SUPABASE_PUBLISHABLE_KEY` 포함)가 있어야 돌고, 로컬 주소(127.0.0.1·localhost)가 아니면 멈춘다. `cards.db.test.ts`는 2099-12-31 거래일과 `ZZW*` 테스트 티커만 넣고 끝나면 지운다(시드한 카드는 그대로). `auth.db.test.ts`·`my-stocks.db.test.ts`는 로컬 Auth admin으로 `…@example.test` 유저를 만들고 끝나면 Auth admin으로 지운다(프로필·내 종목·이력은 FK cascade). `my-stocks.db.test.ts`는 커버 범위에 `ZZM*` 테스트 티커를 넣고 끝나면 지운다.
+- `tests/auth.db.test.ts`: 진짜 세션으로 확인(정상·없음·위조 3종·만료), 프록시 갱신(새 쿠키가 응답과 같은 요청의 페이지 둘 다에), 로그아웃(쿠키 삭제 + Auth에서 폐기), 콜백 실패(code 없음·공급자 오류·가짜 code). `tests/my-stocks.db.test.ts`: 프로필 보장(첫 로그인·재로그인 그대로·이상한 타임존 → NY·빈 타임존 → NY), 내 종목(#38: 3개 → 4번째 거절 → 빼기 → 남은 교체 → 4번째 빼기 거절 → 다시 넣기 무변화, 프로필 타임존의 오늘, Plus, 잠금, 다른 유저 안 보임, 커버 범위 밖 티커는 쓰지 않음)
+- `tests/my-stocks.route.test.ts`(DB 없음): `POST /my-stocks` 세션 없음 → 쓰지 않음, 세션 유저 id로만 쓰기, 거절 이름 → 결과 코드, 교착(40P01) 1회 재시도, 그 밖 오류·이상한 입력 → 실패 코드와 고정 로그, 열린 리디렉션 없음
+- `tests/auth.test.ts`(DB 없음): 로그인 미설정·Google 꺼짐·Auth 응답 없음 → 실패 문구, Google 켜짐 → PKCE authorize + HttpOnly 검증값 쿠키, 콜백 → 프로필 보장 연결, 프로필 실패 → 세션 삭제, 로그인·콜백·로그아웃이 `next`·`redirect` 값을 무시(열린 리디렉션 없음)
 - `tests/proxy.test.ts`는 배포 보호(`/`·`/cards` 둘 다, 인증 없음·틀린 값·형식 깨짐·환경 변수 미설정 → 401, 맞는 값 → 통과 + 쿠키, 맞는 쿠키 → 통과, 틀린 쿠키·비밀번호 바뀐 뒤 옛 쿠키 → 401, 응답·쿠키에 아이디·비밀번호 없음, matcher로 빠지는 경로 없음)와 로그인 세션 갱신의 경계(게이트 거부·세션 없음·`/_next/` 정적 파일이면 Auth 요청 0회)를 DB 없이 본다.
 - DB 없이 도는 테스트만: `npx vitest run --exclude 'tests/*.db.test.ts'`
 - `tests/cards.read.test.ts`는 DB 없이 supabase-js 응답을 흉내 내 읽기 실패·1,000행 가드를 본다.

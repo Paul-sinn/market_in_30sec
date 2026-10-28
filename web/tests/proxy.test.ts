@@ -95,8 +95,8 @@ test("형식이 깨진 헤더 → 401", async () => {
   }
 });
 
-test("랜딩(/)과 카드 대시보드(/cards), 로그인 라우트(#37) 모두 인증 없으면 401(#27)", async () => {
-  for (const path of ["/", "/cards", "/cards/", "/auth/sign-in", "/auth/callback?code=x"]) {
+test("랜딩(/)과 카드 대시보드(/cards), 로그인 라우트(#37), 내 종목 쓰기(#38) 모두 인증 없으면 401(#27)", async () => {
+  for (const path of ["/", "/cards", "/cards/", "/auth/sign-in", "/auth/callback?code=x", "/my-stocks"]) {
     await expectDenied(mod.proxy(new NextRequest(`https://example.test${path}`)));
     expect((await mod.proxy(new NextRequest(`https://example.test${path}`, { headers: { authorization: basic(`${USER}:${PASSWORD}`) } }))).status).toBe(200);
   }
@@ -104,7 +104,7 @@ test("랜딩(/)과 카드 대시보드(/cards), 로그인 라우트(#37) 모두 
 
 test("matcher로 빠지는 경로 없음(정적 파일·데이터 경로 포함 모든 요청)", () => {
   const config = (mod as { config?: Parameters<typeof unstable_doesMiddlewareMatch>[0]["config"] }).config ?? {};
-  for (const url of ["/", "/cards", "/any/page", "/_next/static/chunks/a.js", "/_next/data/x.json", "/favicon.ico", "/api/x", "/auth/sign-in", "/auth/callback?code=x"]) {
+  for (const url of ["/", "/cards", "/any/page", "/_next/static/chunks/a.js", "/_next/data/x.json", "/favicon.ico", "/api/x", "/auth/sign-in", "/auth/callback?code=x", "/my-stocks"]) {
     expect(unstable_doesMiddlewareMatch({ config, url }), url).toBe(true);
   }
 });

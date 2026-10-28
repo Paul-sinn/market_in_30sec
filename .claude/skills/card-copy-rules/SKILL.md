@@ -49,7 +49,7 @@ description: "30초 종목 리포트 앱에 나가는 문장의 규칙. 첫 번�
 buy, sell, should, bullish, bearish, likely to rise, upside, downside, opportunity, undervalued, overvalued, momentum, breakout, rally ahead. 감정 동사 soars, plunges, skyrockets, crashes, tanks, surges, plummets, rockets, tumbles, slumps, spikes, jumps, rallies, sinks, sank, dives, collapses, explodes, nosedives. 어디서든 차단(아래 2장과 같음): you should, you must, guaranteed, risk-free, can't lose, cant lose, cannot lose, sure thing, easy money, get rich, double your money, 한국어 권유(목록은 `arena.toml` `always_banned`에만 둔다). 검사 기준 목록은 `backend/src/m30/copy_rules/card.toml`·`arena.toml`이다. 목록을 바꾸면 이 문단도 같이 바꾼다.
 
 - 메인 카드에 "Buy" 같은 등급 이름을 쓰지 않는다
-- 2인칭(you, your)을 쓰지 않는다. 대상은 카드·시장 한눈에·아침 알림 문장이다. 버튼·화면 제목 같은 UI 라벨(`Sign in to pick your stocks`)은 2인칭을 써도 된다. 규칙의 목적은 종목 권유처럼 읽히는 문장을 막는 것이고, 라벨에도 금지어·방향 의견은 그대로 금지다(2026-10-28 사용자 결정, #37)
+- 2인칭(you, your)을 쓰지 않는다. 대상은 카드·시장 한눈에·아침 알림 문장이다. 버튼·화면 제목 같은 UI 라벨(`Sign in to pick your stocks`)은 2인칭을 써도 된다. 규칙의 목적은 종목 권유처럼 읽히는 문장을 막는 것이고, 라벨에도 금지어·방향 의견은 그대로 금지다(2026-10-28 사용자 결정, #37). UI 라벨은 `--mode card` 검사기 대상이 아니다(첫 번째 줄의 숫자 개수·2인칭 규칙이 오탐을 낸다). copy-reviewer가 금지어·방향 의견만 보고 판정한다(#38)
 - 애널리스트 인용은 AI가 아니라 코드 템플릿으로 만든다
 
 ## 2. 아레나 토크 (AgentTalk)

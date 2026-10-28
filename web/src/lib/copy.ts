@@ -24,3 +24,18 @@ export const AUTH_REQUIRED = "Authentication required"; // 배포 보호 401 본
 export const SIGN_IN = "Sign in to pick your stocks"; // 로그인 전 /cards 버튼(스펙 #36 스토리 17)
 export const SIGN_OUT = "Sign out"; // 로그인됨 /cards 버튼
 export const SIGN_IN_FAILED = "Sign-in could not be completed"; // 설정 없음·Google 꺼짐·취소·교환 실패·프로필 실패를 한 문구로(LOAD_FAILED와 같은 형식)
+
+// 내 종목(#38). 화면 제목·라벨은 스펙 #36, 업셀·카드 없음은 HANDOFF 3-2 그대로. 나머지는 새 문구(copy-reviewer 검수 대상)
+export const MY_STOCKS = "My stocks";
+export const BROWSE = "Browse";
+export const SUMMARY_TOMORROW = "Summary arrives tomorrow morning"; // 오늘 카드가 없는 내 종목 자리(HANDOFF 3-2)
+export const PICK_STOCKS = "Pick your stocks"; // 고르기 목록 펼침(내 종목 0개면 열린 채로)
+export const ADD = "Add"; // 화면 읽기 프로그램에는 뒤에 티커가 붙는다("Add AAPL")
+export const REMOVE = "Remove"; // 같음("Remove AAPL")
+export const SWAPS_LEFT = (n: number) => `Swaps left today: ${n}`; // 무료만. 프로필 타임존 자정 기준
+/** POST /my-stocks 결과 코드(/cards?my_stock=…) → 문구. 여기 없는 코드는 문구를 그리지 않는다 */
+export const MY_STOCK_NOTICE = {
+  free_swap_limit: "Free plan can swap stocks 3 times a day. Plus has no limit.", // HANDOFF 3-2
+  free_my_stock_limit: "Free plan can pick 3 stocks. Remove one to add another.",
+  failed: "My stocks could not be updated", // 그 밖의 실패(LOAD_FAILED·SIGN_IN_FAILED와 같은 형식)
+} as const;

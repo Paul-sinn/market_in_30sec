@@ -7,6 +7,7 @@ import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
 import { GET as callback } from "@/app/auth/callback/route";
 import { POST as signInRoute } from "@/app/auth/sign-in/route";
+import { POST as signOutRoute } from "@/app/auth/sign-out/route";
 import { exchangeCode, getVerifiedUserId, type VerifiedUserId } from "@/server/auth";
 import { ensureProfile } from "@/server/my-stocks";
 
@@ -155,4 +156,38 @@ test("프로필 보장 실패 → 세션 쿠키를 지우고(닫힌 쪽) 실패 
   const j = use(withFakeSession()); // 교환이 심은 세션 쿠키 자리
   expectFailed(await callback(new NextRequest("http://localhost/auth/callback?code=c&timezone=Asia%2FSeoul")));
   expect(sessionCookies(j)).toEqual([]);
+});
+
+test("로그인 시작·콜백·로그아웃은 폼·쿼리의 next·redirect 값을 무시하고 고정 경로로만 보낸다(열린 리디렉션 없음, #37 qa M3)", async () => {
+  const evil = "https://evil.example/x";
+  const q = new URLSearchParams({ next: evil, redirect: evil, redirect_to: evil, returnTo: evil }).toString();
+  const signIn = () =>
+    signInRoute(
+      new NextRequest(`http://localhost/auth/sign-in?${q}`, {
+        method: "POST",
+        body: new URLSearchParams({ timezone: "Asia/Seoul", next: evil, redirect: evil, redirect_to: evil, returnTo: evil }),
+      }),
+    );
+
+  // Google 켜짐: Supabase authorize로, 돌아올 주소는 고정 콜백
+  settings({ external: { google: true } });
+  const started = await signIn();
+  expect(started.status).toBe(303);
+  const u = new URL(location(started));
+  expect(u.origin + u.pathname).toBe(`${URL_}/auth/v1/authorize`);
+  expect(u.searchParams.get("redirect_to")).toBe("http://localhost/auth/callback?timezone=Asia%2FSeoul");
+  expect(location(started)).not.toContain("evil");
+
+  // Google 꺼짐: 실패 경로도 고정
+  settings({ external: { google: false } });
+  expectFailed(await signIn());
+
+  // 콜백 성공·실패, 로그아웃
+  vi.mocked(exchangeCode).mockResolvedValue("user-1" as VerifiedUserId);
+  expect(location(await callback(new NextRequest(`http://localhost/auth/callback?code=c&timezone=UTC&${q}`)))).toBe("http://localhost/cards");
+  vi.mocked(exchangeCode).mockResolvedValue(null);
+  expectFailed(await callback(new NextRequest(`http://localhost/auth/callback?code=c&${q}`)));
+  const out = await signOutRoute(new NextRequest(`http://localhost/auth/sign-out?${q}`, { method: "POST", body: new URLSearchParams({ next: evil }) }));
+  expect(out.status).toBe(303);
+  expect(location(out)).toBe("http://localhost/cards");
 });
