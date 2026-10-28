@@ -1,11 +1,12 @@
 /** 화면 모델 타입과 표시 형식 순수 함수. 문장은 만들지 않는다: DB 문구 그대로 또는 copy.ts 고정 문구. */
-import { CHECKED_PREFIX, MY_STOCK_NOTICE, NOT_COVERED, UPDATE_DELAYED } from "./copy";
+import { CHECKED_PREFIX, DAY_CLOSE, MY_STOCK_NOTICE, NOT_COVERED, PREV_CLOSE, UPDATE_DELAYED } from "./copy";
 
 export type LineStatus = "checked_found" | "checked_none" | "delayed" | "unsupported"; // DB enum line_status
 type TextLine = { text: string; status: LineStatus };
 /** locked = 무료 범위의 세 번째 줄(#9): 글자 없이 상태만 온다. 화면은 copy.ts의 PRICE_FACTS_IN_PLUS */
 export type LineView = TextLine | { status: "locked" };
-export type ChangeView = { text: string; tone: "up" | "down" | "flat" | "delayed" | "unsupported" };
+/** label = 등락률이 다루는 종가 날짜(#16). 등락률이 지연·미지원이어도 같은 날짜다 */
+export type ChangeView = { text: string; tone: "up" | "down" | "flat" | "delayed" | "unsupported"; label: string };
 export type CardView = {
   ticker: string;
   name: string;
@@ -45,13 +46,15 @@ export function myDashboardView(
   };
 }
 
-/** DB 등락률(소수 첫째 자리)에 부호·%만 붙인다. 값은 계산함(checked_found)일 때만 있다(DB 제약). */
-export function changeView(pct: number | null, status: LineStatus): ChangeView {
-  if (status === "unsupported") return { text: NOT_COVERED, tone: "unsupported" };
-  if (status !== "checked_found" || pct === null) return { text: UPDATE_DELAYED, tone: "delayed" };
+/** DB 등락률(소수 첫째 자리)에 부호·%만 붙인다. 값은 계산함(checked_found)일 때만 있다(DB 제약).
+ * previousTradingDay = DB previous_trading_day. 웹은 달력을 모른다: 값을 포맷만 하고, null(#16 전 카드)이면 prev close */
+export function changeView(pct: number | null, status: LineStatus, previousTradingDay: string | null): ChangeView {
+  const label = previousTradingDay ? DAY_CLOSE(formatCloseDay(previousTradingDay)) : PREV_CLOSE;
+  if (status === "unsupported") return { text: NOT_COVERED, tone: "unsupported", label };
+  if (status !== "checked_found" || pct === null) return { text: UPDATE_DELAYED, tone: "delayed", label };
   const abs = Math.abs(pct).toFixed(1);
-  if (abs === "0.0") return { text: "0.0%", tone: "flat" }; // -0도 보합
-  return pct > 0 ? { text: `+${abs}%`, tone: "up" } : { text: `−${abs}%`, tone: "down" };
+  if (abs === "0.0") return { text: "0.0%", tone: "flat", label }; // -0도 보합
+  return pct > 0 ? { text: `+${abs}%`, tone: "up", label } : { text: `−${abs}%`, tone: "down", label };
 }
 
 /** 없는 줄(아직 안 만듦, 축소판의 첫 번째 줄)도 숨기지 않고 지연으로 그린다. */
@@ -82,6 +85,14 @@ const DAY = new Intl.DateTimeFormat("en-US", {
 
 /** "2026-10-16" → "Fri, Oct 16, 2026" */
 export const formatTradingDay = (day: string) => DAY.format(new Date(`${day}T00:00:00Z`));
+
+const CLOSE_DAY = new Intl.DateTimeFormat("en-US", { timeZone: "UTC", weekday: "short" }); // DAY와 같은 이유로 UTC
+
+/** "2026-10-15" → "Thu 10/15"(두 번째 줄 날짜와 같은 형식). 월·일은 문자열에서 바로 읽어 앞 0만 뗀다 */
+export function formatCloseDay(day: string): string {
+  const [, m, d] = day.split("-").map(Number);
+  return `${CLOSE_DAY.format(new Date(`${day}T00:00:00Z`))} ${m}/${d}`;
+}
 
 /** 카드 하단 한 줄. 확인된 줄(확인함·있음/없음)만 넣는다: 지연·미지원 출처가 "Checked"로 읽히지 않게.
  * 시각은 그 줄들 중 가장 이른 시각(더 새것처럼 보이지 않게), 출처 범위는 줄 순서·중복 제거. 확인된 줄이 없으면 null. */

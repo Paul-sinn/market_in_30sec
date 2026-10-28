@@ -7,7 +7,7 @@ import Link from "next/link";
 import { Brand } from "@/components/brand";
 import { StockCard } from "@/components/stock-card";
 import type { CardView } from "@/lib/card-view";
-import { APP_NAME, OPEN_CARDS } from "@/lib/copy";
+import { APP_NAME, OPEN_CARDS, PREV_CLOSE } from "@/lib/copy";
 
 const WRAP = "mx-auto max-w-7xl px-8";
 const LABEL = "text-label font-semibold tracking-widest uppercase";
@@ -23,7 +23,7 @@ const SAMPLES = [
   {
     ticker: "AAPL",
     name: "Apple",
-    change: { text: "−1.2%", tone: "down" },
+    change: { text: "−1.2%", tone: "down", label: PREV_CLOSE }, // 샘플은 날짜 없는 시안 라벨 그대로
     lines: [
       { text: "Apple named a new CFO +2 more (Company)", status: "checked_found" },
       { text: "Earnings Thu 10/15 after close (D-2)", status: "checked_found" },
@@ -35,7 +35,7 @@ const SAMPLES = [
   {
     ticker: "QQQ",
     name: "Nasdaq-100 ETF",
-    change: { text: "+0.8%", tone: "up" },
+    change: { text: "+0.8%", tone: "up", label: PREV_CLOSE },
     lines: [
       { text: "No new SEC filings found", status: "checked_none" }, // ETF 첫 번째 줄(상위 편입 종목 소식)은 #10 미정
       { text: "Ex-dividend 12/21 · $0.70/share", status: "checked_found" },
@@ -47,7 +47,7 @@ const SAMPLES = [
   {
     ticker: "KO",
     name: "Coca-Cola",
-    change: { text: "+0.1%", tone: "up" },
+    change: { text: "+0.1%", tone: "up", label: PREV_CLOSE },
     lines: [
       { text: "No new SEC filings found", status: "checked_none" },
       { text: "No confirmed events found", status: "checked_none" },

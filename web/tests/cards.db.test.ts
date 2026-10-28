@@ -18,7 +18,8 @@ import { admin, createTestUser, deleteTestUsers } from "./local-supabase";
 
 const DAY = "2099-12-31";
 const EARLIER = "2099-12-30";
-const TICKERS = ["ZZWA", "ZZWB", "ZZWC", "ZZWD"];
+const TICKERS = ["ZZWA", "ZZWB", "ZZWC", "ZZWD", "ZZWE"];
+const SUSPENDED_TEXT = "Web Test E suspended line"; // 발행 중단 카드(ZZWE)에만 있는 문구
 const AT = "2099-12-31T12:30:00+00:00"; // 7:30 AM EST
 
 const line = (prefix: string, text: string | null, status: string | null, scope: string | null) => ({
@@ -43,6 +44,7 @@ const cards = [
   {
     ticker: "ZZWA",
     trading_day: DAY,
+    previous_trading_day: EARLIER, // 종가 날짜 라벨(#16)
     status: "normal",
     change_pct: 1.3,
     change_status: "checked_found",
@@ -54,6 +56,7 @@ const cards = [
   {
     ticker: "ZZWC",
     trading_day: DAY,
+    previous_trading_day: EARLIER, // 등락률이 지연이어도 종가 날짜는 있다(그날 종가가 지연)
     status: "fallback",
     change_pct: null,
     change_status: "delayed",
@@ -68,6 +71,20 @@ const cards = [
     change_pct: -2.0,
     change_status: "checked_found",
     ...line("news_line", "No new SEC filings found", "checked_none", "SEC filings"),
+    ...line("event_line", "No confirmed events found", "checked_none", "Earnings and dividend calendar"),
+    ...line("price_fact_line", "No additional price highlights", "checked_none", "Daily prices"),
+    leverage_tag: null,
+  },
+  // 발행 중단(#16 D7): 읽히지만(suspended) 화면 모델에는 없다
+  {
+    ticker: "ZZWE",
+    trading_day: DAY,
+    previous_trading_day: EARLIER,
+    publish_suspended: true,
+    status: "normal",
+    change_pct: 4.4,
+    change_status: "checked_found",
+    ...line("news_line", SUSPENDED_TEXT, "checked_found", "SEC filings"),
     ...line("event_line", "No confirmed events found", "checked_none", "Earnings and dividend calendar"),
     ...line("price_fact_line", "No additional price highlights", "checked_none", "Daily prices"),
     leverage_tag: null,
@@ -93,7 +110,7 @@ beforeAll(async () => {
   await cleanup();
   const cov = await admin.from("coverage").insert(TICKERS.map((t) => ({ ticker: t, name: `Web Test ${t.at(-1)}` })));
   if (cov.error) throw new Error(`coverage insert failed: ${cov.error.message}`);
-  const ins = await admin.from("stock_card").insert(cards);
+  const ins = await admin.from("stock_card").insert(cards, { defaultToNull: false }); // 행마다 키가 달라도 빠진 컬럼은 DB 기본값(publish_suspended = false)
   if (ins.error) throw new Error(`stock_card insert failed: ${ins.error.message}`);
 });
 
@@ -106,14 +123,22 @@ afterAll(async () => {
 /** 네 종목 전부가 잠기지 않은 내 종목인 Plus 유저(세 줄 전부) */
 const PLUS_ALL = { plan: "plus" as const, stocks: TICKERS.map((ticker) => ({ ticker, locked: false })) };
 
-test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus 내 종목 = 세 줄 전부)", async () => {
+test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus 내 종목 = 세 줄 전부, 발행 중단 카드는 빠진다)", async () => {
   const data = await getDashboard();
   expect(data.tradingDay).toBe("Thu, Dec 31, 2099");
+  // 발행 중단은 읽기에서 거르지 않고 suspended로 담는다: 거르는 곳은 exposeCards 한 곳(#16 D7)
+  expect(data.cards.map((c) => [c.ticker, c.suspended])).toEqual([
+    ["ZZWA", false],
+    ["ZZWB", false],
+    ["ZZWC", false],
+    ["ZZWD", false],
+    ["ZZWE", true],
+  ]);
   expect(exposeCards(data.cards, PLUS_ALL)).toEqual([
     {
       ticker: "ZZWA",
       name: "Web Test A",
-      change: { text: "+1.3%", tone: "up" },
+      change: { text: "+1.3%", tone: "up", label: "Wed 12/30 close" },
       lines: [
         { text: "Web Test A reported Q3 results (SEC filing)", status: "checked_found" },
         { text: "Earnings Thu 1/7 after close (D-7)", status: "checked_found" },
@@ -125,7 +150,7 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
     {
       ticker: "ZZWB",
       name: "Web Test B",
-      change: { text: "−2.0%", tone: "down" },
+      change: { text: "−2.0%", tone: "down", label: "prev close" }, // previous_trading_day null = #16 전 카드
       lines: [
         { text: "No new SEC filings found", status: "checked_none" },
         { text: "No confirmed events found", status: "checked_none" },
@@ -137,7 +162,7 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
     {
       ticker: "ZZWC",
       name: "Web Test C",
-      change: { text: "Update delayed", tone: "delayed" },
+      change: { text: "Update delayed", tone: "delayed", label: "Wed 12/30 close" },
       lines: [
         { text: "Update delayed", status: "delayed" }, // 축소판: 첫 번째 줄 없음
         { text: "No confirmed events found", status: "checked_none" },
@@ -149,7 +174,7 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
     {
       ticker: "ZZWD",
       name: "Web Test D",
-      change: { text: "Not covered yet", tone: "unsupported" },
+      change: { text: "Not covered yet", tone: "unsupported", label: "prev close" },
       lines: [
         { text: "Update delayed", status: "delayed" },
         { text: "Not covered yet", status: "unsupported" },
@@ -163,6 +188,7 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
 
 test("로그인 전 = 무료 범위: 세 번째 줄은 잠금만, 하단에서도 그 줄의 출처가 빠진다. 지연·미지원은 그대로", async () => {
   const cards = exposeCards((await getDashboard()).cards, null);
+  // ZZWE(발행 중단)는 없다
   expect(cards.map((c) => [c.ticker, c.change.text, c.lines, c.checked])).toEqual([
     [
       "ZZWA",
@@ -199,12 +225,13 @@ test("로그인 전 = 무료 범위: 세 번째 줄은 잠금만, 하단에서�
   ]);
 });
 
-test("같은 카드를 Plus 유저와 무료 유저가 볼 때 세 번째 줄이 다르다(플랜은 user_profile.plan, 세션 유저 id로)", async () => {
+test("같은 카드를 Plus 유저와 무료 유저가 볼 때 세 번째 줄이 다르다(플랜은 user_profile.plan, 세션 유저 id로). 발행 중단한 내 종목은 두 플랜 모두 카드 없음 자리", async () => {
   const user = async (plan: "free" | "plus") => {
     const id = (await createTestUser()).id as VerifiedUserId; // 테스트에서만: 운영에서는 getVerifiedUserId만 만든다
     created.push(id);
     await ensureProfile(id, "America/New_York");
     expect(await addMyStock(id, "ZZWA")).toBe("ok");
+    expect(await addMyStock(id, "ZZWE")).toBe("ok"); // 발행 중단 카드의 종목
     const { error } = await admin.from("user_profile").update({ plan }).eq("user_id", id); // 결제(#10) 전이라 서비스 역할로
     if (error) throw new Error(`plan update failed: ${error.code}`);
     return id;
@@ -230,4 +257,11 @@ test("같은 카드를 Plus 유저와 무료 유저가 볼 때 세 번째 줄이
   expect(p.html).toContain("Up 5 days in a row");
   expect(f.html).not.toContain("Up 5 days in a row");
   expect(f.html).toContain("Price facts in Plus");
+
+  // 발행 중단 카드는 내 종목에서도 빠지고, 그 자리는 카드 없음과 같다(#16)
+  for (const d of [f, p]) {
+    expect(d.data.cards.map((c) => c.ticker)).toEqual(["ZZWA", "ZZWB", "ZZWC", "ZZWD"]);
+    expect(d.html).toContain("Summary arrives tomorrow morning");
+    expect(d.html).not.toContain(SUSPENDED_TEXT);
+  }
 });

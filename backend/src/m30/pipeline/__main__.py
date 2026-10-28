@@ -26,12 +26,13 @@ from m30.config import (
     load_settings,
     load_tiingo_settings,
 )
-from m30.db.store import CardStore, DBConnectError, connect
+from m30.db.store import CardStore, DBConnectError, RunLocked, connect
 from m30.llm.anthropic import AnthropicLLM
 from m30.models import LineStatus, NewsKind
 from m30.pipeline.collect import filing_window
 from m30.pipeline.morning import MorningPipeline, RunSummary
 from m30.pipeline.production import run_failed, run_production
+from m30.trading_day import CalendarError, is_trading_day
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -47,6 +48,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _production(args.trading_day, args.quality)
     if args.trading_day is None:
         parser.error("trading_day is required with --scenario")
+    if (code := _not_trading_day(args.trading_day)) is not None:
+        return code
 
     if args.quality:  # DB 설정·연결보다 먼저. 메시지에는 변수 이름만 있다
         try:
@@ -75,22 +78,41 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     scenario = load_scenario(args.scenario)
-    with connect(settings) as conn:
-        store = CardStore(conn)
-        store.upsert_coverage(scenario.coverage)
-        store.add_default_tickers(args.trading_day, [c.ticker for c in scenario.coverage])  # 유저 없음 → 시나리오 커버 범위 전체가 대상
-        summary = MorningPipeline(
-            prices=FakePriceSource(scenario),
-            events=FakeEventSource(scenario),
-            filings=FakeFilingSource(scenario),
-            indicators=FakeIndicatorSource(scenario),
-            llm=AnthropicLLM(llm_settings) if args.quality else FakeLLM(scenario),  # 품질 확인은 llm_replies를 쓰지 않는다
-            store=store,
-        ).run(args.trading_day)
-        quality = _quality_lines(summary, store, "scenario") if args.quality else []
+    try:
+        with connect(settings) as conn:
+            store = CardStore(conn)
+            store.upsert_coverage(scenario.coverage)
+            store.add_default_tickers(args.trading_day, [c.ticker for c in scenario.coverage])  # 유저 없음 → 시나리오 커버 범위 전체가 대상
+            summary = MorningPipeline(
+                prices=FakePriceSource(scenario),
+                events=FakeEventSource(scenario),
+                filings=FakeFilingSource(scenario),
+                indicators=FakeIndicatorSource(scenario),
+                llm=AnthropicLLM(llm_settings) if args.quality else FakeLLM(scenario),  # 품질 확인은 llm_replies를 쓰지 않는다
+                store=store,
+            ).run(args.trading_day)
+            quality = _quality_lines(summary, store, "scenario") if args.quality else []
+    except RunLocked:
+        print(LOCKED.format(args.trading_day), file=sys.stderr)
+        return 1
     _print_summary(summary)
     for line in quality:
         print(line)
+    return 0
+
+
+LOCKED = "LOCKED: {} 같은 거래일 실행이 이미 돌고 있어 종료합니다"  # 공개 로그: 날짜만
+
+
+def _not_trading_day(day: date) -> int | None:
+    """설정 읽기·DB 연결 전 거래일 확인. 거래일이면 None, 주말·휴장일이면 0(카드 없음이 정상), 달력 표 밖이면 2."""
+    try:
+        if is_trading_day(day):
+            return None
+    except CalendarError as e:
+        print(f"거래일 달력(trading_day.py)에 {e.year}년 NYSE 휴장일이 없습니다. 표를 갱신하세요", file=sys.stderr)
+        return 2
+    print(f"{day}은 거래일이 아니라(주말·휴장일) 카드를 만들지 않습니다")
     return 0
 
 
@@ -102,7 +124,8 @@ def _print_summary(summary: RunSummary) -> None:
     if summary.rate_limited:
         print(f"RATE LIMITED (429, retried): {', '.join(summary.rate_limited)}")
     delayed = ", ".join(summary.change_delayed) or "-"
-    print(f"{summary.trading_day} cards_saved={summary.cards_saved} change_delayed={delayed}")
+    resumed = ",".join(summary.resumed) or "-"  # 죽은 앞 실행이 저장해 이번에 건너뛴 카드
+    print(f"{summary.trading_day} cards_saved={summary.cards_saved} resumed={resumed} change_delayed={delayed}")
     skipped = ", ".join(f"{b.number}:{b.reason}" for b in summary.skipped_batches) or "-"
     print(
         f"filings={summary.filings_collected} unclassified={summary.filings_unclassified}"
@@ -170,14 +193,13 @@ def _quality_lines(summary: RunSummary, store: CardStore, prices: str) -> list[s
 
 
 def _production(requested: date | None, quality: bool = False) -> int:
-    """날짜 확인 → 설정 → DB 연결 → CIK 갱신·파이프라인(SEC·Anthropic·Tiingo) → 요약 → exit 코드. 외부 출처는 DB 연결 뒤에만 부른다.
+    """거래일·날짜 확인 → 설정 → DB 연결 → CIK 갱신·파이프라인(SEC·Anthropic·Tiingo) → 요약 → exit 코드. 외부 출처는 DB 연결 뒤에만 부른다.
     시세: TIINGO_API_KEY가 있으면 Tiingo, 없으면(유료 구독 전) 시세 없이(등락률·세 번째 줄 지연).
     quality(#14): 로컬 DB만, 시세는 항상 없이(무료 키 시간당 50회 보호. 품질 확인 대상은 첫 번째 줄), 끝에 품질 블록."""
     now = datetime.now(ET)
     day = requested or now.date()
-    if day.weekday() >= 5:  # 휴장일 달력은 #16이 같은 규칙(exit 0)으로 넓힌다
-        print(f"{day}은 주말이라 카드를 만들지 않습니다")
-        return 0
+    if (code := _not_trading_day(day)) is not None:
+        return code
     if now < filing_window(day)[1]:  # 미래 날짜 오타·밤늦은 PT 실행이 원격에 카드를 만들지 않게
         print(f"{day} 공시 기간은 그날 04:00 ET에 닫힙니다. 그 뒤에 실행하거나 지난 거래일을 넣으세요", file=sys.stderr)
         return 2
@@ -202,6 +224,9 @@ def _production(requested: date | None, quality: bool = False) -> int:
                 prices=TiingoPriceSource(tiingo_settings) if tiingo else NoPriceSource(),
             )
             lines = _quality_lines(summary, store, "none") if quality else []
+    except RunLocked:  # 카드 0장과 같은 실패(exit 1). except Exception보다 먼저
+        print(LOCKED.format(day), file=sys.stderr)
+        return 1
     except (ConfigError, DBConnectError) as e:  # 우리가 쓴 문구(변수 이름·포트만): 6543 거부, 연결 실패
         print(e, file=sys.stderr)
         return 2 if isinstance(e, ConfigError) else 1

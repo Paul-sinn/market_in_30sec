@@ -114,7 +114,8 @@ Google 로그인(Supabase Auth)은 전부 웹 서버에서 돈다. 브라우저�
 - 무료 범위: 등락률·첫·두 번째 줄은 저장된 그대로(지연·미지원도 그대로). 세 번째 줄은 사실이 있든 없든 지연이든 `{ status: "locked" }`만 보내고 화면은 `Price facts in Plus`. 그 줄의 확인 시각·출처도 카드 하단에서 빠진다
 - 판단은 `exposeCards`(`src/server/exposure.ts`) 한 곳이고, `/cards` 페이지가 컴포넌트로 넘기기 전에 부른다. 그래서 잠긴 줄의 글자·상태는 RSC 페이로드와 HTML에 아예 없다. 플랜은 세션 유저 id로 읽은 `user_profile.plan`(`getMyStocks`)
 - 화면 모델은 허용한 키만 옮긴다(`tests/exposure.test.tsx` 화이트리스트). 방향 의견 필드는 없다(ADR-0001)
-- 발행 중단 플래그는 DB 컬럼이 아직 없어 #16에서 한다
+- 발행 중단(`stock_card.publish_suspended = true`, #16)인 카드는 `exposeCards`가 모든 viewer에서 뺀다(읽기 쿼리는 거르지 않는다). 내 종목이면 그 자리는 카드 없음과 같다(`Summary arrives tomorrow morning`). 켜는 법은 `backend/README.md`
+- 등락률 옆 라벨은 `previous_trading_day`를 포맷한 종가 날짜(`Thu 10/15 close`, #16). 값이 없는 옛 카드는 `prev close`. 웹은 달력을 계산하지 않는다
 
 
 ```bash

@@ -1,7 +1,8 @@
 """카드 저장소. 파이프라인은 DB를 이 모듈로만 만진다. 줄(CardLine) ↔ 컬럼 변환도 여기서만."""
 
-from collections.abc import Iterable
-from datetime import date
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager
+from datetime import date, datetime
 
 import psycopg
 from psycopg.conninfo import conninfo_to_dict
@@ -36,6 +37,7 @@ CARD_COLUMNS = (
     *(f"{line}_{attr}" for line in LINES for attr in LINE_ATTRS),
     "leverage_tag",
     "news_line_accession",
+    "previous_trading_day",  # publish_suspended는 넣지 않는다: 재실행이 사람이 켠 발행 중단을 덮지 않게
 )
 _UPSERT_CARD = (
     f"insert into public.stock_card ({', '.join(CARD_COLUMNS)}) values ({', '.join(['%s'] * len(CARD_COLUMNS))})"
@@ -43,6 +45,13 @@ _UPSERT_CARD = (
     + ", ".join(f"{c} = excluded.{c}" for c in CARD_COLUMNS[2:])
     + ", updated_at = now()"
 )
+
+
+LOCK_CLASS = 16  # advisory lock 첫 키 = 거래일 실행 잠금. 둘째 키 = YYYYMMDD (pg_locks의 classid·objid로 보인다)
+
+
+class RunLocked(Exception):
+    """같은 거래일 실행이 잠금을 쥐고 있다. 메시지에는 날짜만."""
 
 
 class DBConnectError(psycopg.OperationalError):
@@ -127,6 +136,46 @@ class CardStore:
     def __init__(self, conn: psycopg.Connection) -> None:
         self._conn = conn
 
+    @contextmanager
+    def run_lock(self, trading_day: date) -> Iterator[None]:
+        """세션 advisory lock(LOCK_CLASS, YYYYMMDD). 못 잡으면 기다리지 않고 RunLocked. 나갈 때 푼다.
+        프로세스가 죽으면 연결이 끊기며 DB가 푼다. 연결이 이미 끊겨 unlock이 실패해도 원래 예외를 가리지 않는다."""
+        key = (LOCK_CLASS, int(trading_day.strftime("%Y%m%d")))
+        if not self._conn.execute("select pg_try_advisory_lock(%s::int, %s::int)", key).fetchone()[0]:
+            raise RunLocked(str(trading_day))
+        try:
+            yield
+        finally:
+            try:
+                self._conn.execute("select pg_advisory_unlock(%s::int, %s::int)", key)
+            except psycopg.Error:
+                pass  # 연결이 끊겼으면 잠금도 이미 풀렸다
+
+    def start_run(self, trading_day: date) -> tuple[int, datetime | None]:
+        """run_lock 안에서. pipeline_run 행을 넣고 (id, resume_since).
+        resume_since = 이 거래일의 마지막 완료 실행(없으면 -infinity)보다 뒤에 시작한 미완료 실행들의 가장 이른 started_at. 없으면 None."""
+        [since] = self._conn.execute(
+            "select min(started_at) from public.pipeline_run where trading_day = %(day)s and finished_at is null"
+            " and started_at > coalesce((select max(started_at) from public.pipeline_run"
+            "  where trading_day = %(day)s and finished_at is not null), '-infinity')",
+            {"day": trading_day},
+        ).fetchone()
+        [run_id] = self._conn.execute(
+            "insert into public.pipeline_run (trading_day) values (%s) returning id", (trading_day,)
+        ).fetchone()
+        return run_id, since and since.astimezone(ET)
+
+    def finish_run(self, run_id: int) -> None:
+        self._conn.execute("update public.pipeline_run set finished_at = now() where id = %s", (run_id,))
+
+    def save_card(self, card: StockCard, holds: Sequence[HoldItem] | None) -> None:
+        """한 트랜잭션: upsert_card(card) 다음, holds가 None이 아니면 replace_hold_items(card.ticker, card.trading_day, holds).
+        None = 이번에 첫 번째 줄을 만들지 않았다(재발행 유지, CIK 실패 시 이전 값 유지) → 그 카드의 보류함 행을 건드리지 않는다."""
+        with self._conn.transaction():
+            self.upsert_card(card)
+            if holds is not None:
+                self.replace_hold_items(card.ticker, card.trading_day, holds)
+
     def upsert_coverage(self, rows: Iterable[Coverage]) -> None:
         with self._conn.cursor() as cur:
             cur.executemany(
@@ -148,6 +197,7 @@ class CardStore:
             *_line_values(card.price_fact_line),
             card.leverage_tag,
             card.news_line_accession,
+            card.previous_trading_day,
         )
         self._conn.execute(_UPSERT_CARD, values)
 
@@ -205,8 +255,8 @@ class CardStore:
                 [(r.name, r.released_at, trading_day, r.raw) for r in releases],
             )
 
-    def replace_classifications(self, trading_day: date, rows: Iterable[Classification]) -> None:
-        """한 트랜잭션: trading_day 공시(처음 받은 거래일 기준)의 분류 행을 지우고 rows를 넣는다."""
+    def replace_classifications(self, trading_day: date, tickers: Iterable[str], rows: Iterable[Classification]) -> None:
+        """한 트랜잭션: trading_day 공시(처음 받은 거래일 기준)의 분류 행 중 ticker ∈ tickers인 것만 지우고 rows를 넣는다."""
         values = [
             (r.accession, r.ticker, r.kind and r.kind.value, r.importance, r.is_opinion, r.unclassified and r.unclassified.value)
             for r in rows
@@ -214,8 +264,8 @@ class CardStore:
         with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
                 "delete from public.filing_classification c using public.sec_filing f"
-                " where f.accession = c.accession and f.trading_day = %s",
-                (trading_day,),
+                " where f.accession = c.accession and f.trading_day = %s and c.ticker = any(%s)",
+                (trading_day, list(tickers)),
             )
             cur.executemany(
                 "insert into public.filing_classification (accession, ticker, kind, importance, is_opinion, unclassified)"
@@ -271,6 +321,7 @@ class CardStore:
                 leverage_tag=r["leverage_tag"],
                 updated_at=r["updated_at"].astimezone(ET),
                 news_line_accession=r["news_line_accession"],
+                previous_trading_day=r["previous_trading_day"],
             )
             for r in rows
         ]
@@ -286,8 +337,8 @@ class CardStore:
         )
         return {ticker: (text, accession) for ticker, text, accession in rows}
 
-    def replace_hold_items(self, trading_day: date, rows: Iterable[HoldItem]) -> None:
-        """한 트랜잭션: trading_day의 pending이면서 amended_filing이 아닌 행을 지우고 rows를 넣는다.
+    def replace_hold_items(self, ticker: str, trading_day: date, rows: Iterable[HoldItem]) -> None:
+        """한 트랜잭션: (ticker, trading_day)의 pending이면서 amended_filing이 아닌 행을 지우고 rows를 넣는다.
         on conflict do nothing: 사람이 손댄 행·정정 행과 키가 겹치면 그 행을 그대로 둔다. 같은 입력이면 같은 행."""
         values = [
             (r.ticker, r.trading_day, r.accession, r.stage.value, r.draft_text, list(r.rules), r.replacement_text,
@@ -296,8 +347,9 @@ class CardStore:
         ]
         with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
-                "delete from public.hold_queue where trading_day = %s and state = 'pending' and stage <> 'amended_filing'",
-                (trading_day,),
+                "delete from public.hold_queue"
+                " where ticker = %s and trading_day = %s and state = 'pending' and stage <> 'amended_filing'",
+                (ticker, trading_day),
             )
             cur.executemany(
                 "insert into public.hold_queue"

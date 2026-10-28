@@ -22,7 +22,7 @@ vi.mock("next/font/google", () => ({ Inter: vi.fn(() => ({ variable: "font-sans-
 const card = (over: Partial<CardView> = {}): CardView => ({
   ticker: "AAPL",
   name: "Apple Inc.",
-  change: { text: "+1.3%", tone: "up" },
+  change: { text: "+1.3%", tone: "up", label: "Thu 10/15 close" },
   lines: [
     { text: "Apple reported Q3 results (SEC filing)", status: "checked_found" },
     { text: "Earnings Thu 10/29 after close (D-13)", status: "checked_found" },
@@ -65,7 +65,7 @@ describe("StockCard", () => {
     const html = renderToStaticMarkup(
       <StockCard
         card={card({
-          change: { text: "−2.0%", tone: "down" },
+          change: { text: "−2.0%", tone: "down", label: "Thu 10/15 close" },
           lines: [
             { text: "No new SEC filings found", status: "checked_none" },
             { text: "Update delayed", status: "delayed" },
@@ -84,9 +84,9 @@ describe("StockCard", () => {
 
   test("등락률 지연·미지원, 보합", () => {
     for (const c of [
-      { text: "Update delayed", tone: "delayed" },
-      { text: "Not covered yet", tone: "unsupported" },
-      { text: "0.0%", tone: "flat" },
+      { text: "Update delayed", tone: "delayed", label: "Thu 10/15 close" },
+      { text: "Not covered yet", tone: "unsupported", label: "Thu 10/15 close" },
+      { text: "0.0%", tone: "flat", label: "Thu 10/15 close" },
     ] as const) {
       expect(change(renderToStaticMarkup(<StockCard card={card({ change: c })} />))).toEqual([c.tone, c.text]);
     }
@@ -94,14 +94,14 @@ describe("StockCard", () => {
 
   test("등락률 색: 상승 초록(up)·하락 빨강(down)·보합 중립, 지연·미지원은 흐림", () => {
     const tone = (c: CardView["change"]) => classOf(renderToStaticMarkup(<StockCard card={card({ change: c })} />), 'data-tone="' + c.tone);
-    expect(tone({ text: "+1.3%", tone: "up" })).toContain("text-up");
-    expect(tone({ text: "\u22121.3%", tone: "down" })).toContain("text-down");
-    const flat = tone({ text: "0.0%", tone: "flat" });
+    expect(tone({ text: "+1.3%", tone: "up", label: "Thu 10/15 close" })).toContain("text-up");
+    expect(tone({ text: "\u22121.3%", tone: "down", label: "Thu 10/15 close" })).toContain("text-down");
+    const flat = tone({ text: "0.0%", tone: "flat", label: "Thu 10/15 close" });
     expect(flat).toContain("text-foreground");
     expect(flat).not.toContain("text-up");
     expect(flat).not.toContain("text-down");
-    expect(tone({ text: "Update delayed", tone: "delayed" })).toContain("text-muted");
-    expect(tone({ text: "Not covered yet", tone: "unsupported" })).toContain("text-muted");
+    expect(tone({ text: "Update delayed", tone: "delayed", label: "Thu 10/15 close" })).toContain("text-muted");
+    expect(tone({ text: "Not covered yet", tone: "unsupported", label: "Thu 10/15 close" })).toContain("text-muted");
   });
 
   test("줄 색: 확인함·있음만 본문색, 나머지는 흐림", () => {
@@ -133,14 +133,16 @@ describe("StockCard", () => {
     expect(classOf(html, 'data-status="locked')).toContain("text-muted");
   });
 
-  test("등락률 옆 기준 라벨 prev close (값이 없어도, #27 시안)", () => {
+  test("등락률 옆 기준 라벨은 화면 모델의 label 그대로: 종가 날짜(#16) 또는 옛 카드의 prev close, 값이 없어도(#27 시안)", () => {
     for (const c of [
-      { text: "+1.3%", tone: "up" },
-      { text: "Update delayed", tone: "delayed" },
+      { text: "+1.3%", tone: "up", label: "Thu 10/15 close" },
+      { text: "Update delayed", tone: "delayed", label: "Thu 10/15 close" },
+      { text: "+1.3%", tone: "up", label: "prev close" },
     ] as const) {
       const html = renderToStaticMarkup(<StockCard card={card({ change: c })} />);
-      expect(text(html)).toContain(`${c.text}prev close`); // 태그를 지우면 값 바로 뒤에 라벨
+      expect(text(html)).toContain(`${c.text}${c.label}`); // 태그를 지우면 값 바로 뒤에 라벨
     }
+    expect(text(renderToStaticMarkup(<StockCard card={card()} />))).not.toContain("prev close");
   });
 
   test("레버리지 태그는 있을 때만", () => {

@@ -10,6 +10,8 @@ const COLUMNS = [
   "ticker",
   "change_pct",
   "change_status",
+  "previous_trading_day",
+  "publish_suspended",
   ...LINES.flatMap((l) => [`${l}_text`, `${l}_status`, `${l}_checked_at`, `${l}_source_scope`]),
   "leverage_tag",
   "coverage(name)",
@@ -21,6 +23,8 @@ type Row = {
   ticker: string;
   change_pct: number | null;
   change_status: LineStatus;
+  previous_trading_day: string | null;
+  publish_suspended: boolean;
   leverage_tag: string | null;
   coverage: { name: string };
 } & Record<`${Line}_status`, LineStatus | null> &
@@ -34,6 +38,7 @@ export type StoredCard = {
   change: ChangeView;
   lines: (StoredLine | null)[]; // 항상 3개. null = 그 줄이 없음(축소판의 첫 번째 줄 등)
   leverageTag: string | null;
+  suspended: boolean; // 발행 중단(#16). 읽기에서 거르지 않는다: 노출 판단은 exposeCards 한 곳
 };
 
 /** 가장 최근 거래일의 카드 전부, 종목순. 카드가 없으면 tradingDay null. 줄 노출 판단 전이다(exposeCards) */
@@ -71,12 +76,13 @@ function toStoredCard(r: Row): StoredCard {
   return {
     ticker: r.ticker,
     name: r.coverage.name,
-    change: changeView(r.change_pct, r.change_status),
+    change: changeView(r.change_pct, r.change_status, r.previous_trading_day),
     lines: LINES.map((l) => {
       const status = r[`${l}_status`];
       // DB 제약(*_line_complete): 상태가 있으면 문구·확인 시각도 있다
       return status && { text: r[`${l}_text`]!, status, checked_at: r[`${l}_checked_at`]!, source_scope: r[`${l}_source_scope`] };
     }),
     leverageTag: r.leverage_tag,
+    suspended: r.publish_suspended,
   };
 }

@@ -6,6 +6,7 @@
   "prices": {
     "AAPL": [
       {"day": "2026-10-09", "open": 100.00, "high": 100.00, "low": 100.00, "close": 100.00, "volume": 50000000, "adjusted": true},
+      {"day": "2026-10-12", "open": 125.00, "high": 125.00, "low": 125.00, "close": 125.00, "volume": 50000000, "adjusted": true},
       {"day": "2026-10-13", "open": 150.00, "high": 150.00, "low": 150.00, "close": 150.00, "volume": 50000000, "adjusted": true},
       {"day": "2026-10-14", "open": 199.00, "high": 201.00, "low": 198.50, "close": 200.00, "volume": 50000000, "adjusted": true},
       {"day": "2026-10-15", "open": 200.50, "high": 203.00, "low": 200.10, "close": 202.50, "volume": 52000000, "adjusted": true}

@@ -37,6 +37,6 @@ def run_production(
 
 
 def run_failed(summary: RunSummary) -> bool:
-    """워크플로를 실패로 끝낼 실행: 재시도 뒤에도 실패한 호출(401·403 포함)이 있거나 카드 0장.
+    """워크플로를 실패로 끝낼 실행: 재시도 뒤에도 실패한 호출(401·403 포함)이 있거나 카드 0장(이어 하기로 건너뛴 카드도 0장).
     미연결 출처는 실패를 남기지 않는다. 429 뒤 성공·건너뛴 분류 묶음·보류함은 실패가 아니다."""
-    return bool(summary.failures) or summary.cards_saved == 0
+    return bool(summary.failures) or summary.cards_saved + len(summary.resumed) == 0

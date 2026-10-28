@@ -48,7 +48,9 @@ from m30.pipeline.lines import (
 )
 from m30.pipeline.newsline import NewsDraft, write_news_drafts
 from m30.pipeline.review import NewsReview, review_drafts
+from m30.trading_day import is_trading_day, previous_trading_day
 
+CHECKED = (LineStatus.CHECKED_FOUND, LineStatus.CHECKED_NONE)
 LOOKBACK = timedelta(weeks=53)  # 52주 이력 + 52주 전 날이 휴장일이어도 거래일이 들어가는 1주
 
 
@@ -58,6 +60,7 @@ class RunSummary:
     access_denied: tuple[Source, ...]  # 401·403이 난 출처. 요약 맨 위에 표시
     rate_limited: tuple[Source, ...]  # 429를 낸 출처(다시 시도로 성공했어도). access_denied 바로 아래 표시
     cards_saved: int
+    resumed: tuple[str, ...]  # 죽은 앞 실행이 저장해서 이번에 건너뛴 카드의 티커 (오름차순)
     change_delayed: tuple[str, ...]  # 등락률을 계산 못 해 delayed로 저장한 티커 (오름차순)
     failures: tuple[SourceFailure, ...]  # 재시도 뒤에도 실패한 출처·대상
     filings_collected: int  # 이번 거래일 공시 수(중복 제거 후)
@@ -96,10 +99,26 @@ class MorningPipeline:
         if isinstance(trading_day, datetime):
             # datetime은 date의 하위 클래스라 그대로 두면 시각이 거래일로 쓰인다
             raise TypeError("trading_day must be a date, not a datetime")
+        if not is_trading_day(trading_day):  # 표 밖의 해면 CalendarError(ValueError). 둘 다 DB 전
+            raise ValueError(f"{trading_day} is not a trading day")
+        with self._store.run_lock(trading_day):  # 출처 호출·LLM·DB 쓰기는 전부 잠금 뒤
+            return self._run(trading_day)
+
+    def _run(self, trading_day: date) -> RunSummary:
+        run_id, resume_since = self._store.start_run(trading_day)
+        stored = {c.ticker: c for c in self._store.list_cards(trading_day)}  # 이번 실행 전 카드(티커 순)
+        # 이어 하기: 끝나지 않은 앞 실행이 저장한 정상 카드는 건너뛴다(축소판은 다시 만든다). 앞 실행이 끝까지 갔으면 전부 다시 만든다
+        resumed = tuple(
+            t for t, c in stored.items()
+            if resume_since is not None and c.status is CardStatus.NORMAL and c.updated_at >= resume_since
+        )
         checked_at = datetime.now(ET)  # 이 실행의 모든 줄이 같은 확인 시각을 쓴다
         calls = SourceCalls(self._sleep)
-        targets = self._store.list_generation_targets(trading_day)  # 활성 종목 ∪ 기본 종목
+        # 활성 종목 ∪ 기본 종목. 건너뛴 종목은 공시 수집·분류·초안·검수·저장을 전부 하지 않는다
+        targets = [c for c in self._store.list_generation_targets(trading_day) if c.ticker not in resumed]
         items, failed_ciks = self._collect_filings(targets, trading_day, calls)
+        # 카드 루프 전: 카드가 하나라도 저장됐으면 정정 공시 행은 이미 있다(이어 하기가 그 CIK를 다시 받지 않아도)
+        self._store.flag_amended_cards(trading_day, [i.filing for i in items if i.filing.form is FilingForm.EIGHT_K_A])
         self._collect_indicators(trading_day, calls)
         budget = LLMBudget(self._llm, len(targets) * 4 + batch_count(items))
 
@@ -108,7 +127,9 @@ class MorningPipeline:
             return calls.call(Source.LLM, subject, lambda: budget.complete(request), lambda text: isinstance(text, str))
 
         outcomes, skipped = classify(items, trading_day, lambda n, request: send(str(n), request))
-        self._store.replace_classifications(trading_day, _classification_rows(items, outcomes))
+        # 이번에 공시를 받은 종목의 분류만 바꾼다(건너뛴 종목·수집 실패 CIK의 지난 분류 행은 그대로)
+        handled = [c.ticker for c in targets if c.cik not in failed_ciks]
+        self._store.replace_classifications(trading_day, handled, _classification_rows(items, outcomes))
         news = {cov.ticker: _ticker_news(cov, failed_ciks, items, outcomes) for cov in targets}
         by_accession = {i.filing.accession: i for i in items}
         drafts = write_news_drafts(news, by_accession, trading_day, send)
@@ -129,16 +150,26 @@ class MorningPipeline:
             usable = bars_usable(bars, trading_day)  # 지난 카드 값은 읽지 않는다. 그날 받은 봉으로만
             pct = change_pct(bars) if usable else None
             price_fact = price_fact_line(bars, checked_at) if usable else delayed_line(PRICE_SCOPE, checked_at)
-            # 첫 번째 줄의 출처는 셋뿐: 사람이 재발행한 줄, 검수 결과(통과한 줄·대체 줄), LLM 없는 데이터 상태 문구
+            # 첫 번째 줄의 출처는 넷뿐: 사람이 재발행한 줄, 앞 실행이 확인한 줄(CIK 실패), 검수 결과(통과한 줄·대체 줄), 데이터 상태 문구
+            # holds: 이 카드의 보류함 행. None = 이번에 첫 번째 줄을 만들지 않았다 → 보류함 행을 건드리지 않는다
+            old = stored.get(cov.ticker)
             if cov.ticker in kept:
                 text, accession = kept[cov.ticker]
-                news_line = CardLine(text, LineStatus.CHECKED_FOUND, checked_at, NEWS_SCOPE)
+                news_line, holds = CardLine(text, LineStatus.CHECKED_FOUND, checked_at, NEWS_SCOPE), None
+            elif cov.cik in failed_ciks and old and old.news_line and old.news_line.status in CHECKED:
+                # 공시 기간은 고정이고 수집 실패는 새 정보가 아니다: 앞 실행이 확인한 줄(확인 시각 포함)을 그대로 둔다(D6)
+                news_line, accession, holds = old.news_line, old.news_line_accession, None
             elif cov.ticker in reviews:
-                accession = reviews[cov.ticker].accession
-                news_line = CardLine(reviews[cov.ticker].line, LineStatus.CHECKED_FOUND, checked_at, NEWS_SCOPE)
+                review = reviews[cov.ticker]
+                accession = review.accession
+                news_line = CardLine(review.line, LineStatus.CHECKED_FOUND, checked_at, NEWS_SCOPE)
+                # U1 = A: 대체 줄이 카드에 들어간 종목마다 보류함 행 하나
+                holds = [] if review.stage is None else [
+                    HoldItem(cov.ticker, trading_day, review.accession, review.stage, review.draft_text, review.rules, review.line)
+                ]
             else:
-                accession, news_line = None, news_template_line(news[cov.ticker], checked_at)
-            self._store.upsert_card(
+                accession, news_line, holds = None, news_template_line(news[cov.ticker], checked_at), []
+            self._store.save_card(
                 StockCard(
                     ticker=cov.ticker,
                     trading_day=trading_day,
@@ -150,23 +181,20 @@ class MorningPipeline:
                     price_fact_line=price_fact,
                     leverage_tag=leverage_tag(cov.leverage),
                     news_line_accession=accession,
-                )
+                    previous_trading_day=previous_trading_day(trading_day),
+                ),
+                holds,  # 카드와 한 트랜잭션: 중간에 죽어도 카드만 남고 보류함 행이 빠지는 일이 없다
             )
             saved += 1
             if pct is None:
                 delayed.append(cov.ticker)
-        # 카드를 먼저 쓴다(외래 키). U1 = A: 대체 줄이 카드에 들어간 종목마다 보류함 행 하나
-        self._store.replace_hold_items(trading_day, [
-            HoldItem(t, trading_day, r.accession, r.stage, r.draft_text, r.rules, r.line)
-            for t, r in reviews.items()
-            if r.stage is not None and t not in kept
-        ])
-        self._store.flag_amended_cards(trading_day, [i.filing for i in items if i.filing.form is FilingForm.EIGHT_K_A])
+        self._store.finish_run(run_id)
         return RunSummary(
             trading_day=trading_day,
             access_denied=calls.access_denied,
             rate_limited=calls.rate_limited,
             cards_saved=saved,
+            resumed=resumed,
             change_delayed=tuple(delayed),
             failures=calls.failures,
             filings_collected=len(items),

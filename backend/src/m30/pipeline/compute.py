@@ -4,6 +4,7 @@ import re
 from collections.abc import Sequence
 from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
+from itertools import pairwise
 
 from m30.adapters.prices import DailyBar
 from m30.trading_day import previous_trading_day
@@ -17,13 +18,13 @@ def round_pct(value: Decimal) -> Decimal:
 
 def bars_usable(bars: Sequence[DailyBar], trading_day: date) -> bool:
     """등락률·세 번째 줄을 계산해도 되는 봉인가. False면 둘 다 지연.
-    True = 봉 2개 이상, 전부 분할 조정가, 전부 open·high·low·close > 0,
-           마지막 봉 = 직전 거래일, 그 앞 봉 = 마지막 봉의 직전 거래일(아니면 전일 종가 누락)."""
+    True = 봉 2개 이상, 전부 분할 조정가, 전부 open·high·low·close > 0, 마지막 봉 = 직전 거래일,
+           이웃한 봉은 모두 이웃한 거래일(빠진 거래일·휴장일 봉이 있으면 False, #4 R-8). 첫 봉보다 앞은 보지 않는다."""
     return (
         len(bars) >= 2
         and all(b.adjusted and min(b.open, b.high, b.low, b.close) > 0 for b in bars)
         and bars[-1].day == previous_trading_day(trading_day)
-        and bars[-2].day == previous_trading_day(bars[-1].day)
+        and all(a.day == previous_trading_day(b.day) for a, b in pairwise(bars))
     )
 
 

@@ -15,7 +15,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: morning-pipeline  # GitHub 실행은 한 번에 하나. DB 거래일 잠금은 #16
+  group: morning-pipeline  # GitHub 실행은 한 번에 하나. 같은 거래일 실행은 DB 잠금(#16)이 하나만 돌린다
   cancel-in-progress: false
 
 jobs:

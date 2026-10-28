@@ -107,6 +107,7 @@ class StockCard:
     leverage_tag: str | None = None  # 예: "3x · resets daily". None = 레버리지 상품 아님
     updated_at: datetime | None = None  # DB가 채움. 저장소에서 읽은 카드에만 있음 (ET)
     news_line_accession: str | None = None  # 첫 번째 줄이 쓴 공시(통과·대체·재발행 줄). 데이터 상태 문구면 None
+    previous_trading_day: date | None = None  # 등락률·세 번째 줄의 종가 날짜. 파이프라인은 항상 채운다. None = #16 전 카드
 
 
 class HoldStage(StrEnum):

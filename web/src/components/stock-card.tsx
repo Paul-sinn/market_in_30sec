@@ -1,5 +1,5 @@
 import type { CardView, ChangeView, LineView } from "@/lib/card-view";
-import { PREV_CLOSE, PRICE_FACTS_IN_PLUS, SUMMARY_TOMORROW } from "@/lib/copy";
+import { PRICE_FACTS_IN_PLUS, SUMMARY_TOMORROW } from "@/lib/copy";
 
 // 상태는 표시 방식에만 쓴다(색). 문구는 card.lines의 text 그대로. 모양은 사용자 시안의 샘플 카드(#27)
 const CHANGE_TONE: Record<ChangeView["tone"], string> = {
@@ -28,7 +28,7 @@ export function StockCard({ card }: { card: CardView }) {
           <span data-tone={card.change.tone} className={`tabular-nums ${CHANGE_TONE[card.change.tone]}`}>
             {card.change.text}
           </span>
-          <span className="text-xs text-muted">{PREV_CLOSE}</span>
+          <span className="text-xs whitespace-nowrap text-muted">{card.change.label}</span>
         </p>
       </header>
       {card.leverageTag && (

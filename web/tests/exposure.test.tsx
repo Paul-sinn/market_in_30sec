@@ -29,13 +29,14 @@ const THIRD = {
 const stored = (third: StoredLine | null, over: Partial<StoredCard> = {}): StoredCard => ({
   ticker: "AAPL",
   name: "Apple Inc.",
-  change: { text: "+1.3%", tone: "up" },
+  change: { text: "+1.3%", tone: "up", label: "Thu 10/15 close" },
   lines: [
     line("Apple reported Q3 results (SEC filing)", "checked_found", "SEC filings"),
     line("No confirmed events found", "checked_none", "Earnings and dividend calendar"),
     third,
   ],
   leverageTag: null,
+  suspended: false,
   ...over,
 });
 
@@ -62,7 +63,7 @@ const FIRST_TWO = [
 const FREE: CardView = {
   ticker: "AAPL",
   name: "Apple Inc.",
-  change: { text: "+1.3%", tone: "up" },
+  change: { text: "+1.3%", tone: "up", label: "Thu 10/15 close" },
   lines: [...FIRST_TWO, { status: "locked" }],
   leverageTag: null,
   checked: "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar",
@@ -104,13 +105,13 @@ describe("exposeCards: 세 줄 전부는 Plus 유저의 내 종목 카드뿐", (
 
   test("데이터 상태(지연·미지원·축소판)와 레버리지 태그는 플랜과 관계없이 그대로", () => {
     const card = stored(THIRD["사실 있음"], {
-      change: { text: "Update delayed", tone: "delayed" },
+      change: { text: "Update delayed", tone: "delayed", label: "prev close" },
       lines: [null, line("Not covered yet", "unsupported", null), THIRD["사실 있음"]],
       leverageTag: "3x · resets daily",
     });
     for (const [who, viewer, full] of VIEWERS) {
       const [view] = exposeCards([card], viewer);
-      expect(view.change, who).toEqual({ text: "Update delayed", tone: "delayed" });
+      expect(view.change, who).toEqual({ text: "Update delayed", tone: "delayed", label: "prev close" });
       expect(view.lines.slice(0, 2), who).toEqual([
         { text: "Update delayed", status: "delayed" }, // 축소판의 첫 번째 줄
         { text: "Not covered yet", status: "unsupported" },
@@ -125,15 +126,50 @@ describe("exposeCards: 세 줄 전부는 Plus 유저의 내 종목 카드뿐", (
     const extra = {
       ...stored({ ...THIRD["사실 있음"], direction: "bullish" } as StoredLine),
       direction: "bullish",
-      change: { text: "+1.3%", tone: "up", rating: "buy" },
+      change: { text: "+1.3%", tone: "up", label: "Thu 10/15 close", rating: "buy" },
     } as StoredCard;
     for (const [who, viewer] of VIEWERS) {
       const [view] = exposeCards([extra], viewer);
       expect(Object.keys(view).sort(), who).toEqual(["change", "checked", "leverageTag", "lines", "name", "ticker"]);
-      expect(Object.keys(view.change).sort(), who).toEqual(["text", "tone"]);
+      expect(Object.keys(view.change).sort(), who).toEqual(["label", "text", "tone"]);
       for (const l of view.lines) expect(Object.keys(l).sort(), who).toEqual(l.status === "locked" ? ["status"] : ["status", "text"]);
       expect(JSON.stringify(view), who).not.toMatch(/bullish|buy/);
     }
+  });
+});
+
+describe("발행 중단(#16 D7): 데이터는 두고 화면에서 뺀다", () => {
+  const SUSPENDED = `canary-suspended-${randomUUID()}`;
+  const cards = [
+    stored(THIRD["사실 있음"]),
+    stored(line(SUSPENDED, "checked_found", "Daily prices"), { ticker: "MSFT", name: "Microsoft", suspended: true }),
+  ];
+
+  for (const [who, viewer] of [...VIEWERS, ["Plus 내 종목이 발행 중단", my("plus", "MSFT"), true] as const]) {
+    test(`${who}: 발행 중단 카드는 결과에 없고 나머지는 그대로`, () => {
+      const views = exposeCards(cards, viewer);
+      expect(views.map((v) => v.ticker)).toEqual(["AAPL"]);
+      expect(JSON.stringify(views)).not.toContain(SUSPENDED);
+    });
+  }
+
+  test("그날 카드가 전부 발행 중단이면 0장", () => {
+    expect(exposeCards([stored(THIRD["사실 있음"], { suspended: true })], my("plus", "AAPL"))).toEqual([]);
+  });
+
+  test("내 종목이 발행 중단이면 그 자리는 카드 없음과 같다(Summary arrives tomorrow morning), 둘러보기에도 없다", () => {
+    const viewer: MyStocks = { plan: "plus", stocks: [{ ticker: "MSFT", name: "Microsoft", locked: false }], swapsLeft: null };
+    const coverage = [
+      { ticker: "AAPL", name: "Apple Inc." },
+      { ticker: "MSFT", name: "Microsoft" },
+    ];
+    const data = { tradingDay: "Fri, Oct 16, 2026", cards: exposeCards(cards, viewer) };
+    const mine = myDashboardView(data.cards, coverage, viewer, undefined);
+    expect(mine.mine).toEqual([{ ticker: "MSFT", name: "Microsoft", card: null }]);
+    expect(mine.browse.map((c) => c.ticker)).toEqual(["AAPL"]);
+    const html = renderToStaticMarkup(<Dashboard data={data} mine={mine} />);
+    expect(html).toContain("Summary arrives tomorrow morning");
+    expect(html).not.toContain(SUSPENDED);
   });
 });
 

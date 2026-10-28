@@ -43,7 +43,7 @@ from m30.pipeline.newsline import (
     parse_news_reply,
 )
 from m30.pipeline.review import FACTCHECK_SYSTEM, FactLabel, mask_names, name_terms, numbers_from_source, parse_factcheck_reply
-from m30.trading_day import previous_trading_day
+from m30.trading_day import CALENDAR_YEARS, CalendarError, is_trading_day, previous_trading_day
 
 CHECKED = datetime(2026, 10, 16, 7, 30, tzinfo=ET)
 
@@ -170,6 +170,38 @@ def test_출처_범위는_미지원_줄에서만_비울_수_있다():
 )
 def test_직전_거래일은_주말을_건너뛴다(day, previous):
     assert previous_trading_day(date(2026, *day)) == date(2026, *previous)
+
+
+@pytest.mark.parametrize(
+    "day, trading",
+    [("2026-11-26", False), ("2026-11-27", True), ("2025-01-09", False), ("2026-12-24", True), ("2027-12-24", False),
+     ("2026-10-12", True), ("2026-10-17", False)],
+    ids=["추수감사절", "조기_마감일은_거래일", "임시_휴장", "크리스마스_이브_조기_마감", "토요일_크리스마스_대체_휴장",
+         "콜럼버스의_날은_거래일", "토요일"],
+)
+def test_거래일은_평일이고_NYSE_휴장일이_아닌_날이다(day, trading):
+    assert is_trading_day(date.fromisoformat(day)) is trading
+
+
+@pytest.mark.parametrize(
+    "day, previous",
+    [("2026-07-06", "2026-07-02"), ("2026-11-27", "2026-11-25"), ("2026-11-30", "2026-11-27"), ("2025-01-10", "2025-01-08")],
+    ids=["금요일_대체_휴장_연휴", "추수감사절_다음_날", "조기_마감일이_직전_거래일", "임시_휴장"],
+)
+def test_직전_거래일은_휴장일을_건너뛴다(day, previous):
+    assert previous_trading_day(date.fromisoformat(day)) == date.fromisoformat(previous)
+
+
+@pytest.mark.parametrize("call, day", [(is_trading_day, "2029-01-02"), (is_trading_day, "2024-12-31"),
+                                       (previous_trading_day, "2025-01-02")],
+                         ids=["표_뒤의_해", "표_앞의_해", "거쳐_가는_날이_표_밖"])
+def test_달력_표_밖의_해는_휴장일을_모르므로_CalendarError다(call, day):
+    with pytest.raises(CalendarError):
+        call(date.fromisoformat(day))
+
+
+def test_거래일_달력은_내년_말까지_있다():
+    assert date.today().year + 1 in CALENDAR_YEARS  # 실패하면 NYSE가 발표한 다음 해 휴장일을 trading_day.py 표에 넣는다
 
 
 def ohlc(day, close):

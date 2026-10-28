@@ -2,6 +2,7 @@
 입구 1: run_production. SEC는 기록용 get(test_edgar.RecordedGet), LLM은 부르면 실패하는 객체.
 입구 3: 운영 CLI를 하위 프로세스(production_probe)로 돌려 exit 코드·출력을 본다. 바꾸는 것은 전송 층 둘(SEC get·LLM)뿐."""
 
+import dataclasses
 import os
 import subprocess
 import sys
@@ -14,6 +15,7 @@ import pytest
 from m30.adapters import AccessDeniedError, Source, SourceError, TransientSourceError
 from m30.adapters.edgar import SUBMISSIONS_URL, TICKERS_URL
 from m30.adapters.unavailable import NoPriceSource
+from m30.db.store import CardStore, connect
 from m30.experiment import EXPERIMENT_DEFAULT_TICKERS
 from m30.models import LineStatus
 from m30.pipeline.lines import NEWS_SCOPE, NO_FILINGS, NOT_COVERED, PRICE_SCOPE, UPDATE_DELAYED
@@ -112,6 +114,13 @@ def test_첫_실행에서_SEC_티커_목록을_못_받으면_카드_0장이라_�
     assert get.urls == [TICKERS_URL]  # 다시 시도하지 않는다
 
 
+def test_죽은_앞_실행이_카드를_모두_저장했으면_이어_한_실행은_카드_0장이어도_실패가_아니다(store):
+    summary, _ = run_production(store, FRI, get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
+
+    assert run_failed(dataclasses.replace(summary, cards_saved=0, resumed=("AAPL",))) is False
+    assert run_failed(dataclasses.replace(summary, cards_saved=0, resumed=())) is True
+
+
 def test_SEC_티커_목록을_못_받으면_지난_CIK로_카드를_만들고_실패로_치지_않는다(store):
     run_production(store, FRI, get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
 
@@ -160,7 +169,7 @@ def run_probe(settings, situation, tiingo_key=None, extra=()):
 @pytest.mark.parametrize(
     "situation, exit_code, lines",
     [
-        ("quiet", 0, ["2026-10-16 cards_saved=15 ", "coverage: refreshed", "prices=none"]),
+        ("quiet", 0, ["2026-10-16 cards_saved=15 resumed=- ", "coverage: refreshed", "prices=none"]),
         ("denied", 1, ["ACCESS DENIED (not retried): sec_filings", "cards_saved=15", "coverage: refreshed"]),
         ("no_tickers", 1, ["cards_saved=0", "coverage: NOT REFRESHED (sec ticker list failed), stored rows used"]),
     ],
@@ -194,7 +203,7 @@ def test_운영_실행_중_예상_못_한_예외는_메시지에_키가_있어�
 @pytest.mark.parametrize(
     "situation, exit_code, lines",
     [
-        ("tiingo_quiet", 0, ["2026-10-16 cards_saved=15 change_delayed=-", "prices=tiingo"]),
+        ("tiingo_quiet", 0, ["2026-10-16 cards_saved=15 resumed=- change_delayed=-", "prices=tiingo"]),
         # 응답 오류(주소·사유·본문)에 받은 Authorization 값을 그대로 넣어도 출력에는 출처·티커·사유 코드만
         ("tiingo_denied", 1, ["ACCESS DENIED (not retried): prices", "failed: prices/AAPL=access_denied", "prices=tiingo"]),
     ],
@@ -206,6 +215,14 @@ def test_운영_CLI는_TIINGO_API_KEY가_있으면_Tiingo_시세를_쓰고_토�
     assert code == exit_code
     for line in lines:
         assert line in out, line
+
+
+def test_운영_CLI는_같은_거래일_실행이_돌고_있으면_LOCKED_한_줄만_찍고_1로_끝난다(settings, admin):
+    with connect(settings) as conn, CardStore(conn).run_lock(FRI):
+        code, out = run_probe(settings, "quiet")
+
+    assert code == 1
+    assert out == "LOCKED: 2026-10-16 같은 거래일 실행이 이미 돌고 있어 종료합니다\nfake_modules=[]\n"  # RUN FAILED 아님
 
 
 def test_운영_CLI는_TIINGO_API_KEY가_한_줄_ASCII가_아니면_DB에_붙기_전에_변수_이름만_찍고_2로_끝난다(settings, admin):
