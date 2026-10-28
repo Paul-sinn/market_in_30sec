@@ -46,12 +46,14 @@ npm run dev                               # http://localhost:3000(랜딩), /card
 
 ## 배포 보호 (#25)
 
-`src/proxy.ts`가 모든 요청(정적 파일 포함) 앞에서 HTTP Basic Auth를 확인한다. 아이디·비밀번호는 서버 환경 변수 `DASHBOARD_USER`·`DASHBOARD_PASSWORD`에서 요청 때마다 읽는다(빌드에 박히지 않는다). 둘 중 하나라도 없거나 비면 맞는 값을 보내도 전부 401이다(닫힌 쪽). 401 응답에는 `WWW-Authenticate: Basic realm="market_in_30sec"`와 `Authentication required`만 있고 비밀값·환경 변수 이름은 없다.
+`src/proxy.ts`가 모든 요청(정적 파일 포함) 앞에서 HTTP Basic Auth를 확인한다. 아이디·비밀번호는 서버 환경 변수 `DASHBOARD_USER`·`DASHBOARD_PASSWORD`에서 요청 때마다 읽는다(빌드에 박히지 않는다). 둘 중 하나라도 없거나 비면 맞는 값이나 쿠키를 보내도 전부 401이다(닫힌 쪽). 401 응답에는 `WWW-Authenticate: Basic realm="market_in_30sec"`와 `Authentication required`만 있고 비밀값·환경 변수 이름은 없다.
 
 - 로컬: 위 "로컬에서 띄우기"처럼 셸에서 `export`한다. `.env*` 파일을 만들지 않는다. `NEXT_PUBLIC_` 접두사를 붙이지 않는다(브라우저 번들에 들어간다).
 - 확인: `curl -s -o /dev/null -w '%{http_code}\n' http://localhost:3000/` → `401` (`/cards`도 같다).
 - **Vercel(사용자 조치)**: 프로젝트 Settings → Environment Variables에 `DASHBOARD_USER`·`DASHBOARD_PASSWORD`를 **Sensitive**로, Production·Preview 둘 다에 **사용자가 직접** 넣는다(채팅·레포·로그에 값을 남기지 않는다). 값을 넣거나 바꾼 뒤에는 재배포해야 반영된다. 넣기 전 배포는 전부 401이라 공개되지 않는다.
-- Basic Auth는 HTTPS 위에서만 안전하다(Vercel 도메인은 HTTPS). 로그아웃 버튼은 없다. 브라우저를 닫거나 비밀번호를 바꾸면 끊긴다.
+- **기기당 한 번 로그인, 1년 기억**: Basic 로그인에 성공하면 `m30_auth` 쿠키(`HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=31536000`)를 심고, 이 쿠키가 있으면 로그인 창 없이 통과한다. 만료는 처음 로그인 뒤 1년 고정이다(쿠키로 들어온 요청은 쿠키를 다시 심지 않는다). 쿠키 값은 `DASHBOARD_PASSWORD`·`DASHBOARD_USER`에서 HKDF-SHA256(HMAC 기반)으로 만든 값이라 아이디·비밀번호가 들어 있지 않고, 따로 둘 비밀값도 없다. 다만 쿠키를 훔치면 비밀번호를 오프라인으로 추측해 볼 수 있으니 `DASHBOARD_PASSWORD`는 긴 무작위 값(20자 이상)으로 둔다.
+- 로그아웃: 버튼은 없다. 모든 기기를 내보내려면 Vercel에서 `DASHBOARD_PASSWORD`를 바꾸고 재배포한다(이전 쿠키가 전부 무효가 된다). 한 기기만 내보내려면 그 브라우저에서 이 사이트 쿠키를 지운다.
+- Basic Auth와 쿠키는 HTTPS 위에서만 안전하다(Vercel 도메인은 HTTPS). 쿠키에 `Secure`가 붙어 있어 HTTP로는 보내지지 않는다.
 
 ## 검사
 
@@ -60,7 +62,7 @@ cd web && npm run lint && npm test && npm run build
 ```
 
 - `npm test`의 `tests/cards.db.test.ts`는 위 `eval` 줄의 환경 변수가 있어야 돌고, 로컬 주소(127.0.0.1·localhost)가 아니면 멈춘다. 2099-12-31 거래일과 `ZZW*` 테스트 티커만 넣고 끝나면 지운다(시드한 카드는 그대로).
-- `tests/proxy.test.ts`는 배포 보호(`/`·`/cards` 둘 다, 인증 없음·틀린 값·형식 깨짐·환경 변수 미설정 → 401, 맞는 값 → 통과, 응답에 비밀번호 없음, matcher로 빠지는 경로 없음)를 DB 없이 본다.
+- `tests/proxy.test.ts`는 배포 보호(`/`·`/cards` 둘 다, 인증 없음·틀린 값·형식 깨짐·환경 변수 미설정 → 401, 맞는 값 → 통과 + 쿠키, 맞는 쿠키 → 통과, 틀린 쿠키·비밀번호 바뀐 뒤 옛 쿠키 → 401, 응답·쿠키에 아이디·비밀번호 없음, matcher로 빠지는 경로 없음)를 DB 없이 본다.
 - DB 없이 도는 테스트만: `npx vitest run --exclude tests/cards.db.test.ts`
 - `tests/cards.read.test.ts`는 DB 없이 supabase-js 응답을 흉내 내 읽기 실패·1,000행 가드를 본다.
 - 번들 노출 검사: 가짜 canary 키(`SUPABASE_SERVICE_ROLE_KEY`·`DASHBOARD_PASSWORD`)로 빌드하고 `.next/static`에서 canary와 `supabase-js|postgrest`를 찾는다. 둘 다 0건이 아니면 실패(exit 1). 값은 출력하지 않는다.
