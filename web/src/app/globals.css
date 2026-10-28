@@ -76,8 +76,8 @@
     color-scheme: dark;
   }
 
-  /* 키보드 포커스: 모든 링크·버튼에 2px 외곽선. 흰 바탕(요금 섹션)에서는 focus-visible:outline-background로 덮어쓴다 */
-  :where(a, button):focus-visible {
+  /* 키보드 포커스: 모든 링크·버튼·펼침(summary)에 2px 외곽선. 흰 바탕(요금 섹션)에서는 focus-visible:outline-background로 덮어쓴다 */
+  :where(a, button, summary):focus-visible {
     outline: 2px solid var(--color-foreground);
     outline-offset: 2px;
   }

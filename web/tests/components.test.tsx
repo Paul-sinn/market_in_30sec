@@ -8,10 +8,13 @@ import ErrorPage from "@/app/cards/error";
 import CardsLayout from "@/app/cards/layout";
 import RootLayout from "@/app/layout";
 import Landing from "@/app/page";
+import { AuthControl } from "@/components/auth-control";
 import { Dashboard } from "@/components/dashboard";
 import { SiteFooter } from "@/components/site-footer";
 import { StockCard } from "@/components/stock-card";
-import type { CardView } from "@/lib/card-view";
+import { TimezoneField } from "@/components/timezone-field";
+import { myDashboardView, type CardView, type MyDashboardView } from "@/lib/card-view";
+import { SIGN_IN, SIGN_IN_FAILED, SIGN_OUT } from "@/lib/copy";
 
 // next/font/google은 빌드 때 글꼴을 받는다. 레이아웃 렌더 테스트에서는 변수 이름만 준다(Inter 말고 다른 글꼴을 부르면 실패)
 vi.mock("next/font/google", () => ({ Inter: vi.fn(() => ({ variable: "font-sans-var" })) }));
@@ -291,4 +294,136 @@ test("Try again을 누르면 retry가 불린다(#24 qa G1)", () => {
   expect(retry).not.toHaveBeenCalled();
   button!.props.onClick!();
   expect(retry).toHaveBeenCalledTimes(1);
+});
+
+describe("로그인 버튼(#37)", () => {
+  const forms = (html: string) => [...html.matchAll(/<form\b([^>]*)>(.*?)<\/form>/g)].map((m) => ({ attrs: m[1], body: m[2] }));
+
+  test("로그인 전: POST /auth/sign-in 폼 + 숨은 타임존 + Sign in 버튼, 실패 문구 없음", () => {
+    const html = renderToStaticMarkup(<AuthControl signedIn={false} failed={false} />);
+    const [form, ...rest] = forms(html);
+    expect(rest).toEqual([]);
+    expect(form.attrs).toMatch(/method="post"/);
+    expect(form.attrs).toMatch(/action="\/auth\/sign-in"/);
+    expect(form.body).toMatch(/<input type="hidden" name="timezone" value=""\/>/);
+    expect(form.body).toMatch(new RegExp(`<button[^>]*type="submit"[^>]*>${SIGN_IN}</button>`));
+    expect(text(html)).not.toContain(SIGN_IN_FAILED);
+    expect(text(html)).not.toContain(SIGN_OUT);
+  });
+
+  test("로그인 실패: 실패 문구를 role=status로", () => {
+    const html = renderToStaticMarkup(<AuthControl signedIn={false} failed />);
+    expect(html).toMatch(new RegExp(`<p[^>]*role="status"[^>]*>${SIGN_IN_FAILED}</p>`));
+    expect(forms(html)[0].attrs).toMatch(/action="\/auth\/sign-in"/);
+  });
+
+  test("로그인됨: POST /auth/sign-out 폼 + Sign out, failed여도 실패 문구 없음", () => {
+    const html = renderToStaticMarkup(<AuthControl signedIn failed />);
+    const [form, ...rest] = forms(html);
+    expect(rest).toEqual([]);
+    expect(form.attrs).toMatch(/method="post"/);
+    expect(form.attrs).toMatch(/action="\/auth\/sign-out"/);
+    expect(form.body).toMatch(new RegExp(`<button[^>]*type="submit"[^>]*>${SIGN_OUT}</button>`));
+    expect(text(html)).not.toContain(SIGN_IN_FAILED);
+    expect(text(html)).not.toContain(SIGN_IN);
+  });
+
+  test("버튼은 터치 영역 44px 이상(min-h-11 이상)", () => {
+    const all = [true, false].flatMap((signedIn) => targets(renderToStaticMarkup(<AuthControl signedIn={signedIn} failed />)));
+    expect(all).toHaveLength(2);
+    for (const t of all) expect(t, t).toMatch(/class="[^"]*\b(min-)?h-1[12]\b/);
+  });
+
+  test("타임존 칸을 서버에서 그리면 빈 값(서버 타임존이 박히지 않게, 브라우저가 채운다)", () => {
+    expect(renderToStaticMarkup(<TimezoneField />)).toBe('<input type="hidden" name="timezone" value=""/>');
+  });
+});
+
+describe("내 종목·둘러보기(#38)", () => {
+  const forms = (html: string) =>
+    [...html.matchAll(/<form\b([^>]*)>(.*?)<\/form>/g)].map((m) => ({
+      method: m[1].match(/\bmethod="([^"]*)"/)?.[1],
+      action: m[1].match(/\baction="([^"]*)"/)?.[1],
+      fields: Object.fromEntries([...m[2].matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)"\/>/g)].map((f) => [f[1], f[2]])),
+      button: text(m[2].match(/<button\b[^>]*>(.*?)<\/button>/)?.[1] ?? ""),
+    }));
+  const coverage = [
+    { ticker: "AAPL", name: "Apple Inc." },
+    { ticker: "MSFT", name: "Microsoft" },
+    { ticker: "NVDA", name: "NVIDIA" },
+    { ticker: "TQQQ", name: "ProShares UltraPro QQQ" },
+  ];
+  const data = { tradingDay: "Fri, Oct 16, 2026", cards: [card(), card({ ticker: "MSFT", name: "Microsoft" }), card({ ticker: "NVDA", name: "NVIDIA" })] };
+  const view = (stocks: string[], swapsLeft: number | null, result?: string): MyDashboardView =>
+    myDashboardView(
+      data.cards,
+      coverage,
+      { stocks: stocks.map((t) => ({ ...coverage.find((c) => c.ticker === t)!, locked: false })), swapsLeft },
+      result,
+    );
+  const render = (mine?: MyDashboardView) => renderToStaticMarkup(<Dashboard data={data} mine={mine} />);
+  const headings = (html: string) => [...html.matchAll(/<h([12])\b[^>]*>(.*?)<\/h\1>/g)].map((m) => `h${m[1]} ${text(m[2])}`);
+
+  test("로그인 전: 지금 대시보드 그대로(내 종목·둘러보기·고르기 없음)", () => {
+    const html = render();
+    expect(text(html)).not.toMatch(/My stocks|Browse|Pick your stocks|Swaps left/);
+    expect(forms(html)).toEqual([]);
+    expect(lines(html)).toHaveLength(9);
+  });
+
+  test("내 종목 0개: 고르기(커버 범위 전부)가 열린 채 먼저, 그 아래 둘러보기(카드 전부)", () => {
+    const html = render(view([], 3));
+    expect(html).toMatch(/<details[^>]*\bopen=""/);
+    expect(text(html).indexOf("Pick your stocks")).toBeLessThan(text(html).indexOf("Browse"));
+    expect(forms(html)).toEqual(
+      coverage.map((c) => ({
+        method: "post",
+        action: "/my-stocks",
+        fields: { change: "add", ticker: c.ticker },
+        button: `Add ${c.ticker}`, // 보이는 글자는 Add, 화면 읽기 프로그램에는 티커까지
+      })),
+    );
+    expect(headings(html)).toEqual(["h1 Fri, Oct 16, 2026", "h2 My stocks", "h2 Browse", "h2 AAPL", "h2 MSFT", "h2 NVDA"]);
+  });
+
+  test("내 종목 있음: 위 My stocks(카드 또는 Summary arrives tomorrow morning + 빼기), 아래 Browse(나머지 카드), 고르기는 접힘", () => {
+    const html = render(view(["TQQQ", "MSFT"], 2));
+    expect(headings(html)).toEqual(["h1 Fri, Oct 16, 2026", "h2 My stocks", "h2 TQQQ", "h2 MSFT", "h2 Browse", "h2 AAPL", "h2 NVDA"]);
+    const mine = text(html.slice(0, html.indexOf("Browse")));
+    expect(mine).toContain("ProShares UltraPro QQQ");
+    expect(mine).toContain("Summary arrives tomorrow morning"); // TQQQ는 이 날 카드가 없다
+    expect(mine).toContain("Swaps left today: 2");
+    expect(html).not.toMatch(/<details[^>]*\bopen=/);
+
+    const all = forms(html);
+    expect(all.filter((f) => f.fields.change === "remove")).toEqual(
+      ["TQQQ", "MSFT"].map((t) => ({ method: "post", action: "/my-stocks", fields: { change: "remove", ticker: t }, button: `Remove ${t}` })),
+    );
+    expect(all.filter((f) => f.fields.change === "add").map((f) => f.fields.ticker)).toEqual(["AAPL", "NVDA"]);
+  });
+
+  test("Plus(남은 교체 null)는 횟수를 그리지 않는다. 무료 0회는 그린다", () => {
+    expect(text(render(view(["MSFT"], null)))).not.toContain("Swaps left");
+    expect(text(render(view(["MSFT"], 0)))).toContain("Swaps left today: 0");
+  });
+
+  test("결과 문구는 role=status로 내 종목 칸에", () => {
+    for (const [code, copy] of [
+      ["free_swap_limit", "Free plan can swap stocks 3 times a day. Plus has no limit."],
+      ["free_my_stock_limit", "Free plan can pick 3 stocks. Remove one to add another."],
+      ["failed", "My stocks could not be updated"],
+    ]) {
+      const html = render(view(["MSFT"], 0, code));
+      expect(html).toMatch(new RegExp(`<p[^>]*role="status"[^>]*>${copy}</p>`));
+      expect(html.indexOf(copy)).toBeLessThan(html.indexOf("Browse"));
+    }
+    expect(render(view(["MSFT"], 0))).not.toContain('role="status"');
+  });
+
+  test("넣기·빼기 버튼과 고르기 펼침은 터치 영역 44px 이상(min-h-11 이상)", () => {
+    const html = render(view(["MSFT"], 2));
+    const all = [...targets(html), ...[...html.matchAll(/<summary\b[^>]*>/g)].map((m) => m[0])];
+    expect(all.length).toBe(1 + 3 + 1); // 빼기 1 + 넣기 3 + 펼침 1
+    for (const t of all) expect(t, t).toMatch(/class="[^"]*\b(min-)?h-1[12]\b/);
+  });
 });

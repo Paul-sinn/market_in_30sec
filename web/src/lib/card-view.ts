@@ -1,5 +1,5 @@
 /** 화면 모델 타입과 표시 형식 순수 함수. 문장은 만들지 않는다: DB 문구 그대로 또는 copy.ts 고정 문구. */
-import { CHECKED_PREFIX, NOT_COVERED, UPDATE_DELAYED } from "./copy";
+import { CHECKED_PREFIX, MY_STOCK_NOTICE, NOT_COVERED, UPDATE_DELAYED } from "./copy";
 
 export type LineStatus = "checked_found" | "checked_none" | "delayed" | "unsupported"; // DB enum line_status
 export type LineView = { text: string; status: LineStatus };
@@ -13,6 +13,35 @@ export type CardView = {
   checked: string | null; // "Checked 7:30 AM ET · SEC filings"
 };
 export type DashboardView = { tradingDay: string | null; cards: CardView[] };
+
+export type Stock = { ticker: string; name: string };
+/** 로그인한 대시보드(#38). 위 내 종목, 아래 둘러보기, 고르기 목록 */
+export type MyDashboardView = {
+  mine: (Stock & { card: CardView | null })[]; // 잠기지 않은 내 종목, 넣은 순서. card null = 그날 카드 없음
+  browse: CardView[]; // 나머지 카드(잠긴 내 종목 포함)
+  pickable: Stock[]; // 커버 범위 중 내 종목(잠긴 것 포함)이 아닌 것
+  swapsLeft: number | null; // null = Plus(그리지 않음)
+  notice: string | null; // /cards?my_stock=… 결과 문구
+};
+
+/** 넣기·빼기 규칙은 DB가 지킨다(ADR-0004). 여기서는 나누고 결과 코드를 고정 문구로 바꿀 뿐이다 */
+export function myDashboardView(
+  cards: CardView[],
+  coverage: Stock[],
+  my: { stocks: (Stock & { locked: boolean })[]; swapsLeft: number | null },
+  result: unknown,
+): MyDashboardView {
+  const mine = my.stocks.filter((s) => !s.locked).map(({ ticker, name }) => ({ ticker, name, card: cards.find((c) => c.ticker === ticker) ?? null }));
+  const held = new Set(my.stocks.map((s) => s.ticker));
+  return {
+    mine,
+    browse: cards.filter((c) => !mine.some((m) => m.ticker === c.ticker)),
+    pickable: coverage.filter((c) => !held.has(c.ticker)),
+    swapsLeft: my.swapsLeft,
+    // 쿼리 값은 그리지 않는다: 문구표에 있는 코드만(Object.hasOwn: constructor 같은 프로토타입 이름 제외)
+    notice: typeof result === "string" && Object.hasOwn(MY_STOCK_NOTICE, result) ? MY_STOCK_NOTICE[result as keyof typeof MY_STOCK_NOTICE] : null,
+  };
+}
 
 /** DB 등락률(소수 첫째 자리)에 부호·%만 붙인다. 값은 계산함(checked_found)일 때만 있다(DB 제약). */
 export function changeView(pct: number | null, status: LineStatus): ChangeView {

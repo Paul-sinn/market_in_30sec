@@ -2,9 +2,12 @@
 거절은 정해진 이름의 CheckViolation이다(스펙 #8 4-1 오류 계약)."""
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, date, datetime, time, timedelta
+from time import monotonic, sleep
 from zoneinfo import ZoneInfo
 
+import psycopg
 import pytest
 from psycopg import errors
 
@@ -81,14 +84,17 @@ def user_rows(conn):
 
 
 @pytest.mark.parametrize("plan", ["free", "plus"])
-def test_계정을_지우면_프로필·내_종목·이력이_같이_지워진다(covered, make_user, plan):
+def test_계정을_지우면_프로필·내_종목·이력이_같이_지워진다(settings, covered, make_user, plan):
     uid = make_user(plan)
     for ticker in ("AAPL", "MSFT", "NVDA"):
         add(covered, uid, ticker)
     remove(covered, uid, "NVDA")
     assert user_rows(covered) == {"user_profile": 1, "my_stock": 2, "my_stock_history": 4}
 
-    covered.execute("delete from auth.users where id = %s", (uid,))  # 앱 안 계정 삭제(Supabase Auth)
+    # 앱 안 계정 삭제: Supabase Auth(auth.admin.deleteUser)는 이 역할로 지운다. postgres는 이 역할로 set role 할 수 없다(로컬은 비밀번호가 같다)
+    with psycopg.connect(settings.database_url, user="supabase_auth_admin", autocommit=True) as auth:
+        assert auth.execute("select count(*) from public.user_profile").fetchone()[0] == 0  # 삭제용 열 권한뿐, RLS가 프로필을 가린다
+        auth.execute("delete from auth.users where id = %s", (uid,))
 
     assert user_rows(covered) == {"user_profile": 0, "my_stock": 0, "my_stock_history": 0}  # 추가 전용이어도 cascade는 막히지 않는다
 
@@ -169,6 +175,39 @@ def test_무료는_잠기지_않은_내_종목이_3개면_더_넣을_수_없다(
     refused("free_my_stock_limit", add, covered, uid, "KO")
 
     assert tickers(covered, uid) == ["AAPL", "MSFT", "NVDA"]
+
+
+ADD_FORMS = {  # 웹(supabase-js upsert ignoreDuplicates)은 on conflict do nothing을 보낸다
+    "insert": "insert into public.my_stock (user_id, ticker) values (%s, %s)",
+    "on_conflict_do_nothing": "insert into public.my_stock (user_id, ticker) values (%s, %s) on conflict do nothing",
+}
+
+
+@pytest.mark.parametrize("sql", ADD_FORMS.values(), ids=ADD_FORMS.keys())
+def test_무료_3개가_찬_상태에서_이미_내_종목인_종목을_다시_넣으면_아무_일도_없다(covered, make_user, sql):
+    uid = make_user("free")
+    for ticker in ("AAPL", "MSFT", "NVDA"):
+        add(covered, uid, ticker)
+    before = history(covered, uid)
+
+    as_service_role(covered, sql, (uid, "MSFT"))  # 오류 없음
+
+    assert tickers(covered, uid) == ["AAPL", "MSFT", "NVDA"]
+    assert history(covered, uid) == before
+    refused("free_my_stock_limit", add, covered, uid, "KO")  # 새 종목은 여전히 막힌다
+
+
+@pytest.mark.parametrize("sql", ADD_FORMS.values(), ids=ADD_FORMS.keys())
+def test_Plus도_이미_내_종목인_종목을_다시_넣으면_아무_일도_없다(covered, make_user, sql):
+    uid = make_user("plus")
+    for ticker in ("AAPL", "MSFT", "NVDA", "KO"):
+        add(covered, uid, ticker)
+    before = history(covered, uid)
+
+    as_service_role(covered, sql, (uid, "KO"))  # 오류 없음
+
+    assert tickers(covered, uid) == ["AAPL", "KO", "MSFT", "NVDA"]
+    assert history(covered, uid) == before
 
 
 def test_Plus는_교체·개수_제한이_없다(covered, make_user):
@@ -253,6 +292,27 @@ def test_동시에_지워도_하루_세_번을_넘지_않는다(settings, covere
 
     assert tickers(covered, uid) == ["KO", "PFE"]
     assert removals(covered, uid) == ["AAPL", "MSFT", "NVDA"]
+
+
+def test_같은_종목을_동시에_두_번_넣어도_한_번만_들어가고_오류가_없다(settings, covered, make_user):
+    uid = make_user("free")
+    add(covered, uid, "AAPL")
+    add(covered, uid, "MSFT")
+    sql = ADD_FORMS["on_conflict_do_nothing"]
+
+    with connect(settings) as a, connect(settings) as b, ThreadPoolExecutor(1) as pool:  # 둘 다 service_role
+        with a.transaction():
+            a.execute(sql, (uid, "NVDA"))  # 첫 번째 누르기(3번째 종목), 커밋 전
+            second = pool.submit(b.execute, sql, (uid, "NVDA"))  # 두 번째 누르기
+            deadline = monotonic() + 5
+            while covered.execute("select wait_event_type from pg_stat_activity where pid = %s",
+                                  (b.info.backend_pid,)).fetchone()[0] != "Lock":  # 앞 트랜잭션을 기다리는 중
+                assert monotonic() < deadline and not second.done()
+                sleep(0.01)
+        second.result(timeout=5)  # 앞 커밋 뒤에 깨어나도 free_my_stock_limit가 아니다
+
+    assert tickers(covered, uid) == ["AAPL", "MSFT", "NVDA"]
+    assert [(c, t) for c, t, _, _ in history(covered, uid)] == [("add", "AAPL"), ("add", "MSFT"), ("add", "NVDA")]
 
 
 def local_date(conn, uid, instant):

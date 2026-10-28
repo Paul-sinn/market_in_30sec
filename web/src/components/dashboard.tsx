@@ -1,23 +1,45 @@
-import type { DashboardView } from "@/lib/card-view";
-import { NO_CARDS } from "@/lib/copy";
+import type { CardView, DashboardView, MyDashboardView } from "@/lib/card-view";
+import { BROWSE, NO_CARDS } from "@/lib/copy";
 
+import { MyStocksSection } from "./my-stocks";
 import { StockCard } from "./stock-card";
 
 const GRID = "grid gap-4 md:grid-cols-2 xl:grid-cols-3";
 const HEADING = "mb-8 text-h2 font-medium";
 
-export function Dashboard({ data }: { data: DashboardView }) {
+function Cards({ cards }: { cards: CardView[] }) {
+  return (
+    cards.length > 0 && (
+      <ul className={GRID}>
+        {cards.map((card) => (
+          <li key={card.ticker}>
+            <StockCard card={card} />
+          </li>
+        ))}
+      </ul>
+    )
+  );
+}
+
+/** mine 없음 = 로그인 전(카드 전부). 있음 = 위 내 종목, 아래 둘러보기(#38) */
+export function Dashboard({ data, mine }: { data: DashboardView; mine?: MyDashboardView }) {
   return (
     <>
       <h1 className={HEADING}>{data.tradingDay ?? NO_CARDS}</h1>
-      {data.cards.length > 0 && (
-        <ul className={GRID}>
-          {data.cards.map((card) => (
-            <li key={card.ticker}>
-              <StockCard card={card} />
-            </li>
-          ))}
-        </ul>
+      {mine ? (
+        <>
+          <MyStocksSection view={mine} grid={GRID} />
+          {mine.browse.length > 0 && (
+            <section aria-labelledby="browse">
+              <h2 id="browse" className="mb-4 text-xl font-medium">
+                {BROWSE}
+              </h2>
+              <Cards cards={mine.browse} />
+            </section>
+          )}
+        </>
+      ) : (
+        <Cards cards={data.cards} />
       )}
     </>
   );

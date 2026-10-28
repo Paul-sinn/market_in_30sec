@@ -1,6 +1,15 @@
 import { describe, expect, test } from "vitest";
 
-import { changeView, checkedFooter, formatCheckedAt, formatTradingDay, lineView, type LineStatus } from "@/lib/card-view";
+import {
+  changeView,
+  checkedFooter,
+  formatCheckedAt,
+  formatTradingDay,
+  lineView,
+  myDashboardView,
+  type CardView,
+  type LineStatus,
+} from "@/lib/card-view";
 
 describe("changeView: DB 값에 형식만 입힌다", () => {
   test.each([
@@ -85,5 +94,50 @@ describe("checkedFooter: 확인된 줄(확인함·있음/없음)만", () => {
       checkedFooter([at("2026-10-16T11:30:00Z", "delayed", "Daily prices"), at("2026-10-16T11:30:00Z", "unsupported", null)]),
     ).toBeNull();
     expect(checkedFooter([])).toBeNull();
+  });
+});
+
+describe("myDashboardView: 로그인한 대시보드(#38)", () => {
+  const card = (ticker: string): CardView => ({
+    ticker,
+    name: `${ticker} Inc.`,
+    change: { text: "+1.0%", tone: "up" },
+    lines: [],
+    leverageTag: null,
+    checked: null,
+  });
+  const stock = (ticker: string, locked = false) => ({ ticker, name: `${ticker} Inc.`, locked });
+  const coverage = ["AAPL", "MSFT", "NVDA", "TSLA", "TQQQ"].map((t) => ({ ticker: t, name: `${t} Inc.` }));
+  const cards = ["AAPL", "MSFT", "NVDA", "TSLA"].map(card);
+
+  test("내 종목 = 잠기지 않은 것만 넣은 순서로(카드 없으면 null), 둘러보기 = 나머지 카드, 고르기 = 내 종목(잠긴 것 포함)이 아닌 커버 범위", () => {
+    const view = myDashboardView(cards, coverage, { stocks: [stock("TQQQ"), stock("MSFT"), stock("NVDA", true)], swapsLeft: 2 }, undefined);
+    expect(view).toEqual({
+      mine: [
+        { ticker: "TQQQ", name: "TQQQ Inc.", card: null },
+        { ticker: "MSFT", name: "MSFT Inc.", card: card("MSFT") },
+      ],
+      browse: [card("AAPL"), card("NVDA"), card("TSLA")],
+      pickable: [
+        { ticker: "AAPL", name: "AAPL Inc." },
+        { ticker: "TSLA", name: "TSLA Inc." },
+      ],
+      swapsLeft: 2,
+      notice: null,
+    });
+  });
+
+  test("Plus는 남은 교체 null 그대로", () => {
+    expect(myDashboardView(cards, coverage, { stocks: [], swapsLeft: null }, undefined).swapsLeft).toBeNull();
+  });
+
+  test("결과 코드 → 고정 문구(HANDOFF 3-2 리터럴), 모르는 값은 문구 없음", () => {
+    const notice = (result: unknown) => myDashboardView([], [], { stocks: [], swapsLeft: 3 }, result).notice;
+    expect(notice("free_swap_limit")).toBe("Free plan can swap stocks 3 times a day. Plus has no limit.");
+    expect(notice("free_my_stock_limit")).toBe("Free plan can pick 3 stocks. Remove one to add another.");
+    expect(notice("failed")).toBe("My stocks could not be updated");
+    for (const other of [undefined, "", "ok", "constructor", "__proto__", "toString", ["failed"], "<script>"]) {
+      expect(notice(other), String(other)).toBeNull();
+    }
   });
 });
