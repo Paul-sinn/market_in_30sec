@@ -123,6 +123,16 @@ describe("StockCard", () => {
     expect(classOf(unsupported, 'data-status="unsupported')).toContain("text-muted");
   });
 
+  test("잠긴 세 번째 줄(#9): 상태만 받아 고정 문구 Price facts in Plus를 흐리게, 줄을 숨기지 않는다", () => {
+    const html = renderToStaticMarkup(<StockCard card={card({ lines: [...card().lines.slice(0, 2), { status: "locked" }] })} />);
+    expect(lines(html)).toEqual([
+      ["checked_found", "Apple reported Q3 results (SEC filing)"],
+      ["checked_found", "Earnings Thu 10/29 after close (D-13)"],
+      ["locked", "Price facts in Plus"],
+    ]);
+    expect(classOf(html, 'data-status="locked')).toContain("text-muted");
+  });
+
   test("등락률 옆 기준 라벨 prev close (값이 없어도, #27 시안)", () => {
     for (const c of [
       { text: "+1.3%", tone: "up" },

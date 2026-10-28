@@ -1,22 +1,20 @@
 /**
- * 로컬 Supabase에 카드를 넣고 getDashboard가 화면 모델로 바꾸는지 본다. 원격 금지.
+ * 로컬 Supabase에 카드를 넣고 getDashboard → exposeCards(#9)가 화면 모델로 바꾸는지 본다. 원격 금지.
  * 먼 미래 거래일(2099)·테스트 전용 티커만 쓰고 끝나면 지운다(시드 데이터는 건드리지 않는다).
+ * 노출 비교용 유저는 로컬 Auth admin으로 만들고 끝나면 지운다(프로필·내 종목·이력은 cascade).
  */
-import { createClient } from "@supabase/supabase-js";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, expect, test } from "vitest";
 
-import { getDashboard } from "@/server/cards";
+import { Dashboard } from "@/components/dashboard";
+import { myDashboardView } from "@/lib/card-view";
+import type { VerifiedUserId } from "@/server/auth";
+import { getCoverage, getDashboard } from "@/server/cards";
+import { exposeCards } from "@/server/exposure";
+import { addMyStock, ensureProfile, getMyStocks } from "@/server/my-stocks";
 
-const LOCAL_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
-const url = process.env.SUPABASE_URL ?? "";
-const key = process.env.SUPABASE_SERVICE_ROLE_KEY ?? "";
-if (!url || !key) {
-  throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set (see web/README.md)");
-}
-if (!LOCAL_HOSTS.has(new URL(url).hostname)) {
-  throw new Error("SUPABASE_URL is not local. DB tests run against local Supabase only");
-}
-const admin = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+import { admin, createTestUser, deleteTestUsers } from "./local-supabase";
 
 const DAY = "2099-12-31";
 const EARLIER = "2099-12-30";
@@ -99,12 +97,19 @@ beforeAll(async () => {
   if (ins.error) throw new Error(`stock_card insert failed: ${ins.error.message}`);
 });
 
-afterAll(cleanup);
+const created: string[] = [];
+afterAll(async () => {
+  await deleteTestUsers(created); // 내 종목이 먼저 지워져야 커버 범위 행을 지울 수 있다(FK)
+  await cleanup();
+});
 
-test("가장 최근 거래일의 카드를 종목순으로 화면 모델로", async () => {
+/** 네 종목 전부가 잠기지 않은 내 종목인 Plus 유저(세 줄 전부) */
+const PLUS_ALL = { plan: "plus" as const, stocks: TICKERS.map((ticker) => ({ ticker, locked: false })) };
+
+test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus 내 종목 = 세 줄 전부)", async () => {
   const data = await getDashboard();
   expect(data.tradingDay).toBe("Thu, Dec 31, 2099");
-  expect(data.cards).toEqual([
+  expect(exposeCards(data.cards, PLUS_ALL)).toEqual([
     {
       ticker: "ZZWA",
       name: "Web Test A",
@@ -154,4 +159,75 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로", as
       checked: null, // 확인된 줄이 없으면 하단 없음
     },
   ]);
+});
+
+test("로그인 전 = 무료 범위: 세 번째 줄은 잠금만, 하단에서도 그 줄의 출처가 빠진다. 지연·미지원은 그대로", async () => {
+  const cards = exposeCards((await getDashboard()).cards, null);
+  expect(cards.map((c) => [c.ticker, c.change.text, c.lines, c.checked])).toEqual([
+    [
+      "ZZWA",
+      "+1.3%",
+      [
+        { text: "Web Test A reported Q3 results (SEC filing)", status: "checked_found" },
+        { text: "Earnings Thu 1/7 after close (D-7)", status: "checked_found" },
+        { status: "locked" },
+      ],
+      "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar",
+    ],
+    [
+      "ZZWB",
+      "−2.0%",
+      [
+        { text: "No new SEC filings found", status: "checked_none" },
+        { text: "No confirmed events found", status: "checked_none" },
+        { status: "locked" },
+      ],
+      "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar",
+    ],
+    [
+      "ZZWC",
+      "Update delayed",
+      [{ text: "Update delayed", status: "delayed" }, { text: "No confirmed events found", status: "checked_none" }, { status: "locked" }],
+      "Checked 7:30 AM ET · Earnings and dividend calendar",
+    ],
+    [
+      "ZZWD",
+      "Not covered yet",
+      [{ text: "Update delayed", status: "delayed" }, { text: "Not covered yet", status: "unsupported" }, { status: "locked" }],
+      null,
+    ],
+  ]);
+});
+
+test("같은 카드를 Plus 유저와 무료 유저가 볼 때 세 번째 줄이 다르다(플랜은 user_profile.plan, 세션 유저 id로)", async () => {
+  const user = async (plan: "free" | "plus") => {
+    const id = (await createTestUser()).id as VerifiedUserId; // 테스트에서만: 운영에서는 getVerifiedUserId만 만든다
+    created.push(id);
+    await ensureProfile(id, "America/New_York");
+    expect(await addMyStock(id, "ZZWA")).toBe("ok");
+    const { error } = await admin.from("user_profile").update({ plan }).eq("user_id", id); // 결제(#10) 전이라 서비스 역할로
+    if (error) throw new Error(`plan update failed: ${error.code}`);
+    return id;
+  };
+  const [free, plus] = [await user("free"), await user("plus")];
+
+  // /cards 페이지와 같은 순서: 카드·내 종목을 읽고, 컴포넌트로 넘기기 전에 노출을 판단한다
+  const { tradingDay, cards } = await getDashboard();
+  const coverage = await getCoverage();
+  const page = async (id: VerifiedUserId) => {
+    const my = await getMyStocks(id);
+    const data = { tradingDay, cards: exposeCards(cards, my) };
+    return { data, html: renderToStaticMarkup(createElement(Dashboard, { data, mine: myDashboardView(data.cards, coverage, my, undefined) })) };
+  };
+  const [f, p] = [await page(free), await page(plus)];
+  const third = (d: typeof f, ticker: string) => d.data.cards.find((c) => c.ticker === ticker)!.lines[2];
+
+  expect(third(p, "ZZWA")).toEqual({ text: "Up 5 days in a row", status: "checked_found" }); // Plus 내 종목
+  expect(third(f, "ZZWA")).toEqual({ status: "locked" }); // 무료 내 종목
+  expect(third(p, "ZZWB")).toEqual({ status: "locked" }); // Plus 둘러보기
+  expect(third(f, "ZZWB")).toEqual({ status: "locked" });
+  // ZZWA의 세 번째 줄 문구는 픽스처에서 하나뿐: 무료 HTML에는 없다
+  expect(p.html).toContain("Up 5 days in a row");
+  expect(f.html).not.toContain("Up 5 days in a row");
+  expect(f.html).toContain("Price facts in Plus");
 });

@@ -7,7 +7,7 @@
 
 Next.js App Router + TypeScript + Tailwind. 규칙은 `.claude/skills/web-conventions/SKILL.md`. 디자인 기준은 사용자 시안 `design-system/user-mockup/landing.dc.html`, 그 값을 옮긴 토큰은 `src/app/globals.css` 한 곳(카드 화면 메모: `design-system/market_in_30sec/pages/dashboard.md`). 글꼴 Inter는 `next/font`가 빌드 때 받아 자체 제공한다.
 
-DB는 서버 전용 모듈만 만진다: 카드·커버 범위 읽기 `src/server/cards.ts`, 유저 데이터(프로필 보장·내 종목 읽기·넣기·빼기)는 `src/server/my-stocks.ts` 한 곳(웹의 유일한 쓰기 지점), 로그인 `src/server/auth.ts`. 브라우저 번들에는 Supabase 클라이언트도 키도 없다(ADR-0003).
+DB는 서버 전용 모듈만 만진다: 카드·커버 범위 읽기 `src/server/cards.ts`(줄 노출 판단은 `src/server/exposure.ts`, 아래 "줄 노출" 절), 유저 데이터(프로필 보장·내 종목 읽기·넣기·빼기)는 `src/server/my-stocks.ts` 한 곳(웹의 유일한 쓰기 지점), 로그인 `src/server/auth.ts`. 브라우저 번들에는 Supabase 클라이언트도 키도 없다(ADR-0003).
 
 ## 로컬에서 띄우기
 
@@ -108,13 +108,20 @@ Google 로그인(Supabase Auth)은 전부 웹 서버에서 돈다. 브라우저�
 - 웹은 AI를 부르지 않는다. 넣은 종목의 카드는 다음 아침 실행부터 생긴다(생성 대상, #8)
 - 원격에 `supabase/migrations/20261028043018_my_stock_readd_noop.sql`이 없으면 3개가 찬 무료 유저의 다시 넣기가 `free_my_stock_limit`로 거절된다(원격 적용은 사용자 확인 후)
 
-## 검사
+## 줄 노출 (#9)
+
+- 세 줄 전부는 **Plus 유저의 잠기지 않은 내 종목 카드**뿐이다. 나머지(로그인 전, 무료 유저의 모든 카드, 모든 플랜의 Browse 카드)는 무료 범위다
+- 무료 범위: 등락률·첫·두 번째 줄은 저장된 그대로(지연·미지원도 그대로). 세 번째 줄은 사실이 있든 없든 지연이든 `{ status: "locked" }`만 보내고 화면은 `Price facts in Plus`. 그 줄의 확인 시각·출처도 카드 하단에서 빠진다
+- 판단은 `exposeCards`(`src/server/exposure.ts`) 한 곳이고, `/cards` 페이지가 컴포넌트로 넘기기 전에 부른다. 그래서 잠긴 줄의 글자·상태는 RSC 페이로드와 HTML에 아예 없다. 플랜은 세션 유저 id로 읽은 `user_profile.plan`(`getMyStocks`)
+- 화면 모델은 허용한 키만 옮긴다(`tests/exposure.test.tsx` 화이트리스트). 방향 의견 필드는 없다(ADR-0001)
+- 발행 중단 플래그는 DB 컬럼이 아직 없어 #16에서 한다
+
 
 ```bash
 cd web && npm run lint && npm test && npm run build
 ```
 
-- `npm test`의 `tests/*.db.test.ts`는 위 `eval` 줄의 환경 변수(`SUPABASE_PUBLISHABLE_KEY` 포함)가 있어야 돌고, 로컬 주소(127.0.0.1·localhost)가 아니면 멈춘다. `cards.db.test.ts`는 2099-12-31 거래일과 `ZZW*` 테스트 티커만 넣고 끝나면 지운다(시드한 카드는 그대로). `auth.db.test.ts`·`my-stocks.db.test.ts`는 로컬 Auth admin으로 `…@example.test` 유저를 만들고 끝나면 Auth admin으로 지운다(프로필·내 종목·이력은 FK cascade). `my-stocks.db.test.ts`는 커버 범위에 `ZZM*` 테스트 티커를 넣고 끝나면 지운다.
+- `npm test`의 `tests/*.db.test.ts`는 위 `eval` 줄의 환경 변수(`SUPABASE_PUBLISHABLE_KEY` 포함)가 있어야 돌고, 로컬 주소(127.0.0.1·localhost)가 아니면 멈춘다. `cards.db.test.ts`는 2099-12-31 거래일과 `ZZW*` 테스트 티커만 넣고 끝나면 지운다(시드한 카드는 그대로). 노출 비교(#9: 같은 카드를 무료·Plus 유저가 볼 때)용 유저도 만들고 지운다. `auth.db.test.ts`·`my-stocks.db.test.ts`는 로컬 Auth admin으로 `…@example.test` 유저를 만들고 끝나면 Auth admin으로 지운다(프로필·내 종목·이력은 FK cascade). `my-stocks.db.test.ts`는 커버 범위에 `ZZM*` 테스트 티커를 넣고 끝나면 지운다.
 - `tests/auth.db.test.ts`: 진짜 세션으로 확인(정상·없음·위조 3종·만료), 프록시 갱신(새 쿠키가 응답과 같은 요청의 페이지 둘 다에), 로그아웃(쿠키 삭제 + Auth에서 폐기), 콜백 실패(code 없음·공급자 오류·가짜 code). `tests/my-stocks.db.test.ts`: 프로필 보장(첫 로그인·재로그인 그대로·이상한 타임존 → NY·빈 타임존 → NY), 내 종목(#38: 3개 → 4번째 거절 → 빼기 → 남은 교체 → 4번째 빼기 거절 → 다시 넣기 무변화, 프로필 타임존의 오늘, Plus, 잠금, 다른 유저 안 보임, 커버 범위 밖 티커는 쓰지 않음)
 - `tests/my-stocks.route.test.ts`(DB 없음): `POST /my-stocks` 세션 없음 → 쓰지 않음, 세션 유저 id로만 쓰기, 거절 이름 → 결과 코드, 교착(40P01) 1회 재시도, 그 밖 오류·이상한 입력 → 실패 코드와 고정 로그, 열린 리디렉션 없음
 - `tests/auth.test.ts`(DB 없음): 로그인 미설정·Google 꺼짐·Auth 응답 없음 → 실패 문구, Google 켜짐 → PKCE authorize + HttpOnly 검증값 쿠키, 콜백 → 프로필 보장 연결, 프로필 실패 → 세션 삭제, 로그인·콜백·로그아웃이 `next`·`redirect` 값을 무시(열린 리디렉션 없음)

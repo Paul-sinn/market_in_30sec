@@ -21,8 +21,10 @@ export async function ensureProfile(userId: VerifiedUserId, timezone: string): P
 
 const FREE_SWAPS_PER_DAY = 3; // 표시용. 막는 건 DB 트리거(log_my_stock_change)
 
-/** stocks는 넣은 순서(added_at, ticker), 잠긴 것 포함. swapsLeft null = Plus(제한 없음) */
-export type MyStocks = { stocks: { ticker: string; name: string; locked: boolean }[]; swapsLeft: number | null };
+export type Plan = "free" | "plus"; // DB enum public.plan
+
+/** plan은 user_profile.plan(줄 노출 판단 exposeCards, #9). stocks는 넣은 순서(added_at, ticker), 잠긴 것 포함. swapsLeft null = Plus(제한 없음) */
+export type MyStocks = { plan: Plan; stocks: { ticker: string; name: string; locked: boolean }[]; swapsLeft: number | null };
 export type MyStockWrite = "ok" | "free_my_stock_limit" | "free_swap_limit";
 
 /** 남은 교체 = 3 − 오늘(프로필 타임존 자정 기준, user_local_date) 빼기 수, 0 미만은 0. 무료만 */
@@ -36,14 +38,15 @@ export async function getMyStocks(userId: VerifiedUserId): Promise<MyStocks> {
       .order("added_at")
       .order("ticker")
       .overrideTypes<{ ticker: string; locked: boolean; coverage: { name: string } }[], { merge: false }>(),
-    client.from("user_profile").select("plan").eq("user_id", userId).single<{ plan: "free" | "plus" }>(),
+    client.from("user_profile").select("plan").eq("user_id", userId).single<{ plan: Plan }>(),
     // 하루 경계는 DB 함수 한 곳(타임존 변경 보류 포함). 이력의 local_date도 같은 함수로 찍힌다
     client.rpc("user_local_date", { uid: userId, instant: new Date().toISOString() }),
   ]);
   for (const { error } of [stocks, profile, today]) if (error) throw new Error(`my_stock read failed: ${error.code}`);
 
+  const plan = profile.data!.plan;
   let swapsLeft: number | null = null;
-  if (profile.data!.plan === "free") {
+  if (plan === "free") {
     const { count, error } = await client
       .from("my_stock_history")
       .select("id", { count: "exact", head: true })
@@ -53,7 +56,7 @@ export async function getMyStocks(userId: VerifiedUserId): Promise<MyStocks> {
     if (error) throw new Error(`my_stock read failed: ${error.code}`);
     swapsLeft = Math.max(0, FREE_SWAPS_PER_DAY - count!);
   }
-  return { stocks: stocks.data!.map((s) => ({ ticker: s.ticker, name: s.coverage.name, locked: s.locked })), swapsLeft };
+  return { plan, stocks: stocks.data!.map((s) => ({ ticker: s.ticker, name: s.coverage.name, locked: s.locked })), swapsLeft };
 }
 
 /** 이미 내 종목이면 아무 일 없음(DB가 건너뜀, 이력 없음). 커버 범위 밖 티커는 FK가 막아 throw */

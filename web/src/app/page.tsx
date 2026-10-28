@@ -19,7 +19,7 @@ const CTA = `${BUTTON} min-h-12 px-8 text-sm`;
 const NAV_LINK = "inline-flex min-h-12 items-center text-nav font-semibold tracking-wider uppercase hover:text-hover";
 
 // 샘플 카드: 카드와 같은 컴포넌트·같은 규칙의 문구(card-copy-rules 검사기 통과). 수치는 예시
-const SAMPLES: CardView[] = [
+const SAMPLES = [
   {
     ticker: "AAPL",
     name: "Apple",
@@ -56,7 +56,7 @@ const SAMPLES: CardView[] = [
     leverageTag: null,
     checked: null,
   },
-];
+] satisfies CardView[];
 
 const STATS = [
   ["30", "Seconds to read every stock"],
