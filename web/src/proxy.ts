@@ -1,14 +1,20 @@
 /**
  * 배포 보호(#25): 모든 요청 앞의 HTTP Basic Auth. matcher가 없어 정적 파일까지 전부 거친다.
- * DASHBOARD_USER·DASHBOARD_PASSWORD 중 하나라도 비면 전부 거부한다(닫힌 쪽).
+ * Basic 성공 때 1년짜리 쿠키를 심어 기기당 한 번만 로그인한다(사용자 결정 2026-10-28).
+ * DASHBOARD_USER·DASHBOARD_PASSWORD 중 하나라도 비면 쿠키가 있어도 전부 거부한다(닫힌 쪽).
  */
-import { hash, timingSafeEqual } from "node:crypto";
+import { hash, hkdfSync, timingSafeEqual } from "node:crypto";
 import { NextResponse, type NextRequest } from "next/server";
 
 import { APP_NAME, AUTH_REQUIRED } from "@/lib/copy";
 
 // 해시로 길이를 맞춰야 timingSafeEqual을 쓸 수 있고, 길이 차이로 새는 정보도 없앤다
 const same = (a: string, b: string) => timingSafeEqual(hash("sha256", a, "buffer"), hash("sha256", b, "buffer"));
+
+const COOKIE = "m30_auth";
+// 새 비밀값 없이 비밀번호에서 만든다(HKDF = HMAC-SHA256 두 번): 비밀번호를 바꾸면 모든 쿠키가 무효, 쿠키에서 아이디·비밀번호를 되돌릴 수 없다.
+// 아이디는 salt 자리(info는 1024바이트 제한). createHmac 체이닝은 DB 쓰기 검사(guards.test의 update 호출)에 걸려 한 번에 계산한다
+const token = (user: string, password: string) => Buffer.from(hkdfSync("sha256", password, user, "m30-dashboard-auth", 32)).toString("base64url");
 
 export function proxy(request: NextRequest) {
   const user = process.env.DASHBOARD_USER;
@@ -17,9 +23,15 @@ export function proxy(request: NextRequest) {
   const decoded = encoded ? Buffer.from(encoded, "base64").toString("utf8") : "";
   const colon = decoded.indexOf(":"); // 아이디에는 콜론이 없고 비밀번호에는 있을 수 있다(RFC 7617)
 
-  if (user && password && colon >= 0) {
+  if (user && password) {
+    // 쿠키를 먼저 본다: 로그인 뒤 브라우저가 Basic 헤더를 계속 보내도 쿠키를 다시 심지 않는다(만료는 처음 로그인 + 1년)
+    if (same(request.cookies.get(COOKIE)?.value ?? "", token(user, password))) return NextResponse.next();
     // 비트 AND: 아이디가 틀려도 비밀번호 비교를 건너뛰지 않는다
-    if (+same(decoded.slice(0, colon), user) & +same(decoded.slice(colon + 1), password)) return NextResponse.next();
+    if (colon >= 0 && (+same(decoded.slice(0, colon), user) & +same(decoded.slice(colon + 1), password))) {
+      const res = NextResponse.next();
+      res.cookies.set(COOKIE, token(user, password), { httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 31536000 });
+      return res;
+    }
   }
   return new Response(AUTH_REQUIRED, {
     status: 401,
