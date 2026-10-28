@@ -1,5 +1,5 @@
-import type { CardView, ChangeView, LineStatus } from "@/lib/card-view";
-import { PREV_CLOSE, SUMMARY_TOMORROW } from "@/lib/copy";
+import type { CardView, ChangeView, LineView } from "@/lib/card-view";
+import { PREV_CLOSE, PRICE_FACTS_IN_PLUS, SUMMARY_TOMORROW } from "@/lib/copy";
 
 // 상태는 표시 방식에만 쓴다(색). 문구는 card.lines의 text 그대로. 모양은 사용자 시안의 샘플 카드(#27)
 const CHANGE_TONE: Record<ChangeView["tone"], string> = {
@@ -9,11 +9,12 @@ const CHANGE_TONE: Record<ChangeView["tone"], string> = {
   delayed: "text-muted",
   unsupported: "text-muted",
 };
-const LINE_TONE: Record<LineStatus, string> = {
+const LINE_TONE: Record<LineView["status"], string> = {
   checked_found: "text-foreground",
   checked_none: "text-muted",
   delayed: "text-muted",
   unsupported: "text-muted",
+  locked: "text-muted", // 무료 범위의 세 번째 줄(#9). 문구가 잠금을 말한다
 };
 
 export function StockCard({ card }: { card: CardView }) {
@@ -40,7 +41,7 @@ export function StockCard({ card }: { card: CardView }) {
             data-status={line.status}
             className={`border-t border-border py-3 wrap-break-word last:pb-0 ${LINE_TONE[line.status]}`}
           >
-            {line.text}
+            {line.status === "locked" ? PRICE_FACTS_IN_PLUS : line.text}
           </li>
         ))}
       </ul>

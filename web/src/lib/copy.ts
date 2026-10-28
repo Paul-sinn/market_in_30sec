@@ -7,6 +7,9 @@
 export const UPDATE_DELAYED = "Update delayed"; // 등락률 지연, 아직 없는 줄(축소판의 첫 번째 줄)
 export const NOT_COVERED = "Not covered yet"; // 등락률 미지원
 
+// HANDOFF 3-2·GLOSSARY: 무료 범위의 세 번째 줄 자리(#9). 서버는 잠금 상태만 보내고 글자는 이 문구뿐이다
+export const PRICE_FACTS_IN_PLUS = "Price facts in Plus";
+
 // HANDOFF 3-3
 export const NOT_INVESTMENT_ADVICE = "Not investment advice";
 export const CHECKED_PREFIX = "Checked"; // 카드 하단 "Checked 7:30 AM ET · SEC filings"

@@ -2,7 +2,9 @@
 import { CHECKED_PREFIX, MY_STOCK_NOTICE, NOT_COVERED, UPDATE_DELAYED } from "./copy";
 
 export type LineStatus = "checked_found" | "checked_none" | "delayed" | "unsupported"; // DB enum line_status
-export type LineView = { text: string; status: LineStatus };
+type TextLine = { text: string; status: LineStatus };
+/** locked = 무료 범위의 세 번째 줄(#9): 글자 없이 상태만 온다. 화면은 copy.ts의 PRICE_FACTS_IN_PLUS */
+export type LineView = TextLine | { status: "locked" };
 export type ChangeView = { text: string; tone: "up" | "down" | "flat" | "delayed" | "unsupported" };
 export type CardView = {
   ticker: string;
@@ -53,7 +55,7 @@ export function changeView(pct: number | null, status: LineStatus): ChangeView {
 }
 
 /** 없는 줄(아직 안 만듦, 축소판의 첫 번째 줄)도 숨기지 않고 지연으로 그린다. */
-export function lineView(line: LineView | null): LineView {
+export function lineView(line: TextLine | null): TextLine {
   return line ?? { text: UPDATE_DELAYED, status: "delayed" };
 }
 
