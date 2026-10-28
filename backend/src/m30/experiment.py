@@ -1,5 +1,6 @@
 """실데이터 실험(#20) 종목. HANDOFF 7장. CIK는 SEC 공식 티커 목록에서 채운다(experiment_coverage).
-실행기(#26)가 매 실행 전 upsert_coverage(experiment_coverage(ticker_ciks(client.get))). SourceError면 건너뛰고 지난 행을 쓴다."""
+실행기(#26)가 매 실행 전 upsert_coverage(experiment_coverage(ticker_ciks(client.get))). SourceError면 건너뛰고 지난 행을 쓴다.
+그다음 add_default_tickers(거래일, EXPERIMENT_DEFAULT_TICKERS): 그 분기 기본 종목(#8 D7). 유저가 0명이면 생성 대상 = 이 15종목."""
 
 import dataclasses
 from collections.abc import Mapping
@@ -27,6 +28,8 @@ EXPERIMENT_COVERAGE: tuple[Coverage, ...] = (
     Coverage("TQQQ", "ProShares UltraPro QQQ", leverage=Decimal("3")),
     Coverage("SCHD", "Schwab U.S. Dividend Equity ETF"),
 )
+# 2026Q4 기본 종목(#8 D7). SPY·QQQ 포함(테스트로 고정). 아레나 종목은 목록이 생기면 포함 검사 추가(#13 보류)
+EXPERIMENT_DEFAULT_TICKERS: tuple[str, ...] = tuple(c.ticker for c in EXPERIMENT_COVERAGE)
 # U3 = A: ETF는 CIK를 비운다 → 첫 번째 줄 Not covered yet. ETF 카드의 소식은 신탁 공시가 아니라 편입 종목 소식이다(#10)
 EXPERIMENT_ETFS = frozenset({"SPY", "QQQ", "TQQQ", "SCHD"})
 

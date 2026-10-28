@@ -1,8 +1,10 @@
 """DB 픽스처. 로컬 Supabase만 쓴다. 테스트마다 public 테이블을 비운다."""
 
+from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
@@ -37,7 +39,22 @@ def admin(settings):
         ]
         if tables:
             conn.execute(f"truncate {', '.join(tables)} cascade")
+        conn.execute("delete from auth.users")  # 테스트 유저(make_user). settings가 로컬 DB만 받는다
         yield conn
+
+
+@pytest.fixture
+def make_user(admin) -> Callable[..., UUID]:
+    """make_user(plan="free", timezone="America/Los_Angeles") -> user id.
+    auth.users(id)는 admin, user_profile은 service_role로 넣는다."""
+    def make(plan: str = "free", timezone: str = "America/Los_Angeles") -> UUID:
+        [uid] = admin.execute("insert into auth.users (id) values (gen_random_uuid()) returning id").fetchone()
+        with admin.transaction():
+            admin.execute("set local role service_role")
+            admin.execute("insert into public.user_profile (user_id, plan, timezone) values (%s, %s, %s)", (uid, plan, timezone))
+        return uid
+
+    return make
 
 
 @pytest.fixture

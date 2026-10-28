@@ -369,6 +369,7 @@ def run_edgar(store, get, day=FRI):
     """공시만 EDGAR 어댑터, 나머지는 빈 가짜. LLM은 실패시켜 분류 요청 하나만 남긴다(첫 번째 줄·판정은 부르지 않는다)."""
     scenario = Scenario(coverage=COVERAGE, prices={}, failures={(Source.LLM, None): FailurePlan("error")})
     store.upsert_coverage(scenario.coverage)
+    store.add_default_tickers(day, [c.ticker for c in scenario.coverage])  # 유저 없음 → 시나리오 커버 범위 전체가 대상
     llm, sleeps = FakeLLM(scenario), []
     summary = MorningPipeline(
         prices=FakePriceSource(scenario),

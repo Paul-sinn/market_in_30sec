@@ -14,6 +14,7 @@ import pytest
 from m30.adapters import AccessDeniedError, Source, SourceError, TransientSourceError
 from m30.adapters.edgar import SUBMISSIONS_URL, TICKERS_URL
 from m30.adapters.unavailable import NoPriceSource
+from m30.experiment import EXPERIMENT_DEFAULT_TICKERS
 from m30.models import LineStatus
 from m30.pipeline.lines import NEWS_SCOPE, NO_FILINGS, NOT_COVERED, PRICE_SCOPE, UPDATE_DELAYED
 from m30.pipeline.production import run_failed, run_production
@@ -53,6 +54,18 @@ def test_운영_실행은_실제_공시와_미연결_출처만_써서_가짜_데
     assert run_failed(summary) is False
     assert store.list_raw_indicators(FRI) == []
     assert get.urls == [TICKERS_URL] + [SUBMISSIONS_URL.format(cik=cik) for cik in sorted(COMPANY_CIKS.values())]
+
+
+def test_운영_실행은_그_분기_기본_종목으로_실험_15종목을_저장한다(store):
+    assert {"SPY", "QQQ"} <= set(EXPERIMENT_DEFAULT_TICKERS)  # 지수 대신 SPY·QQQ(부모 스펙: 선정 시 보장)
+    experiment = sorted(COMPANY_CIKS | dict.fromkeys(ETFS))
+
+    for _ in range(2):  # 재실행해도 그대로
+        run_production(store, FRI, get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
+
+        assert [c.ticker for c in store.list_generation_targets(date(2026, 10, 1))] == experiment  # 유저 0명 = 기본 종목
+        assert [c.ticker for c in store.list_generation_targets(date(2026, 12, 31))] == experiment  # 2026Q4 끝까지
+        assert store.list_generation_targets(date(2026, 9, 30)) == []  # 2026Q3에는 넣지 않았다
 
 
 def test_운영_실행에_Tiingo_시세를_넣으면_15종목_모두_등락률과_세_번째_줄을_계산한다(store, monkeypatch):
