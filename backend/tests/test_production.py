@@ -17,11 +17,13 @@ from m30.adapters.edgar import SUBMISSIONS_URL, TICKERS_URL
 from m30.adapters.unavailable import NoPriceSource
 from m30.db.store import CardStore, connect
 from m30.experiment import EXPERIMENT_DEFAULT_TICKERS
-from m30.models import LineStatus
+from m30.models import FundHoldings, LineStatus
+from m30.adapters.nport import MF_TICKERS_URL
 from m30.pipeline.lines import NEWS_SCOPE, NO_FILINGS, NOT_COVERED, PRICE_SCOPE, UPDATE_DELAYED
 from m30.pipeline.production import run_failed, run_production
 from production_probe import COMPANY_CIKS, DRAFT_CANARY, ETFS, NoCallLLM, quiet_day
 from test_edgar import RecordedGet
+from test_nport import OTHER_SERIES, QQQ_8, QQQ_CIK, SCHD_8, SCHWAB_CIK, SPY_8, SPY_CIK, txt_url
 from test_tiingo import body, row, source
 
 FRI = date(2026, 10, 16)
@@ -34,18 +36,34 @@ def lines(card):
     }
 
 
-def test_운영_실행은_실제_공시와_미연결_출처만_써서_가짜_데이터_없이_카드를_만든다(store):
+# 녹화 N-PORT 보고(test_nport) 상위 10개 회사 중 실험 커버 범위에 있는 것. 손으로 센 값
+QQQ_TOP = FundHoldings(LineStatus.CHECKED_FOUND, ("AAPL", "AMZN", "GOOGL", "MSFT", "NVDA", "TSLA"), 6, 4)  # Micron·AMD·Intel·Broadcom
+ETF_FUNDS = {
+    "QQQ": QQQ_TOP,
+    "SCHD": FundHoldings(LineStatus.CHECKED_FOUND, ("KO",), 1, 9),
+    "SPY": FundHoldings(LineStatus.CHECKED_FOUND, ("AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "TSLA"), 7, 3),  # Broadcom·Micron·Lilly
+    "TQQQ": QQQ_TOP,
+}
+ETF_SCOPES = {"QQQ": "SEC filings of 6 top holdings", "SCHD": "SEC filings of 1 top holding",
+              "SPY": "SEC filings of 7 top holdings", "TQQQ": "SEC filings of 6 top holdings"}
+
+
+def test_운영_실행은_실제_공시·편입_보고와_미연결_출처만_써서_가짜_데이터_없이_카드를_만든다(store):
     get = RecordedGet(quiet_day())
 
     summary, refreshed = run_production(store, FRI, get=get, llm=NoCallLLM(), prices=NoPriceSource())
 
     assert refreshed is True
     assert {c.ticker: c.cik for c in store.list_coverage()} == COMPANY_CIKS | dict.fromkeys(ETFS)
+    # 편입 종목을 읽을 ETF(#10 D2). TQQQ는 QQQ의 편입 종목을 쓴다
+    assert {c.ticker: c.holdings_ticker for c in store.list_coverage() if c.holdings_ticker} == {
+        "SPY": "SPY", "QQQ": "QQQ", "TQQQ": "QQQ", "SCHD": "SCHD"}
+    assert summary.funds == ETF_FUNDS
     cards = store.list_cards(FRI)
     assert len(cards) == summary.cards_saved == 15
     for card in cards:
         assert (card.change_pct, card.change_status) == (None, LineStatus.DELAYED)  # 시세 출처 없음(#18 전)
-        news = (NOT_COVERED, LineStatus.UNSUPPORTED, None) if card.ticker in ETFS else (NO_FILINGS, LineStatus.CHECKED_NONE, NEWS_SCOPE)
+        news = (NO_FILINGS, LineStatus.CHECKED_NONE, ETF_SCOPES.get(card.ticker, NEWS_SCOPE))  # 편입 종목 공시도 없는 날
         assert lines(card) == {
             "news": news,
             "event": (NOT_COVERED, LineStatus.UNSUPPORTED, None),  # 일정 출처 없음(#21 전) = 미지원
@@ -55,7 +73,13 @@ def test_운영_실행은_실제_공시와_미연결_출처만_써서_가짜_데
     assert summary.llm_calls == 0
     assert run_failed(summary) is False
     assert store.list_raw_indicators(FRI) == []
-    assert get.urls == [TICKERS_URL] + [SUBMISSIONS_URL.format(cik=cik) for cik in sorted(COMPANY_CIKS.values())]
+    # 편입 보고는 fund 순(QQQ·SCHD·SPY, TQQQ는 QQQ)으로 한 번씩. 편입 어댑터는 두 목록을 자기 인스턴스에서 처음 필요할 때 받는다
+    assert get.urls == [
+        TICKERS_URL,
+        MF_TICKERS_URL, SUBMISSIONS_URL.format(cik=QQQ_CIK), txt_url(QQQ_CIK, QQQ_8), TICKERS_URL,
+        SUBMISSIONS_URL.format(cik=SCHWAB_CIK), txt_url(SCHWAB_CIK, OTHER_SERIES), txt_url(SCHWAB_CIK, SCHD_8),
+        SUBMISSIONS_URL.format(cik=SPY_CIK), txt_url(SPY_CIK, SPY_8),
+    ] + [SUBMISSIONS_URL.format(cik=cik) for cik in sorted(COMPANY_CIKS.values())]
 
 
 def test_운영_실행은_그_분기_기본_종목으로_실험_15종목을_저장한다(store):
@@ -169,7 +193,9 @@ def run_probe(settings, situation, tiingo_key=None, extra=()):
 @pytest.mark.parametrize(
     "situation, exit_code, lines",
     [
-        ("quiet", 0, ["2026-10-16 cards_saved=15 resumed=- ", "coverage: refreshed", "prices=none"]),
+        ("quiet", 0, ["2026-10-16 cards_saved=15 resumed=- ", "coverage: refreshed", "prices=none",
+                      "holdings: QQQ=checked_found(unmatched 4) SCHD=checked_found(unmatched 9)"
+                      " SPY=checked_found(unmatched 3) TQQQ=checked_found(unmatched 4)"]),
         ("denied", 1, ["ACCESS DENIED (not retried): sec_filings", "cards_saved=15", "coverage: refreshed"]),
         ("no_tickers", 1, ["cards_saved=0", "coverage: NOT REFRESHED (sec ticker list failed), stored rows used"]),
     ],
@@ -240,5 +266,5 @@ def test_운영_품질_확인은_TIINGO_API_KEY가_있어도_시세를_부르지
     assert "prices=none" in lines  # 무료 키 시간당 50회 보호: 품질 확인 대상은 첫 번째 줄
     assert lines.index("prices=none") < lines.index(
         "quality 2026-10-16 classify=claude-haiku-5-5 newsline=claude-haiku-5-5 review=claude-haiku-5-5 prices=none")
-    assert "lines news checked_found=0 checked_none=11 delayed=0 unsupported=4" in lines
+    assert "lines news checked_found=0 checked_none=15 delayed=0 unsupported=0" in lines  # ETF 4개도 편입 종목 확인함·없음
     assert "hold -" in lines and "classify -" in lines

@@ -1,0 +1,56 @@
+{
+  "coverage": [
+    {"ticker": "AAPL", "name": "Apple Inc.", "cik": "0000320193"},
+    {"ticker": "AVGO", "name": "Broadcom Inc.", "cik": "0001730168"},
+    {"ticker": "MSFT", "name": "Microsoft Corporation", "cik": "0000789019"},
+    {"ticker": "QQQ", "name": "Invesco QQQ Trust", "holdings_ticker": "QQQ"},
+    {"ticker": "SPY", "name": "SPDR S&P 500 ETF Trust", "holdings_ticker": "SPY"},
+    {"ticker": "TQQQ", "name": "ProShares UltraPro QQQ", "leverage": 3, "holdings_ticker": "QQQ"}
+  ],
+  "prices": {},
+  "events": {
+    "SPY": [{"kind": "ex_dividend", "day": "2026-12-19", "amount": 1.83}]
+  },
+  "filings": {
+    "0000789019": [
+      {"accession": "0000789019-26-000045", "form": "8-K", "accepted_at": "2026-10-15T12:00:00-04:00",
+       "items": ["5.02"], "body": null, "exhibit99": null}
+    ],
+    "0000320193": [
+      {"accession": "0000320193-26-000101", "form": "8-K", "accepted_at": "2026-10-15T16:31:00-04:00",
+       "items": ["2.02", "9.01"],
+       "body": "Item 2.02 Results of Operations and Financial Condition. Apple Inc. issued a press release regarding its financial results.",
+       "exhibit99": "Apple reports fourth quarter results. Revenue was $102.5 billion."}
+    ],
+    "0001730168": [
+      {"accession": "0001730168-26-000012", "form": "8-K", "accepted_at": "2026-10-15T17:00:00-04:00",
+       "items": ["1.01"],
+       "body": "Item 1.01 Entry into a Material Definitive Agreement. Broadcom Inc. agreed to acquire a software maker.",
+       "exhibit99": null}
+    ]
+  },
+  "holdings": {
+    "SPY": {"accession": "0000884394-26-000101", "period_end": "2026-06-30", "holdings": [
+      {"name": "Apple Inc", "cik": "0000320193", "pct": 7.1, "asset_category": "EC"},
+      {"name": "Microsoft Corp", "cik": "0000789019", "pct": 6.5, "asset_category": "EC"},
+      {"name": "NVIDIA Corp", "cik": "0001045810", "pct": 6.0, "asset_category": "EC"},
+      {"name": "Amazon.com Inc", "cik": null, "pct": 3.8, "asset_category": "EC"},
+      {"name": "E-mini S&P 500 Futures", "cik": null, "pct": 0.2, "asset_category": null}
+    ]},
+    "QQQ": {"accession": "0001067839-26-000055", "period_end": "2026-06-30", "holdings": [
+      {"name": "Microsoft Corp", "cik": "0000789019", "pct": 8.9, "asset_category": "EC"},
+      {"name": "Broadcom Inc", "cik": "0001730168", "pct": 5.2, "asset_category": "EC"}
+    ]}
+  },
+  "llm_replies": [
+    {"items": [
+      {"id": 1, "ticker": "MSFT", "kind": "leadership", "importance": 3, "opinion": false},
+      {"id": 2, "ticker": "AAPL", "kind": "earnings", "importance": 5, "opinion": false},
+      {"id": 3, "ticker": "AVGO", "kind": "deal", "importance": 4, "opinion": false}
+    ]},
+    {"sentence": "Apple reported Q4 revenue of $102.5B"},
+    {"sentence": "Broadcom agreed to acquire a software maker"},
+    {"label": "fact"},
+    {"label": "fact"}
+  ]
+}

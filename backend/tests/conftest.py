@@ -92,6 +92,13 @@ def filings_day():
 
 
 @pytest.fixture
+def etf_lite():
+    """거래일 FRI 2026-10-16 ETF 카드(#10). SPY 편입 AAPL·MSFT(+못 찾은 회사 2), QQQ 편입 MSFT·AVGO, TQQQ(3배) → QQQ 편입.
+    공시 중요도 AAPL 5 > AVGO 4 > MSFT 3(MSFT는 본문 없음 → 대체 줄). AVGO가 생성 대상이든 아니든 LLM 응답 순서가 같다."""
+    return SCENARIOS / "etf_lite.json"
+
+
+@pytest.fixture
 def full_card():
     """세 줄을 다 채운 정상 카드. 커버 범위에 AAPL이 있어야 저장된다."""
     checked = datetime(2026, 10, 16, 7, 30, tzinfo=ET)

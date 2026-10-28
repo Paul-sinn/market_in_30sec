@@ -71,6 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     from m30.adapters.fake import (
         FakeEventSource,
         FakeFilingSource,
+        FakeHoldingsSource,
         FakeIndicatorSource,
         FakeLLM,
         FakePriceSource,
@@ -88,6 +89,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 events=FakeEventSource(scenario),
                 filings=FakeFilingSource(scenario),
                 indicators=FakeIndicatorSource(scenario),
+                holdings=FakeHoldingsSource(scenario),
                 llm=AnthropicLLM(llm_settings) if args.quality else FakeLLM(scenario),  # 품질 확인은 llm_replies를 쓰지 않는다
                 store=store,
             ).run(args.trading_day)
@@ -132,6 +134,10 @@ def _print_summary(summary: RunSummary) -> None:
         f" batches={summary.classify_batches} skipped={skipped} llm_calls={summary.llm_calls}/{summary.llm_call_limit}"
     )
     print("news: " + " ".join(f"{ticker}={n.status}" for ticker, n in summary.news.items()))
+    if summary.funds:  # ETF 편입 종목: 상태 코드와 커버 범위에서 못 찾은 회사 수만(회사 이름은 찍지 않는다)
+        print("holdings: " + " ".join(
+            f"{ticker}={f.status}" + (f"(unmatched {f.unmatched})" if f.unmatched else "") for ticker, f in summary.funds.items()
+        ))
     # 문장은 찍지 않는다(통과한 줄은 카드에, 걸린 줄은 보류함에 있다). 종목별 결과 코드만
     drafts = " ".join(f"{ticker}={d.problem or 'ok'}" for ticker, d in summary.drafts.items()) or "-"
     print(f"drafts: {drafts}")

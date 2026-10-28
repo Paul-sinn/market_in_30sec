@@ -1,14 +1,23 @@
 """입구 1: 시나리오 → MorningPipeline.run → 저장소 읽기 함수로 확인."""
 
+import dataclasses
+import json
+import subprocess
+import sys
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from types import SimpleNamespace
 
 import pytest
 
+from m30.adapters import Source
 from m30.adapters.events import Earnings, EarningsTiming
+from m30.adapters.holdings import Holding
 from m30.adapters.fake import (
+    FailurePlan,
     FakeEventSource,
     FakeFilingSource,
+    FakeHoldingsSource,
     FakeIndicatorSource,
     FakeLLM,
     FakePriceSource,
@@ -17,9 +26,13 @@ from m30.adapters.fake import (
 )
 from m30.adapters.prices import DailyBar
 from m30.config import ET
-from m30.models import CardStatus, Coverage, LineStatus
+from m30.models import CardStatus, Coverage, FundHoldings, HoldStage, LineStatus
+from m30.pipeline.collect import FailureReason, SourceFailure
 from m30.pipeline.morning import MorningPipeline
+from m30.pipeline.newsline import NEWSLINE_SYSTEM
 from m30.trading_day import is_trading_day
+from conftest import SCENARIOS
+from test_collect_classify import CrashingPrices
 from test_my_stock import add, set_plan
 
 TUE = date(2026, 10, 13)
@@ -40,6 +53,7 @@ def run(store, scenario, day=FRI):
         events=FakeEventSource(scenario),
         filings=FakeFilingSource(scenario),
         indicators=FakeIndicatorSource(scenario),
+        holdings=FakeHoldingsSource(scenario),
         llm=FakeLLM(scenario),
         store=store,
         sleep=lambda seconds: None,  # 실제로 기다리지 않는다
@@ -452,6 +466,7 @@ def test_생성_대상은_활성_종목과_기본_종목의_합집합이다(stor
         events=FakeEventSource(scenario),
         filings=filings,
         indicators=FakeIndicatorSource(scenario),
+        holdings=FakeHoldingsSource(scenario),
         llm=FakeLLM(scenario),
         store=store,
         sleep=lambda seconds: None,
@@ -461,3 +476,362 @@ def test_생성_대상은_활성_종목과_기본_종목의_합집합이다(stor
     assert summary.cards_saved == 3  # MSFT는 셋 다에 있어도 하나
     assert sorted(filings.calls) == [ciks["AAPL"], ciks["MSFT"], ciks["NVDA"]]  # 수집도 대상만
     assert summary.llm_call_limit == 3 * 4 + 0  # 대상 3종목 × 4 + 묶음 0
+
+
+# ETF 카드 라이트 버전(#10). 시나리오 etf_lite.json: AVGO는 커버 범위에만 있다(QQQ 편입 종목, 기본 종목 아님)
+ETF_DEFAULTS = ("AAPL", "MSFT", "QQQ", "SPY", "TQQQ")
+
+
+def run_etf(store, scenario, day=FRI, defaults=ETF_DEFAULTS, **replaced):
+    """기본 종목 = defaults. replaced: 바꿔 넣을 출처(예: prices=…). 돌려주는 값: summary, 가짜 출처 6개, 티커 → 저장된 카드."""
+    if not isinstance(scenario, Scenario):
+        scenario = load_scenario(scenario)
+    store.upsert_coverage(scenario.coverage)
+    store.add_default_tickers(day, defaults)
+    fakes = {
+        "prices": FakePriceSource(scenario),
+        "events": FakeEventSource(scenario),
+        "filings": FakeFilingSource(scenario),
+        "indicators": FakeIndicatorSource(scenario),
+        "holdings": FakeHoldingsSource(scenario),
+        "llm": FakeLLM(scenario),
+    } | replaced
+    summary = MorningPipeline(**fakes, store=store, sleep=lambda seconds: None).run(day)
+    return SimpleNamespace(summary=summary, cards=cards_by_ticker(store, day), **fakes)
+
+
+def test_가짜_N_PORT_보고로_ETF마다_상위_편입_종목을_찾고_보고를_저장한다(store, etf_lite):
+    ran = run_etf(store, etf_lite)
+
+    qqq = FundHoldings(LineStatus.CHECKED_FOUND, ("AVGO", "MSFT"), 2, 0)  # AVGO는 생성 대상이 아니어도 편입 종목
+    assert ran.summary.funds == {
+        "QQQ": qqq,
+        "SPY": FundHoldings(LineStatus.CHECKED_FOUND, ("AAPL", "MSFT"), 2, 2),  # NVIDIA(커버 범위 밖)·Amazon(CIK 없음), 선물 제외
+        "TQQQ": qqq,
+    }
+    spy = store.latest_holdings("SPY")
+    assert (spy.accession, spy.period_end, len(spy.holdings)) == ("0000884394-26-000101", date(2026, 6, 30), 5)
+    assert spy.holdings[0] == Holding("Apple Inc", "0000320193", Decimal("7.1"), "EC")
+    assert store.latest_holdings("TQQQ") is None  # TQQQ는 QQQ의 보고를 쓴다
+
+
+AAPL_8K, MSFT_8K, AVGO_8K = "0000320193-26-000101", "0000789019-26-000045", "0001730168-26-000012"
+
+
+def news(card):
+    return (card.news_line.text, card.news_line.status, card.news_line.source_scope, card.news_line_accession)
+
+
+def newsline_companies(llm):
+    """첫 번째 줄 초안 요청이 쓴 회사, 요청 순서대로."""
+    return [json.loads(r.user.split("<news>\n", 1)[1].split("\n</news>", 1)[0])["company"]
+            for r in llm.requests if r.system == NEWSLINE_SYSTEM]
+
+
+def test_ETF_첫_번째_줄은_상위_편입_종목_소식_중_가장_중요한_것이고_출처와_확인_범위가_붙는다(store, etf_lite):
+    ran = run_etf(store, etf_lite)
+
+    two = "SEC filings of 2 top holdings"
+    assert news(ran.cards["AAPL"]) == ("Apple reported Q4 revenue of $102.5B (SEC filing)", LineStatus.CHECKED_FOUND,
+                                       "SEC filings", AAPL_8K)
+    # AAPL 중요도 5 > MSFT 3. 같은 공시라 AAPL 카드와 같은 문장, +N more는 SPY 후보 수 − 1
+    assert news(ran.cards["SPY"]) == ("Apple reported Q4 revenue of $102.5B +1 more (SEC filing)", LineStatus.CHECKED_FOUND,
+                                      two, AAPL_8K)
+    # AVGO 4 > MSFT 3. AVGO는 생성 대상이 아니라 카드가 없고, 그 공시만 초안·검수를 한 번 더 한다
+    assert news(ran.cards["QQQ"]) == ("Broadcom agreed to acquire a software maker +1 more (SEC filing)",
+                                      LineStatus.CHECKED_FOUND, two, AVGO_8K)
+    assert "AVGO" not in ran.cards
+    assert ("AVGO", AVGO_8K) in {(r.ticker, r.accession) for r in store.list_classifications(FRI)}  # 편입 종목 공시도 분류는 저장
+    assert newsline_companies(ran.llm) == ["Apple Inc.", "Broadcom Inc."]  # SPY는 AAPL 초안을, TQQQ는 QQQ 초안을 다시 쓴다
+    assert len(ran.llm.requests) == 5  # 분류 1 + 초안 2 + 판정 2 (MSFT는 본문이 없어 부르지 않는다)
+    assert ran.summary.llm_call_limit == 5 * 4 + 1  # 생성 대상 5 × 4 + 분류 묶음 1. 편입 종목 공시는 묶음에 들어 있다
+
+
+CLASSIFY_ETF = {"items": [{"id": 1, "ticker": "MSFT", "kind": "leadership", "importance": 3, "opinion": False},
+                          {"id": 2, "ticker": "AAPL", "kind": "earnings", "importance": 5, "opinion": False}]}
+APPLE_LINE, FACT = {"sentence": "Apple reported Q4 revenue of $102.5B"}, {"label": "fact"}
+
+
+def etf_replies(*replies):
+    """etf_lite에서 LLM 응답만 바꾼다. replies: dict(JSON으로) 또는 str(그대로)."""
+    return dataclasses.replace(load_scenario(SCENARIOS / "etf_lite.json"),
+                               llm_replies=[r if isinstance(r, str) else json.dumps(r) for r in replies])
+
+
+@pytest.mark.parametrize("defaults", [("AAPL", "MSFT"), ("AAPL", "MSFT", "SPY")], ids=["ETF_없음", "SPY_있음"])
+def test_ETF_1등_공시가_생성_대상_종목의_1등이면_LLM을_더_부르지_않는다(store, defaults):
+    ran = run_etf(store, etf_replies(CLASSIFY_ETF, APPLE_LINE, FACT), defaults=defaults)
+
+    assert len(ran.llm.requests) == 3  # 분류 1 + Apple 초안 1 + 판정 1. AVGO는 QQQ가 대상이 아니라 받지 않는다
+    assert ran.cards["AAPL"].news_line.text == "Apple reported Q4 revenue of $102.5B (SEC filing)"
+
+
+def test_ETF_1등_초안이_검수에_두_번_걸리면_편입_회사_이름의_대체_줄이_들어가고_ETF_카드에도_보류함_행이_생긴다(store, etf_lite):
+    classify = load_scenario(etf_lite).llm_replies[0]
+    apple, broadcom = {"sentence": "Apple reported Q4 revenue of $999B"}, {"sentence": "Broadcom agreed to pay $5B"}  # 원본에 없는 숫자
+    ran = run_etf(store, etf_replies(classify, apple, broadcom, apple, broadcom))
+
+    lines = {t: c.news_line.text for t, c in ran.cards.items()}
+    assert lines == {
+        "AAPL": "Apple reported quarterly results (SEC filing)",
+        "MSFT": "Microsoft announced a leadership update (SEC filing)",
+        "QQQ": "Broadcom signed a major agreement +1 more (SEC filing)",  # 생성 대상이 아닌 AVGO의 커버 범위 이름
+        "SPY": "Apple reported quarterly results +1 more (SEC filing)",
+        "TQQQ": "Broadcom signed a major agreement +1 more (SEC filing)",
+    }
+    holds = [(h.ticker, h.accession, h.stage, h.replacement_text) for h in store.list_hold_items(FRI)]
+    assert holds == [
+        ("AAPL", AAPL_8K, HoldStage.NUMBERS, lines["AAPL"]),
+        ("MSFT", MSFT_8K, HoldStage.DRAFT, lines["MSFT"]),  # 본문 없음
+        ("QQQ", AVGO_8K, HoldStage.NUMBERS, lines["QQQ"]),
+        ("SPY", AAPL_8K, HoldStage.NUMBERS, lines["SPY"]),
+        ("TQQQ", AVGO_8K, HoldStage.NUMBERS, lines["TQQQ"]),
+    ]
+    assert len(ran.llm.requests) == 5  # 분류 1 + (Apple·Broadcom 초안 + 재생성) 4. 같은 공시는 ETF가 다시 검수하지 않는다
+
+
+def test_편입_종목_공시가_없으면_ETF_첫_번째_줄은_No_new_SEC_filings_found이고_확인한_편입_회사_수를_범위로_쓴다(store, etf_lite):
+    quiet = load_scenario(etf_lite)
+    qqq = quiet.holdings["QQQ"]
+    quiet = dataclasses.replace(quiet, filings={}, llm_replies=[],
+                                holdings=quiet.holdings | {"QQQ": dataclasses.replace(qqq, holdings=qqq.holdings[:1])})  # MSFT만
+    ran = run_etf(store, quiet)
+
+    none = ("No new SEC filings found", LineStatus.CHECKED_NONE)
+    assert {t: news(ran.cards[t]) for t in ("QQQ", "SPY", "TQQQ")} == {
+        "QQQ": (*none, "SEC filings of 1 top holding", None),
+        "SPY": (*none, "SEC filings of 2 top holdings", None),
+        "TQQQ": (*none, "SEC filings of 1 top holding", None),
+    }
+    assert ran.llm.requests == []
+
+
+def quiet_etf(**changes):
+    """etf_lite에서 공시·LLM 응답을 뺀 날. changes로 필드를 바꾼다."""
+    return dataclasses.replace(load_scenario(SCENARIOS / "etf_lite.json"), filings={}, llm_replies=[], **changes)
+
+
+SPY_REPORT = load_scenario(SCENARIOS / "etf_lite.json").holdings["SPY"]
+
+
+@pytest.mark.parametrize(
+    "scenario, ticker, fund, calls",
+    [
+        (quiet_etf(coverage=[dataclasses.replace(c, holdings_ticker=None) for c in load_scenario(SCENARIOS / "etf_lite.json").coverage]),
+         "SPY", None, []),
+        (quiet_etf(holdings={}), "SPY", FundHoldings(LineStatus.UNSUPPORTED), ["QQQ", "SPY"]),
+        (quiet_etf(holdings={"SPY": dataclasses.replace(SPY_REPORT, holdings=SPY_REPORT.holdings[2:])}),  # NVIDIA·Amazon·선물만
+         "SPY", FundHoldings(LineStatus.UNSUPPORTED, unmatched=2), ["QQQ", "SPY"]),
+        (quiet_etf(coverage=[c for c in load_scenario(SCENARIOS / "etf_lite.json").coverage if c.ticker != "QQQ"]),
+         "TQQQ", FundHoldings(LineStatus.UNSUPPORTED), ["SPY"]),
+    ],
+    ids=["holdings_ticker_없음", "출처가_다루지_않음", "찾은_회사_없음", "편입을_읽을_ETF가_커버_범위_밖"],
+)
+def test_편입_데이터가_없으면_ETF_첫_번째_줄은_Not_covered_yet이다(store, scenario, ticker, fund, calls):
+    ran = run_etf(store, scenario)
+
+    assert news(ran.cards[ticker]) == ("Not covered yet", LineStatus.UNSUPPORTED, None, None)
+    assert ran.summary.funds.get(ticker) == fund
+    assert ran.holdings.calls == calls
+    assert ran.summary.failures == ()  # 미지원은 실패가 아니다
+
+
+HOLDINGS_DELAYED = ("Update delayed", LineStatus.DELAYED, "SEC filings of top holdings", None)
+HOLDING_ERRORS = {  # 실패 종류 → (QQQ 호출 수, SPY도 막혔나, 실패 사유)
+    "transient": (4, False, FailureReason.RETRIES_EXHAUSTED),
+    "error": (1, False, FailureReason.ERROR),
+    "access_denied": (1, True, FailureReason.ACCESS_DENIED),
+    "rate_limited": (4, False, FailureReason.RETRIES_EXHAUSTED),
+}
+
+
+@pytest.mark.parametrize("error", HOLDING_ERRORS)
+def test_편입_보고를_못_받고_저장분도_없으면_ETF_첫_번째_줄은_지연이고_실패가_요약에_남는다(store, error):
+    ran = run_etf(store, quiet_etf(failures={(Source.HOLDINGS, "QQQ"): FailurePlan(error)}))  # QQQ가 먼저 불린다
+
+    count, denied, reason = HOLDING_ERRORS[error]
+    assert ran.holdings.calls == ["QQQ"] * count + ([] if denied else ["SPY"])  # 401·403 뒤 SPY는 부르지 않는다
+    assert ran.summary.failures == tuple(SourceFailure(Source.HOLDINGS, f, reason) for f in ["QQQ", *(["SPY"] if denied else [])])
+    delayed = {"QQQ", "TQQQ", *(["SPY"] if denied else [])}
+    for ticker in ("QQQ", "SPY", "TQQQ"):
+        assert (news(ran.cards[ticker]) == HOLDINGS_DELAYED) is (ticker in delayed), ticker
+    assert ran.summary.funds["QQQ"] == ran.summary.funds["TQQQ"] == FundHoldings(LineStatus.DELAYED)
+    assert news(ran.cards["AAPL"])[1] is LineStatus.CHECKED_NONE  # 종목 카드는 그대로
+
+
+def test_편입_종목_CIK_하나라도_공시_수집에_실패하면_ETF_첫_번째_줄은_지연이다(store):
+    ran = run_etf(store, quiet_etf(failures={(Source.SEC_FILINGS, "0000789019"): FailurePlan("error")}))  # MSFT
+
+    delayed = ("Update delayed", LineStatus.DELAYED, "SEC filings of 2 top holdings", None)  # 편입 종목은 읽었다
+    assert {t: news(ran.cards[t]) for t in ("QQQ", "SPY", "TQQQ")} == dict.fromkeys(("QQQ", "SPY", "TQQQ"), delayed)
+    assert news(ran.cards["AAPL"]) == ("No new SEC filings found", LineStatus.CHECKED_NONE, "SEC filings", None)
+
+
+def test_재실행에서_편입_종목_CIK_수집이_실패하면_앞_실행이_확인한_ETF_첫_번째_줄을_그대로_둔다(store, etf_lite):
+    run_etf(store, etf_lite)
+    before = {t: c.news_line for t, c in cards_by_ticker(store, FRI).items()}
+
+    ran = run_etf(store, dataclasses.replace(load_scenario(etf_lite), failures={(Source.SEC_FILINGS, "0000789019"): FailurePlan("error")}))
+
+    for ticker in ("QQQ", "SPY", "TQQQ"):  # 확인 시각까지 그대로(공시 기간은 고정이고 수집 실패는 새 정보가 아니다)
+        assert ran.cards[ticker].news_line == before[ticker], ticker
+    assert ran.cards["SPY"].news_line_accession == AAPL_8K
+
+
+def test_같은_거래일을_다시_돌리면_저장한_편입_보고를_쓰고_출처를_부르지_않는다(store, admin, etf_lite):
+    first = run_etf(store, etf_lite)
+    again = run_etf(store, etf_lite)
+
+    assert first.holdings.calls == ["QQQ", "SPY"]
+    assert again.holdings.calls == []
+    assert admin.execute("select fund, count(*) from public.fund_holdings group by fund order by fund").fetchall() == [
+        ("QQQ", 1), ("SPY", 1)]
+    assert {t: news(c) for t, c in again.cards.items()} == {t: news(c) for t, c in first.cards.items()}
+
+
+@pytest.mark.parametrize("day, calls", [(date(2026, 11, 16), []), (date(2026, 11, 17), ["QQQ", "SPY"])],
+                         ids=["기준일_뒤_139일", "기준일_뒤_140일"])
+def test_저장한_편입_보고의_기준일에서_140일이_지난_날부터_출처를_다시_부른다(store, day, calls):
+    run_etf(store, quiet_etf())  # FRI: 기준일 2026-06-30 보고 저장. 06-30 + 140일 = 11-17
+
+    assert run_etf(store, quiet_etf(), day).holdings.calls == calls
+
+
+@pytest.mark.parametrize(
+    "period_end, tickers",
+    [(date(2026, 3, 31), ("AAPL", "MSFT")), (date(2026, 9, 30), ("AAPL",))],
+    ids=["더_오래된_보고면_저장분", "더_최근_보고면_새_보고"],
+)
+def test_출처가_준_보고와_저장분_중_기준일이_늦은_쪽을_쓴다(store, period_end, tickers):
+    run_etf(store, quiet_etf())  # 2026-06-30 보고: AAPL·MSFT
+    other = dataclasses.replace(SPY_REPORT, accession="0000884394-26-000202", period_end=period_end,
+                                holdings=SPY_REPORT.holdings[:1])  # AAPL만
+    ran = run_etf(store, quiet_etf(holdings={"SPY": other}), date(2026, 11, 17))
+
+    assert ran.holdings.calls == ["QQQ", "SPY"]
+    assert ran.summary.funds["SPY"].tickers == tickers
+
+
+def test_편입_보고를_못_받아도_저장분이_있으면_저장분으로_ETF_줄을_만들고_실패는_요약에_남긴다(store):
+    run_etf(store, quiet_etf())
+    ran = run_etf(store, quiet_etf(failures={(Source.HOLDINGS, "SPY"): FailurePlan("error")}), date(2026, 11, 17))
+
+    assert news(ran.cards["SPY"]) == ("No new SEC filings found", LineStatus.CHECKED_NONE, "SEC filings of 2 top holdings", None)
+    assert ran.summary.failures == (SourceFailure(Source.HOLDINGS, "SPY", FailureReason.ERROR),)
+
+
+@pytest.mark.parametrize("period_end, delayed", [("2026-01-19", False), ("2026-01-18", True)],
+                         ids=["기준일_뒤_270일", "기준일_뒤_271일"])
+def test_쓸_편입_보고가_기준일에서_270일을_넘으면_ETF_첫_번째_줄은_지연이다(store, period_end, delayed):
+    old = dataclasses.replace(SPY_REPORT, period_end=date.fromisoformat(period_end))  # 거래일 2026-10-16
+    ran = run_etf(store, quiet_etf(holdings={"SPY": old}))
+
+    assert (news(ran.cards["SPY"]) == HOLDINGS_DELAYED) is delayed
+    assert ran.summary.failures == ()
+
+
+def test_ETF_두_번째_줄은_분배금_일정_템플릿이고_일정_출처가_다루지_않으면_Not_covered_yet이다(store, etf_lite):
+    ran = run_etf(store, etf_lite)
+
+    events = {t: (c.event_line.text, c.event_line.status, c.event_line.source_scope) for t, c in ran.cards.items()}
+    assert events["SPY"] == ("Ex-dividend 12/19 · $1.83/share", LineStatus.CHECKED_FOUND, EVENT_SCOPE)
+    assert events["QQQ"] == events["TQQQ"] == ("Not covered yet", LineStatus.UNSUPPORTED, None)  # 시나리오에 일정 키 없음
+
+
+def test_레버리지_ETF는_배율_태그를_유지하고_같은_지수_ETF의_편입_소식을_쓰며_편입_보고는_한_번만_받는다(store, etf_lite):
+    ran = run_etf(store, etf_lite)
+
+    tqqq, qqq = ran.cards["TQQQ"], ran.cards["QQQ"]
+    assert tqqq.leverage_tag == "3x · resets daily"
+    assert qqq.leverage_tag is None
+    assert news(tqqq) == news(qqq) == ("Broadcom agreed to acquire a software maker +1 more (SEC filing)",
+                                       LineStatus.CHECKED_FOUND, "SEC filings of 2 top holdings", AVGO_8K)
+    assert ran.holdings.calls == ["QQQ", "SPY"]  # TQQQ는 QQQ를 가리킨다: QQQ 한 번
+
+
+def test_이어_하기로_건너뛴_생성_대상도_ETF_편입_종목이면_공시를_다시_받아_ETF_줄에_쓴다(store, etf_lite):
+    crash = load_scenario(etf_lite)
+    with pytest.raises(RuntimeError, match="crash"):  # 카드 루프 AAPL 저장 뒤 MSFT에서 죽는다
+        run_etf(store, crash, prices=CrashingPrices(FakePriceSource(crash)))
+    aapl = cards_by_ticker(store, FRI)["AAPL"]
+    classified = store.list_classifications(FRI)
+
+    # 초안 순서: MSFT(본문 없음) → QQQ(AVGO 공시) → SPY(AAPL 공시)
+    ran = run_etf(store, etf_replies(load_scenario(etf_lite).llm_replies[0], {"sentence": "Broadcom agreed to acquire a software maker"},
+                                     APPLE_LINE, FACT, FACT))
+
+    assert ran.summary.resumed == ("AAPL",)
+    assert news(ran.cards["SPY"]) == ("Apple reported Q4 revenue of $102.5B +1 more (SEC filing)", LineStatus.CHECKED_FOUND,
+                                      "SEC filings of 2 top holdings", AAPL_8K)
+    assert ran.cards["AAPL"].updated_at == aapl.updated_at  # AAPL 카드는 다시 쓰지 않는다
+    assert store.list_classifications(FRI) == classified  # 분류 행은 같은 값으로 교체
+
+
+def test_ETF가_자기_CIK를_가져도_편입_종목을_읽을_ETF가_있으면_편입_종목_소식을_쓴다(store, etf_lite):
+    trust_cik = "0000884394"
+    scenario = load_scenario(etf_lite)
+    scenario = dataclasses.replace(scenario, coverage=[dataclasses.replace(c, cik=trust_cik) if c.ticker == "SPY" else c
+                                                       for c in scenario.coverage])
+    ran = run_etf(store, scenario)
+
+    assert news(ran.cards["SPY"])[0] == "Apple reported Q4 revenue of $102.5B +1 more (SEC filing)"
+    assert trust_cik not in ran.filings.calls  # 신탁 자신의 공시는 받지 않는다
+
+
+def test_재발행한_ETF_첫_번째_줄은_다시_돌려도_사람_문장이_남고_범위는_ETF_범위다(store, admin, etf_lite):
+    classify = load_scenario(etf_lite).llm_replies[0]
+    apple, broadcom = {"sentence": "Apple reported Q4 revenue of $999B"}, {"sentence": "Broadcom agreed to pay $5B"}
+    failing = etf_replies(classify, apple, broadcom, apple, broadcom)
+    run_etf(store, failing)
+    human = "Apple reported quarterly revenue +1 more (SEC filing)"
+    with admin.transaction():
+        admin.execute("set local role service_role")
+        admin.execute("update public.hold_queue set edited_text = %s, state = 'republished' where ticker = 'SPY'", (human,))
+    ran = run_etf(store, failing)
+
+    assert news(ran.cards["SPY"]) == (human, LineStatus.CHECKED_FOUND, "SEC filings of 2 top holdings", AAPL_8K)
+
+
+APPLE_ROW = SPY_REPORT.holdings[0]
+WEIRD_HOLDINGS = {  # 실제 어댑터가 돌려줄 수 있는 이상한 값(가짜 로더를 거치지 않게 코드로 만든다)
+    "다른_ETF의_보고": {"fund": "QQQ"},
+    "접수번호_형식": {"accession": "0000884394-26-1"},
+    "기준일이_시각": {"period_end": datetime(2026, 6, 30, tzinfo=ET)},
+    "행이_리스트": {"holdings": [APPLE_ROW]},
+    "모르는_행": {"holdings": (object(),)},
+    "비중_float": {"holdings": (dataclasses.replace(APPLE_ROW, pct=7.1),)},
+    "비중_NaN": {"holdings": (dataclasses.replace(APPLE_ROW, pct=Decimal("NaN")),)},
+    "빈_이름": {"holdings": (dataclasses.replace(APPLE_ROW, name=""),)},
+    "이름_NUL": {"holdings": (dataclasses.replace(APPLE_ROW, name="Apple\x00Inc"),)},  # jsonb는 NUL을 받지 않는다
+    "CIK_9자리": {"holdings": (dataclasses.replace(APPLE_ROW, cik="320193000"),)},
+    "분류_NUL": {"holdings": (dataclasses.replace(APPLE_ROW, asset_category="E\x00C"),)},
+    "원본_NUL": {"raw": "<edgarSubmission>\x00"},
+}
+
+
+@pytest.mark.parametrize("changes", WEIRD_HOLDINGS.values(), ids=WEIRD_HOLDINGS.keys())
+def test_받은_편입_보고가_이상하면_저장하지_않고_그_ETF_줄만_지연이다(store, changes):
+    ran = run_etf(store, quiet_etf(holdings={"SPY": dataclasses.replace(SPY_REPORT, **changes)}))  # 예외 없이 끝난다
+
+    assert ran.summary.failures == (SourceFailure(Source.HOLDINGS, "SPY", FailureReason.INVALID_DATA),)
+    assert news(ran.cards["SPY"]) == HOLDINGS_DELAYED
+    assert store.latest_holdings("SPY") is None
+    assert news(ran.cards["AAPL"])[1] is LineStatus.CHECKED_NONE
+
+
+def cli(scenario):
+    r = subprocess.run([sys.executable, "-m", "m30.pipeline", "2026-10-16", "--scenario", str(scenario)],
+                       cwd=SCENARIOS.parent, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    return r.stdout.splitlines()
+
+
+def test_CLI_요약은_ETF마다_편입_종목_상태와_못_찾은_회사_수만_찍는다(admin, etf_lite):
+    lines = cli(etf_lite)  # CLI는 커버 범위 전체가 기본 종목: AVGO도 생성 대상(ETF 아님)
+
+    assert "holdings: QQQ=checked_found SPY=checked_found(unmatched 2) TQQQ=checked_found" in lines
+    assert not any("Apple" in line or "Broadcom" in line for line in lines)  # 공개 로그: 문장·회사 이름 없음
+
+
+def test_CLI_요약은_ETF_생성_대상이_없으면_편입_종목_줄을_찍지_않는다(admin, first_card):
+    assert not any(line.startswith("holdings:") for line in cli(first_card))

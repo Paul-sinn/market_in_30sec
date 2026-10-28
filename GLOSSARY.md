@@ -34,6 +34,9 @@ _Avoid_: 미리보기, 검색 결과
 **커버 범위** (Coverage):
 앱이 지원하는 종목 전체(S&P 500 + 인기 ETF). 범위 밖 종목은 내 종목에 넣을 수 없음.
 
+**상위 편입 종목** (TopHoldings):
+ETF가 담은 보통주를 회사 단위로 묶어 비중이 큰 10개. SEC N-PORT 보고에서 읽는다. ETF 카드의 첫 번째 줄은 이 종목들의 공시 소식으로 만든다. 레버리지·인버스 ETF는 같은 지수를 따르는 일반 ETF의 편입 종목을 쓴다(TQQQ → QQQ). 코드 `fund_holdings`, `coverage.holdings_ticker`.
+
 ## 리포트
 
 **카드** (StockCard):

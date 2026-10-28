@@ -19,7 +19,7 @@ import pytest
 
 from m30.adapters import AccessDeniedError, RateLimitedError, Source, SourceError, TransientSourceError, tiingo
 from m30.adapters.edgar import _NoRedirect
-from m30.adapters.fake import FakeEventSource, FakeFilingSource, FakeIndicatorSource, FakeLLM, Scenario
+from m30.adapters.fake import FakeEventSource, FakeFilingSource, FakeHoldingsSource, FakeIndicatorSource, FakeLLM, Scenario
 from m30.adapters.prices import DailyBar
 from m30.adapters.tiingo import TiingoPriceSource
 from m30.config import ConfigError, load_tiingo_settings
@@ -147,6 +147,7 @@ def run(store, monkeypatch, responses):
         events=FakeEventSource(scenario),
         filings=FakeFilingSource(scenario),
         indicators=FakeIndicatorSource(scenario),
+        holdings=FakeHoldingsSource(scenario),
         llm=FakeLLM(scenario),
         store=store,
         sleep=lambda seconds: None,

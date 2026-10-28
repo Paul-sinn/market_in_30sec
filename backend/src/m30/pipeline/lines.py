@@ -19,6 +19,7 @@ NOT_COVERED = "Not covered yet"
 
 # 출처 범위 (카드 하단 "Checked 7:30 AM ET · …"에 쓰인다)
 NEWS_SCOPE = "SEC filings"
+HOLDINGS_SCOPE = "SEC filings of top holdings"  # ETF 편입 보고를 못 읽은 지연 줄 전용(웹 하단은 확인된 줄만 범위를 보여 준다)
 EVENT_SCOPE = "Earnings and dividend calendar"
 PRICE_SCOPE = "Daily prices"
 
@@ -47,15 +48,21 @@ WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # 고정 튜플: �
 TIMING_TEXT = {EarningsTiming.BEFORE_OPEN: "before open", EarningsTiming.AFTER_CLOSE: "after close"}
 
 
-def news_template_line(news: TickerNews, checked_at: datetime) -> CardLine | None:
-    """LLM 없이 정해지는 첫 번째 줄(스펙 #6 D2 표). None = 후보가 있다 → 초안·검수(#7)를 기다리는 축소판."""
+def holdings_scope(companies: int) -> str:
+    """ETF 첫 번째 줄 범위(#10 D6): 확인한 편입 회사 수만 말한다. 10개 중 8개만 찾았는데 전부로 읽히지 않게."""
+    return f"SEC filings of {companies} top holding{'' if companies == 1 else 's'}"
+
+
+def news_template_line(news: TickerNews, checked_at: datetime, scope: str = NEWS_SCOPE) -> CardLine | None:
+    """LLM 없이 정해지는 첫 번째 줄(스펙 #6 D2 표). None = 후보가 있다 → 초안·검수(#7)를 기다리는 축소판.
+    scope: 확인함·지연 줄의 출처 범위(ETF는 holdings_scope·HOLDINGS_SCOPE)."""
     if news.status is LineStatus.UNSUPPORTED:
         return CardLine(NOT_COVERED, LineStatus.UNSUPPORTED, checked_at, None)
     if news.status is LineStatus.CHECKED_NONE:
-        return CardLine(NO_FILINGS, LineStatus.CHECKED_NONE, checked_at, NEWS_SCOPE)
+        return CardLine(NO_FILINGS, LineStatus.CHECKED_NONE, checked_at, scope)
     if news.status is LineStatus.DELAYED or not news.candidates:
         # U4 = A: 공시가 있는데 후보가 없으면(전부 의견글 = 회사 공시라 분류 오류) "없음"으로 단정하지 않는다
-        return delayed_line(NEWS_SCOPE, checked_at)
+        return delayed_line(scope, checked_at)
     return None
 
 

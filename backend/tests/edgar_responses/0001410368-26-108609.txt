@@ -1,0 +1,556 @@
+<SEC-DOCUMENT>0001410368-26-108609.txt : 20261027
+<SEC-HEADER>0001410368-26-108609.hdr.sgml : 20261027
+<ACCEPTANCE-DATETIME>20261027105248
+ACCESSION NUMBER:		0001410368-26-108609
+CONFORMED SUBMISSION TYPE:	NPORT-P
+PUBLIC DOCUMENT COUNT:		1
+CONFORMED PERIOD OF REPORT:	20260831
+FILED AS OF DATE:		20261027
+DATE AS OF CHANGE:		20261027
+PERIOD START:           	20260831
+
+FILER:
+
+	COMPANY DATA:	
+		COMPANY CONFORMED NAME:			SCHWAB STRATEGIC TRUST
+		CENTRAL INDEX KEY:			0001454889
+		ORGANIZATION NAME:           	
+		EIN:				000000000
+		STATE OF INCORPORATION:			DE
+		FISCAL YEAR END:			1231
+		LEGAL ENTITY IDENTIFIER:    	549300NAZEQOIX80E226
+
+	FILING VALUES:
+		FORM TYPE:		NPORT-P
+		SEC ACT:		1940 Act
+		SEC FILE NUMBER:	811-22311
+		FILM NUMBER:		261488295
+
+	BUSINESS ADDRESS:	
+		STREET 1:		425 MARKET STREET
+		STREET 2:		SUITE 1700
+		CITY:			SAN FRANCISCO
+		STATE:			CA
+		ZIP:			94105
+		BUSINESS PHONE:		800-650-9744
+
+	MAIL ADDRESS:	
+		STREET 1:		425 MARKET STREET
+		STREET 2:		SUITE 1700
+		CITY:			SAN FRANCISCO
+		STATE:			CA
+		ZIP:			94105
+
+	FORMER COMPANY:	
+		FORMER CONFORMED NAME:	Schwab Strategic Trust
+		DATE OF NAME CHANGE:	20090127
+<SERIES-AND-CLASSES-CONTRACTS-DATA>
+<EXISTING-SERIES-AND-CLASSES-CONTRACTS>
+<SERIES>
+<OWNER-CIK>0001454889
+<SERIES-ID>S000034163
+<SERIES-NAME>Schwab U.S. Dividend Equity ETF
+<CLASS-CONTRACT>
+<CLASS-CONTRACT-ID>C000105320
+<CLASS-CONTRACT-NAME>Schwab U.S. Dividend Equity ETF
+<CLASS-CONTRACT-TICKER-SYMBOL>SCHD
+</CLASS-CONTRACT>
+</SERIES>
+</EXISTING-SERIES-AND-CLASSES-CONTRACTS>
+</SERIES-AND-CLASSES-CONTRACTS-DATA>
+</SEC-HEADER>
+<DOCUMENT>
+<TYPE>NPORT-P
+<SEQUENCE>1
+<FILENAME>primary_doc.xml
+<TEXT>
+<XML>
+<?xml version="1.0" encoding="UTF-8"?><edgarSubmission xmlns="http://www.sec.gov/edgar/nport" xmlns:com="http://www.sec.gov/edgar/common" xmlns:ncom="http://www.sec.gov/edgar/nportcommon" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.sec.gov/edgar/nport eis_NPORT_Filer.xsd">
+  <headerData>
+    <submissionType>NPORT-P</submissionType>
+    <isConfidential>false</isConfidential>
+    <filerInfo>
+
+      <filer>
+        <issuerCredentials>
+          <cik>0001454889</cik>
+          <ccc>XXXXXXXX</ccc>
+        </issuerCredentials>
+      </filer>
+
+
+      <seriesClassInfo>
+        <seriesId>S000034163</seriesId>
+        <classId>C000105320</classId>
+      </seriesClassInfo>
+
+
+    </filerInfo>
+  </headerData>
+  <formData>
+    <genInfo>
+      <regName>SCHWAB STRATEGIC TRUST</regName>
+      <regFileNumber>811-22311</regFileNumber>
+      <regCik>0001454889</regCik>
+      <regLei>549300NAZEQOIX80E226</regLei>
+      <regStreet1>425 Market Street</regStreet1>
+      <regStreet2>Suite 1700</regStreet2>
+      <regCity>San Francisco</regCity>
+      <regStateConditional regCountry="US" regState="US-CA"/>
+      <regZipOrPostalCode>94105</regZipOrPostalCode>
+      <regPhone>800-648-5300</regPhone>
+      <seriesName>Schwab U.S. Dividend Equity ETF</seriesName>
+      <seriesId>S000034163</seriesId>
+      <seriesLei>549300MUIMRQQDWJ5226</seriesLei>
+      <repPdEnd>2026-08-31</repPdEnd>
+      <repPdDate>2026-08-31</repPdDate>
+      <isFinalFiling>N</isFinalFiling>
+    </genInfo>
+    <fundInfo>
+      <totAssets>112342430664.69</totAssets>
+      <totLiabs>5193457.34</totLiabs>
+      <netAssets>112337237207.35</netAssets>
+      <assetsAttrMiscSec>0.00000000</assetsAttrMiscSec>
+      <assetsInvested>0.00000000</assetsInvested>
+      <amtPayOneYrBanksBorr>0.00000000</amtPayOneYrBanksBorr>
+      <amtPayOneYrCtrldComp>0.00000000</amtPayOneYrCtrldComp>
+      <amtPayOneYrOthAffil>0.00000000</amtPayOneYrOthAffil>
+      <amtPayOneYrOther>0.00000000</amtPayOneYrOther>
+      <amtPayAftOneYrBanksBorr>0.00000000</amtPayAftOneYrBanksBorr>
+      <amtPayAftOneYrCtrldComp>0.00000000</amtPayAftOneYrCtrldComp>
+      <amtPayAftOneYrOthAffil>0.00000000</amtPayAftOneYrOthAffil>
+      <amtPayAftOneYrOther>0.00000000</amtPayAftOneYrOther>
+      <delayDeliv>0.00000000</delayDeliv>
+      <standByCommit>0.00000000</standByCommit>
+      <liquidPref>0.00000000</liquidPref>
+      <cshNotRptdInCorD>17320544.10000000</cshNotRptdInCorD>
+      <isNonCashCollateral>N</isNonCashCollateral>
+      <returnInfo>
+        <monthlyTotReturns>
+          <monthlyTotReturn classId="C000105320" rtn1="-1.59000000" rtn2="5.49000000" rtn3="4.28000000"/>
+        </monthlyTotReturns>
+        <monthlyReturnCats>
+          <equityContracts>
+            <mon1 netRealizedGain="8233499.17000000" netUnrealizedAppr="-4306917.36000000"/>
+            <mon2 netRealizedGain="652898.95000000" netUnrealizedAppr="-2050710.76000000"/>
+            <mon3 netRealizedGain="2130205.14000000" netUnrealizedAppr="-262242.24000000"/>
+            <futureCategory>
+              <instrMon1 netRealizedGain="8233499.17000000" netUnrealizedAppr="-4306917.36000000"/>
+              <instrMon2 netRealizedGain="652898.95000000" netUnrealizedAppr="-2050710.76000000"/>
+              <instrMon3 netRealizedGain="2130205.14000000" netUnrealizedAppr="-262242.24000000"/>
+            </futureCategory>
+          </equityContracts>
+        </monthlyReturnCats>
+        <othMon1 netRealizedGain="2138144947.32000000" netUnrealizedAppr="-4115582192.69000000"/>
+        <othMon2 netRealizedGain="3847687.71000000" netUnrealizedAppr="5020095552.76000000"/>
+        <othMon3 netRealizedGain="11366997.34000000" netUnrealizedAppr="4261118184.49000000"/>
+      </returnInfo>
+      <mon1Flow redemption="5004466038.30000000" reinvestment="0.00000000" sales="8202083550.00000000"/>
+      <mon2Flow redemption="73497898.30000000" reinvestment="0.00000000" sales="3201558445.40000000"/>
+      <mon3Flow redemption="77639403.00000000" reinvestment="0.00000000" sales="3739493495.90000000"/>
+
+
+
+    </fundInfo>
+    <invstOrSecs>
+      <invstOrSec>
+        <name>Abbott Laboratories</name>
+        <lei>HQD377W2YR662HK5JX27</lei>
+        <title>Abbott Laboratories</title>
+        <cusip>002824100</cusip>
+        <identifiers>
+          <isin value="US0028241000"/>
+        </identifiers>
+        <balance>47631745.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>5256639378.20000000</valUSD>
+        <pctVal>4.679338311033</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Amgen Inc</name>
+        <lei>62QBXGPJ34PQ72Z12S66</lei>
+        <title>Amgen Inc</title>
+        <cusip>031162100</cusip>
+        <identifiers>
+          <isin value="US0311621009"/>
+        </identifiers>
+        <balance>12272320.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>5275624921.60000000</valUSD>
+        <pctVal>4.696238800908</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Bristol-Myers Squibb Co</name>
+        <lei>HLYYNH7UQUORYSJQCN42</lei>
+        <title>Bristol-Myers Squibb Co</title>
+        <cusip>110122108</cusip>
+        <identifiers>
+          <isin value="US1101221083"/>
+        </identifiers>
+        <balance>55842362.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>3730828205.22000000</valUSD>
+        <pctVal>3.321096635422</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Chevron Corp</name>
+        <lei>N/A</lei>
+        <title>Chevron Corp</title>
+        <cusip>166764100</cusip>
+        <identifiers>
+          <isin value="US1667641005"/>
+        </identifiers>
+        <balance>21879692.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>4510279708.88000000</valUSD>
+        <pctVal>4.014946264483</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Coca-Cola Co/The</name>
+        <lei>UWJKFUJFZ02DKWI3RY53</lei>
+        <title>Coca-Cola Co/The</title>
+        <cusip>191216100</cusip>
+        <identifiers>
+          <isin value="US1912161007"/>
+        </identifiers>
+        <balance>52703248.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>4673197000.16000000</valUSD>
+        <pctVal>4.159971454108</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>ConocoPhillips</name>
+        <lei>WPTL2Z3FIYTHSP5V2253</lei>
+        <title>ConocoPhillips</title>
+        <cusip>20825C104</cusip>
+        <identifiers>
+          <isin value="US20825C1045"/>
+        </identifiers>
+        <balance>33315665.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>4413992455.85000000</valUSD>
+        <pctVal>3.929233587704</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Home Depot Inc/The</name>
+        <lei>QEKMOTMBBKA8I816DO57</lei>
+        <title>Home Depot Inc/The</title>
+        <cusip>437076102</cusip>
+        <identifiers>
+          <isin value="US4370761029"/>
+        </identifiers>
+        <balance>13262090.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>4347710964.70000000</valUSD>
+        <pctVal>3.870231343392</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Merck &amp; Co Inc</name>
+        <lei>4YV9Y5M8S0BRK1RP0397</lei>
+        <title>Merck &amp; Co Inc</title>
+        <cusip>58933Y105</cusip>
+        <identifiers>
+          <isin value="US58933Y1055"/>
+        </identifiers>
+        <balance>36188606.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>5347228422.56000000</valUSD>
+        <pctVal>4.759978574771</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>PepsiCo Inc</name>
+        <lei>FJSUNZKFNQ5YPJ5OT455</lei>
+        <title>PepsiCo Inc</title>
+        <cusip>713448108</cusip>
+        <identifiers>
+          <isin value="US7134481081"/>
+        </identifiers>
+        <balance>29120977.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>4086837912.18000000</valUSD>
+        <pctVal>3.638008209723</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Procter &amp; Gamble Co/The</name>
+        <lei>2572IBTT8CCZW6AU4141</lei>
+        <title>Procter &amp; Gamble Co/The</title>
+        <cusip>742718109</cusip>
+        <identifiers>
+          <isin value="US7427181091"/>
+        </identifiers>
+        <balance>29608628.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>4296804095.36000000</valUSD>
+        <pctVal>3.824915230404</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>State Street Institutional US Government Money Market Fund</name>
+        <lei>549300BZ5TGIFZUZDZ37</lei>
+        <title>State Street Institutional US Government Money Market Fund</title>
+        <cusip>857492706</cusip>
+        <identifiers>
+          <isin value="US8574927062"/>
+        </identifiers>
+        <balance>64513103.25000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>64513103.25000000</valUSD>
+        <pctVal>0.057428066466</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>STIV</assetCat>
+        <issuerCat>RF</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>UnitedHealth Group Inc</name>
+        <lei>549300GHBMY8T5GXDE41</lei>
+        <title>UnitedHealth Group Inc</title>
+        <cusip>91324P102</cusip>
+        <identifiers>
+          <isin value="US91324P1021"/>
+        </identifiers>
+        <balance>11009455.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>4287191871.55000000</valUSD>
+        <pctVal>3.816358651972</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Verizon Communications Inc</name>
+        <lei>2S72QS2UO2OESLG6Y829</lei>
+        <title>Verizon Communications Inc</title>
+        <cusip>92343V104</cusip>
+        <identifiers>
+          <isin value="US92343V1044"/>
+        </identifiers>
+        <balance>88979831.00000000</balance>
+        <units>NS</units>
+        <curCd>USD</curCd>
+        <valUSD>4450771146.62000000</valUSD>
+        <pctVal>3.961973124196</pctVal>
+        <payoffProfile>Long</payoffProfile>
+        <assetCat>EC</assetCat>
+        <issuerCat>CORP</issuerCat>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+      <invstOrSec>
+        <name>Chicago Board of Trade</name>
+        <lei>549300EX04Q2QBFQTQ27</lei>
+        <title>DJIA MINI E-CBOT SEP26</title>
+        <cusip>000000000</cusip>
+        <identifiers>
+          <other otherDesc="Bloomberg Identifier" value="BBG01X9RNBP0"/>
+        </identifiers>
+        <balance>820.00000000</balance>
+        <units>NC</units>
+        <curCd>USD</curCd>
+        <valUSD>-135290.22000000</valUSD>
+        <pctVal>-0.00012043221</pctVal>
+        <payoffProfile>N/A</payoffProfile>
+        <assetCat>DE</assetCat>
+        <issuerConditional desc="derivative" issuerCat="OTHER"/>
+        <invCountry>US</invCountry>
+        <isRestrictedSec>N</isRestrictedSec>
+
+        <fairValLevel>1</fairValLevel>
+        <derivativeInfo>
+          <futrDeriv derivCat="FUT">
+            <counterparties>
+              <counterpartyName>Citigroup Global Markets Inc.</counterpartyName>
+              <counterpartyLei>MBNUM2BPBDO7JBLYG310</counterpartyLei>
+            </counterparties>
+            <payOffProf>Long</payOffProf>
+            <descRefInstrmnt>
+              <indexBasketInfo>
+                <indexName>CBOT $5 Mini Dow Jones Industrial Average e-CBOT Futures</indexName>
+                <indexIdentifier>DMU6 Index</indexIdentifier>
+              </indexBasketInfo>
+            </descRefInstrmnt>
+            <expDate>2026-09-18</expDate>
+            <notionalAmt>218419290.22000000</notionalAmt>
+            <curCd>USD</curCd>
+            <unrealizedAppr>-135290.22000000</unrealizedAppr>
+          </futrDeriv>
+        </derivativeInfo>
+        <securityLending>
+          <isCashCollateral>N</isCashCollateral>
+          <isNonCashCollateral>N</isNonCashCollateral>
+          <isLoanByFund>N</isLoanByFund>
+        </securityLending>
+      </invstOrSec>
+    </invstOrSecs>
+    <explntrNotes>
+      <explntrNote note="Monthly returns presented in Item B.5(a) have been calculated without deducting any applicable sales loads or redemption fees. The fund does not have sales loads or redemption fees." noteItem="B.5.a"/>
+
+    </explntrNotes>
+    <signature>
+      <ncom:dateSigned>2026-09-24</ncom:dateSigned>
+      <ncom:nameOfApplicant>SCHWAB STRATEGIC TRUST</ncom:nameOfApplicant>
+      <ncom:signature>Dana Smith</ncom:signature>
+      <ncom:signerName>Dana Smith</ncom:signerName>
+      <ncom:title>CFO</ncom:title>
+    </signature>
+  </formData>
+</edgarSubmission>
+</XML>
+</TEXT>
+</DOCUMENT>
+</SEC-DOCUMENT>

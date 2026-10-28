@@ -1,4 +1,4 @@
-"""가짜 시세·일정·공시·지표·LLM 어댑터. 시나리오 JSON 파일에서 데이터를 읽는다."""
+"""가짜 시세·일정·공시·지표·편입 종목·LLM 어댑터. 시나리오 JSON 파일에서 데이터를 읽는다."""
 
 import json
 from collections import Counter
@@ -10,19 +10,22 @@ from pathlib import Path
 from m30.adapters import AccessDeniedError, RateLimitedError, Source, SourceError, TransientSourceError
 from m30.adapters.events import CorporateEvent, Earnings, EarningsTiming, ExDividend
 from m30.adapters.filings import Filing, FilingForm
+from m30.adapters.holdings import Holding, HoldingsReport
 from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.prices import DailyBar
 from m30.llm import LLMRequest
 from m30.models import Coverage
 
 REQUIRED_KEYS = {"coverage", "prices"}
-OPTIONAL_KEYS = {"events", "filings", "indicators", "llm_replies", "failures"}  # 다음 티켓은 선택 키로 더한다
+OPTIONAL_KEYS = {"events", "filings", "indicators", "holdings", "llm_replies", "failures"}  # 다음 티켓은 선택 키로 더한다
 BAR_KEYS = {f.name for f in fields(DailyBar)}
 PRICE_KEYS = {"open", "high", "low", "close"}
 EVENT_KEYS = {"earnings": {"kind", "day", "confirmed", "timing"}, "ex_dividend": {"kind", "day", "amount"}}
 FILING_KEYS = {"accession", "form", "accepted_at", "items", "body", "exhibit99"}
 FILING_OPTIONAL_KEYS = {"report_date"}  # "YYYY-MM-DD" 또는 null
 INDICATOR_KEYS = {"name", "released_at"}
+HOLDINGS_KEYS = {"accession", "period_end", "holdings"}
+HOLDING_KEYS = {"name", "cik", "pct", "asset_category"}
 FAILURE_KEYS = {"source", "subject", "error", "times"}
 FAILURE_ERRORS = {"transient": TransientSourceError, "access_denied": AccessDeniedError, "error": SourceError,
                   "rate_limited": RateLimitedError}
@@ -42,8 +45,9 @@ class Scenario:
     events: dict[str, list[CorporateEvent]] = field(default_factory=dict)  # 키가 없는 티커 = 일정 미지원
     filings: dict[str, list[Filing]] = field(default_factory=dict)  # CIK → 공시. 키가 없는 CIK = []
     indicators: list[IndicatorRelease] = field(default_factory=list)
+    holdings: dict[str, HoldingsReport] = field(default_factory=dict)  # 편입을 읽을 ETF → 최신 보고. 키가 없는 ETF = None(미지원)
     llm_replies: list[str] = field(default_factory=list)  # 호출 순서대로
-    # (출처, 대상) → 실패 계획. 대상: 시세·일정은 티커, 공시는 CIK, 지표·LLM은 None
+    # (출처, 대상) → 실패 계획. 대상: 시세·일정은 티커, 공시는 CIK, 편입 종목은 ETF 티커, 지표·LLM은 None
     failures: dict[tuple[Source, str | None], FailurePlan] = field(default_factory=dict)
 
 
@@ -71,6 +75,7 @@ def load_scenario(path: Path) -> Scenario:
         events=events,
         filings={cik: [_filing(path, cik, row) for row in rows] for cik, rows in raw.get("filings", {}).items()},
         indicators=[_indicator(path, row) for row in raw.get("indicators", [])],
+        holdings={fund: _holdings(path, fund, row) for fund, row in raw.get("holdings", {}).items()},
         # default=float: parse_float=Decimal로 읽은 숫자를 JSON 숫자로 되돌린다
         llm_replies=[r if isinstance(r, str) else json.dumps(r, default=float) for r in raw.get("llm_replies", [])],
         failures=_failures(path, raw.get("failures", [])),
@@ -152,6 +157,20 @@ def _indicator(path: Path, row: dict) -> IndicatorRelease:
         name=row["name"],
         released_at=_aware(path, f"indicator {row['name']} key 'released_at'", row["released_at"]),
         raw=json.dumps(row, ensure_ascii=False, sort_keys=True),
+    )
+
+
+def _holdings(path: Path, fund: str, row: dict) -> HoldingsReport:
+    """값 모양은 거르지 않는다(파이프라인 검증이 받게). raw = 행의 JSON."""
+    rows = row.get("holdings")
+    if set(row) != HOLDINGS_KEYS or not isinstance(rows, list) or not all(isinstance(h, dict) and set(h) == HOLDING_KEYS for h in rows):
+        raise ValueError(f"{path.name}: {fund} holdings keys must be {sorted(HOLDINGS_KEYS)} with rows of {sorted(HOLDING_KEYS)}")
+    return HoldingsReport(
+        fund=fund,
+        accession=row["accession"],
+        period_end=date.fromisoformat(row["period_end"]),
+        holdings=tuple(Holding(h["name"], h["cik"], Decimal(h["pct"]), h["asset_category"]) for h in rows),
+        raw=json.dumps(row, ensure_ascii=False, sort_keys=True, default=float),
     )
 
 
@@ -263,6 +282,18 @@ class FakeIndicatorSource:
         self.calls.append(None)
         self._failures.check(None)
         return list(self._releases)
+
+
+class FakeHoldingsSource:
+    def __init__(self, scenario: Scenario) -> None:
+        self._reports = scenario.holdings
+        self._failures = _Failures(scenario, Source.HOLDINGS)
+        self.calls: list[str] = []
+
+    def latest_report(self, fund: str) -> HoldingsReport | None:
+        self.calls.append(fund)
+        self._failures.check(fund)
+        return self._reports.get(fund)
 
 
 _NO_REPLY = object()

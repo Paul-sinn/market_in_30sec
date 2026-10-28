@@ -8,6 +8,7 @@ class Source(StrEnum):
     EVENTS = "events"
     SEC_FILINGS = "sec_filings"
     INDICATORS = "indicators"
+    HOLDINGS = "holdings"  # ETF 편입 종목 보고(N-PORT). 대상 = 편입을 읽을 ETF 티커
     LLM = "llm"
 
 
