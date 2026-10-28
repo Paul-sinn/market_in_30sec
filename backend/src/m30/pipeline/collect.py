@@ -24,7 +24,7 @@ ITEM = re.compile(r"[0-9]\.[0-9]{2}")
 
 def filing_window(trading_day: date) -> tuple[datetime, datetime]:
     """[직전 거래일 04:00 ET, 거래일 04:00 ET). 실행 시각 대신 고정 시각: 재실행해도 같은 공시가 같은 카드로 간다.
-    shortcut: previous_trading_day가 휴장일을 모르는 동안(#16 전) 휴장일 다음 거래일 카드는 휴장일 04:00부터 받는다."""
+    주말·휴장일 공시는 다음 거래일 카드로 모인다(직전 거래일이 NYSE 달력을 따른다)."""
     return datetime.combine(previous_trading_day(trading_day), CUTOFF, ET), datetime.combine(trading_day, CUTOFF, ET)
 
 

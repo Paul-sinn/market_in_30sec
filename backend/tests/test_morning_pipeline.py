@@ -19,11 +19,14 @@ from m30.adapters.prices import DailyBar
 from m30.config import ET
 from m30.models import CardStatus, Coverage, LineStatus
 from m30.pipeline.morning import MorningPipeline
+from m30.trading_day import is_trading_day
 from test_my_stock import add, set_plan
 
 TUE = date(2026, 10, 13)
 THU = date(2026, 10, 15)
 FRI = date(2026, 10, 16)
+THANKSGIVING = date(2026, 11, 26)  # NYSE 휴장
+THANKSGIVING_FRI = date(2026, 11, 27)  # 조기 마감일(거래일). 직전 거래일 11-25
 
 
 def run(store, scenario, day=FRI):
@@ -41,6 +44,11 @@ def run(store, scenario, day=FRI):
         store=store,
         sleep=lambda seconds: None,  # 실제로 기다리지 않는다
     ).run(day)
+
+
+def pipeline_runs(admin):
+    """실행 기록 (거래일, 끝났는지), 시작 순."""
+    return admin.execute("select trading_day, finished_at is not null from public.pipeline_run order by id").fetchall()
 
 
 def cards_by_ticker(store, day):
@@ -83,6 +91,18 @@ def test_같은_거래일로_다시_실행해도_카드가_중복되지_않고_�
     assert cards[0].ticker == "AAPL" and cards[0].change_pct == Decimal("2.0")
 
 
+def test_발행_중단한_카드는_같은_거래일을_다시_돌려도_중단이_유지되고_내용만_다시_저장된다(store, admin, first_card, tmp_path):
+    run(store, first_card)
+    admin.execute("update public.stock_card set publish_suspended = true where ticker = 'AAPL'")  # 대시보드에서 켜는 것과 같은 SQL
+    changed = tmp_path / "aapl_204.json"
+    changed.write_text(first_card.read_text().replace('"high": 203.00, "low": 200.10, "close": 202.50',
+                                                      '"high": 204.00, "low": 200.10, "close": 204.00'))
+    run(store, changed)
+
+    assert cards_by_ticker(store, FRI)["AAPL"].change_pct == Decimal("2.0")
+    assert admin.execute("select ticker from public.stock_card where publish_suspended order by ticker").fetchall() == [("AAPL",)]
+
+
 def test_봉이_모자라면_등락률은_지연이고_없음으로_저장되지_않는다(store, first_card):
     summary = run(store, first_card)
 
@@ -121,6 +141,13 @@ def test_거래일_자리에_시각을_넘기면_실행하지_않고_카드도_�
     with pytest.raises(TypeError, match="trading_day"):  # 어댑터의 우연한 비교 오류가 아니라 입구에서 거부
         run(store, first_card, day=datetime(2026, 10, 16, 7, 30, tzinfo=ET))
     assert store.list_cards(FRI) == []
+
+
+def test_휴장일이면_실행하지_않고_카드도_실행_기록도_남기지_않는다(store, admin, first_card):
+    with pytest.raises(ValueError, match="trading day"):
+        run(store, first_card, day=THANKSGIVING)
+    assert store.list_cards(THANKSGIVING) == []
+    assert pipeline_runs(admin) == []
 
 
 def test_줄마다_데이터_상태·확인_시각·출처_범위가_저장된다(store, first_card, full_card):
@@ -242,9 +269,11 @@ PRICE_SCOPE = "Daily prices"
         [bar("2026-10-14", 100), bar("2026-10-15", 101, open=Decimal(0))],
         [bar("2026-10-14", 100), bar("2026-10-15", 101, high=Decimal(0))],
         [bar("2026-10-14", 100), bar("2026-10-15", 101, low=Decimal(0))],
+        [bar(f"2026-{d}", c) for d, c in (("10-07", 100), ("10-08", 101), ("10-12", 102), ("10-13", 103), ("10-14", 104),
+                                          ("10-15", 105))],  # 10-09(거래일) 봉 없음. 믿으면 Up 5 days in a row
     ],
     ids=["봉_날짜가_직전_거래일_아님", "전일_종가_누락", "조정가_아님", "앞_봉만_조정가_아님", "전일_종가_0", "시가_0", "고가_0",
-         "저가_0"],
+         "저가_0", "중간_거래일_봉_누락"],
 )
 def test_봉을_믿을_수_없으면_등락률과_세_번째_줄이_지연이고_없음이_아니다(store, bars):
     summary = run(store, aapl_only(bars), FRI)
@@ -275,11 +304,11 @@ def closes(*day_close):
 
 
 def year(*changed):
-    """2025-10-10~2026-10-15 평일 봉 전부 O=H=L=C=100. changed 봉은 같은 날짜 봉을 바꾼다."""
+    """2025-10-10~2026-10-15 거래일 봉 전부 O=H=L=C=100. changed 봉은 같은 날짜 봉을 바꾼다."""
     by_day = {b.day: b for b in changed}
     first, last = date(2025, 10, 10), date(2026, 10, 15)
     days = (first + timedelta(days=i) for i in range((last - first).days + 1))
-    return [by_day.get(d, bar(d.isoformat(), 100)) for d in days if d.weekday() < 5]
+    return [by_day.get(d, bar(d.isoformat(), 100)) for d in days if is_trading_day(d)]
 
 
 LOW_80 = bar("2026-03-02", 80)  # 52주 저점을 멀리 둔다(저점 = 종가면 At 52-week low가 먼저 나온다)
@@ -289,13 +318,14 @@ HIGH_JUNE = bar("2026-06-01", 120)  # LOW_80과 함께: 마지막 종가 100은 
 
 
 def test_가격_데이터가_정상인데_사실이_없으면_No_additional_price_highlights이고_데이터가_빠지거나_틀리면_Update_delayed다(store):
-    quiet = year(LOW_80, HIGH_JUNE)
+    quiet = year(LOW_80, HIGH_JUNE)  # 휴장일(2025-11-27 … 2026-09-07)을 건너뛴 1년 봉
     prices = {
         "QUIET": quiet,
         "UNADJ": year(LOW_80, HIGH_JUNE, bar("2026-10-15", 100, adjusted=False)),
         "STALE": [b for b in quiet if b.day != date(2026, 10, 15)],  # 마지막 봉이 직전 거래일이 아님
         "NOPREV": [b for b in quiet if b.day != date(2026, 10, 14)],  # 전일 종가 누락
         "ZERO": year(LOW_80, HIGH_JUNE, bar("2026-10-14", 0)),
+        "HOLIDAY": sorted([*quiet, bar("2026-09-07", 100)], key=lambda b: b.day),  # 노동절(휴장) 날짜 봉 = 데이터 오류
     }
     run(store, Scenario(coverage=[Coverage(t, t) for t in prices], prices=prices), FRI)
 
@@ -306,6 +336,7 @@ def test_가격_데이터가_정상인데_사실이_없으면_No_additional_pric
         "STALE": ("Update delayed", LineStatus.DELAYED),
         "NOPREV": ("Update delayed", LineStatus.DELAYED),
         "ZERO": ("Update delayed", LineStatus.DELAYED),
+        "HOLIDAY": ("Update delayed", LineStatus.DELAYED),
     }
     assert {line.source_scope for line in lines.values()} == {PRICE_SCOPE}  # 줄을 숨기지 않는다
 
@@ -333,6 +364,27 @@ def test_세_번째_줄은_가격_사실_하나로_저장된다(store, bars, tex
     [card] = store.list_cards(FRI)
     line = card.price_fact_line
     assert (line.text, line.status, line.source_scope) == (text, LineStatus.CHECKED_FOUND, PRICE_SCOPE)
+
+
+def test_조기_마감일_종가는_정상_종가이고_휴장일에는_봉이_없어도_지연이_아니다(store):
+    scenario = aapl_only(closes(("11-24", 100), ("11-25", 102), ("11-27", 107.1)))  # 11-26 추수감사절 휴장, 11-27 13:00 조기 마감
+    run(store, scenario, THANKSGIVING_FRI)
+    run(store, scenario, date(2026, 11, 30))
+
+    [fri] = store.list_cards(THANKSGIVING_FRI)
+    [mon] = store.list_cards(date(2026, 11, 30))
+    assert (fri.change_pct, fri.change_status, fri.previous_trading_day) == (Decimal("2.0"), LineStatus.CHECKED_FOUND,
+                                                                            date(2026, 11, 25))
+    assert (mon.change_pct, mon.change_status, mon.previous_trading_day) == (Decimal("5.0"), LineStatus.CHECKED_FOUND,
+                                                                            date(2026, 11, 27))  # (107.1 − 102) / 102
+
+
+def test_카드에는_등락률이_지연이어도_다루는_종가_날짜인_직전_거래일이_저장된다(store, first_card):
+    run(store, first_card)
+
+    cards = cards_by_ticker(store, FRI)
+    assert cards["NVDA"].change_status is LineStatus.DELAYED
+    assert {t: c.previous_trading_day for t, c in cards.items()} == {"AAPL": THU, "MSFT": THU, "NVDA": THU}
 
 
 @pytest.mark.parametrize(

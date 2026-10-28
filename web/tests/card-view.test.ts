@@ -4,6 +4,7 @@ import {
   changeView,
   checkedFooter,
   formatCheckedAt,
+  formatCloseDay,
   formatTradingDay,
   lineView,
   myDashboardView,
@@ -19,16 +20,33 @@ describe("changeView: DB 값에 형식만 입힌다", () => {
     [0, "0.0%", "flat"],
     [-0, "0.0%", "flat"],
   ] as const)("%s → %s (%s)", (pct, text, tone) => {
-    expect(changeView(pct, "checked_found")).toEqual({ text, tone });
+    expect(changeView(pct, "checked_found", "2026-10-15")).toEqual({ text, tone, label: "Thu 10/15 close" });
   });
 
   test("하이픈 마이너스를 쓰지 않는다", () => {
-    expect(changeView(-3.4, "checked_found").text).not.toContain("-");
+    expect(changeView(-3.4, "checked_found", null).text).not.toContain("-");
   });
 
-  test("지연·미지원은 고정 문구(HANDOFF 3-3 리터럴)", () => {
-    expect(changeView(null, "delayed")).toEqual({ text: "Update delayed", tone: "delayed" });
-    expect(changeView(null, "unsupported")).toEqual({ text: "Not covered yet", tone: "unsupported" });
+  test("지연·미지원은 고정 문구(HANDOFF 3-3 리터럴). 종가 날짜 라벨은 그대로(그날 종가가 지연이라는 뜻, #16 D8)", () => {
+    expect(changeView(null, "delayed", "2026-10-15")).toEqual({ text: "Update delayed", tone: "delayed", label: "Thu 10/15 close" });
+    expect(changeView(null, "unsupported", "2026-10-15")).toEqual({ text: "Not covered yet", tone: "unsupported", label: "Thu 10/15 close" });
+  });
+
+  test("종가 날짜가 없는 옛 카드(#16 전)는 prev close", () => {
+    for (const status of ["checked_found", "delayed", "unsupported"] as const) {
+      expect(changeView(status === "checked_found" ? 1.2 : null, status, null).label).toBe("prev close");
+    }
+  });
+});
+
+describe("formatCloseDay: 종가 날짜 → 요일 M/D (두 번째 줄 날짜와 같은 형식, #16)", () => {
+  test.each([
+    ["2026-10-15", "Thu 10/15"],
+    ["2026-01-02", "Fri 1/2"], // 월·일 앞 0 없음. 시간대 이동이 있으면 전날(Thu 1/1)로 밀린다
+    ["2026-11-25", "Wed 11/25"],
+    ["2026-12-31", "Thu 12/31"],
+  ])("%s → %s", (day, text) => {
+    expect(formatCloseDay(day)).toBe(text);
   });
 });
 
@@ -101,7 +119,7 @@ describe("myDashboardView: 로그인한 대시보드(#38)", () => {
   const card = (ticker: string): CardView => ({
     ticker,
     name: `${ticker} Inc.`,
-    change: { text: "+1.0%", tone: "up" },
+    change: { text: "+1.0%", tone: "up", label: "Thu 10/15 close" },
     lines: [],
     leverageTag: null,
     checked: null,

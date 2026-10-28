@@ -103,7 +103,9 @@ def main(situation, args):
     if situation == "db_error":
         # 검사 제약(replacement_iff_review)에 걸리는 보류함 행: 서버 오류 DETAIL에 행 내용(검수 전 문장)이 들어간다
         def run_production(store, day, *, get, llm, prices):
-            store.replace_hold_items(day, [HoldItem("AAPL", day, "0000320193-26-000001", HoldStage.DRAFT, DRAFT_CANARY, ("r",), None)])
+            store.replace_hold_items(
+                "AAPL", day, [HoldItem("AAPL", day, "0000320193-26-000001", HoldStage.DRAFT, DRAFT_CANARY, ("r",), None)]
+            )
 
         cli.run_production = run_production
     try:

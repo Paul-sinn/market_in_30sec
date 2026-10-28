@@ -43,7 +43,7 @@ CARD_COLUMNS = [
     "news_line_text", "news_line_status", "news_line_checked_at", "news_line_source_scope",
     "event_line_text", "event_line_status", "event_line_checked_at", "event_line_source_scope",
     "price_fact_line_text", "price_fact_line_status", "price_fact_line_checked_at", "price_fact_line_source_scope",
-    "updated_at", "leverage_tag", "news_line_accession",
+    "updated_at", "leverage_tag", "news_line_accession", "previous_trading_day", "publish_suspended",
 ]
 
 
@@ -59,7 +59,7 @@ def test_카드_컬럼은_정해진_목록뿐이고_방향_의견_필드가_없�
         "select column_name from information_schema.columns"
         " where table_schema = 'public' and table_name = 'stock_card' order by ordinal_position")]
     assert columns == CARD_COLUMNS  # 콜·토크·방향·판정 컬럼은 영원히 없다 (ADR-0001). 출처 공시 열은 방향 의견이 아니다
-    assert len(columns) == 20
+    assert len(columns) == 22
     assert enum_values(admin, "card_status") == ["normal", "fallback"]
     assert enum_values(admin, "line_status") == ["checked_found", "checked_none", "delayed", "unsupported"]
 
@@ -114,7 +114,7 @@ def test_RLS가_꺼진_테이블이_없다(admin):
         "select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace"
         " where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity")]
     tables = {"coverage", "stock_card", "sec_filing", "indicator_release", "filing_classification", "hold_queue",
-              "stock_card_revision", "user_profile", "my_stock", "my_stock_history", "default_ticker"}
+              "stock_card_revision", "user_profile", "my_stock", "my_stock_history", "default_ticker", "pipeline_run"}
     assert tables <= set(public_tables(admin))  # 검사 대상이 비어서 통과하는 것을 막는다
     assert rls_off == []
 
@@ -365,6 +365,35 @@ def test_수정_이력은_추가만_할_수_있다(admin):
     allowed = [p for p in ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE")
                if admin.execute("select has_table_privilege('service_role', 'public.stock_card_revision', %s)", (p,)).fetchone()[0]]
     assert allowed == ["SELECT", "INSERT"]
+
+
+def test_새_카드는_발행_중단이_꺼져_있다(aapl):
+    aapl.execute(CARD_SQL)
+
+    assert aapl.execute("select publish_suspended from public.stock_card").fetchall() == [(False,)]
+
+
+def test_종가_날짜가_카드_거래일과_같거나_뒤면_DB가_거부한다(aapl):
+    for day in ("2026-10-16", "2026-10-19"):
+        with pytest.raises(errors.CheckViolation):
+            aapl.execute(f"insert into public.stock_card ({CARD_COLS}, previous_trading_day)"
+                         f" values ('AAPL', '2026-10-16', 'fallback', 1.3, 'checked_found', '{day}')")
+
+
+def test_실행_기록은_서버가_넣고_끝_시각만_고칠_수_있고_지울_수_없다(admin):
+    allowed = [p for p in ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE")
+               if admin.execute("select has_table_privilege('service_role', 'public.pipeline_run', %s)", (p,)).fetchone()[0]]
+    updatable = [r[0] for r in admin.execute(
+        "select column_name from information_schema.columns where table_schema = 'public' and table_name = 'pipeline_run'"
+        " and has_column_privilege('service_role', 'public.pipeline_run', column_name, 'UPDATE') order by column_name")]
+    assert allowed == ["SELECT", "INSERT"]  # UPDATE는 컬럼 단위로만
+    assert updatable == ["finished_at"]
+
+
+def test_실행_기록의_끝_시각은_시작_시각보다_앞설_수_없다(admin):
+    with pytest.raises(errors.CheckViolation):
+        as_service_role(admin, "insert into public.pipeline_run (trading_day, started_at, finished_at)"
+                               " values ('2026-10-16', '2026-10-16 05:00-04', '2026-10-16 04:59-04')")
 
 
 HOLD_SQL = ("insert into public.hold_queue (ticker, trading_day, accession, stage, draft_text, rules, replacement_text, edited_text)"

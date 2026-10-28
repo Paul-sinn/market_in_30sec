@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -31,22 +32,35 @@ from m30.adapters.filings import Filing, FilingForm
 from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.prices import DailyBar
 from m30.config import ET
-from m30.models import Classification, Coverage, LineStatus, NewsCandidate, NewsKind, TickerNews, UnclassifiedReason
+from m30.db.store import CardStore, RunLocked, connect
+from m30.models import (
+    Classification,
+    Coverage,
+    HoldStage,
+    LineStatus,
+    NewsCandidate,
+    NewsKind,
+    TickerNews,
+    UnclassifiedReason,
+)
 from m30.pipeline.classify import CLASSIFY_SYSTEM, SkippedBatch, SkipReason
 from m30.pipeline.collect import FailureReason, SourceFailure
 from m30.pipeline.morning import MorningPipeline
+from m30.pipeline.production import run_failed
 
 THU = date(2026, 10, 15)
 FRI = date(2026, 10, 16)  # 공시 기간 [10-15 04:00, 10-16 04:00) ET
 MON = date(2026, 10, 19)  # 공시 기간 [10-16 04:00, 10-19 04:00) ET, 주말 포함
+THANKSGIVING_FRI = date(2026, 11, 27)  # 11-26 추수감사절 휴장. 공시 기간 [11-25 04:00, 11-27 04:00) ET
 AAPL_CIK = "0000320193"
 MSFT_CIK = "0000789019"
 AAPL = Coverage("AAPL", "Apple Inc.", cik=AAPL_CIK)
 MSFT = Coverage("MSFT", "Microsoft Corporation", cik=MSFT_CIK)
 
 
-def run(store, scenario, day=FRI):
-    """scenario: 경로 또는 Scenario. 돌려주는 값: summary, sleeps(대기 시간 목록), 가짜 5개(prices·events·filings·indicators·llm)."""
+def run(store, scenario, day=FRI, **replaced):
+    """scenario: 경로 또는 Scenario. 돌려주는 값: summary, sleeps(대기 시간 목록), 가짜 5개(prices·events·filings·indicators·llm).
+    replaced: 바꿔 넣을 출처(예: llm=FakeLLM(…)). 테스트가 들고 있으므로 run이 예외로 끝나도 호출 기록을 본다."""
     if not isinstance(scenario, Scenario):
         scenario = load_scenario(scenario)
     store.upsert_coverage(scenario.coverage)
@@ -57,7 +71,7 @@ def run(store, scenario, day=FRI):
         "filings": FakeFilingSource(scenario),
         "indicators": FakeIndicatorSource(scenario),
         "llm": FakeLLM(scenario),
-    }
+    } | replaced
     sleeps = []
     summary = MorningPipeline(**fakes, store=store, sleep=sleeps.append).run(day)
     return SimpleNamespace(summary=summary, sleeps=sleeps, **fakes)
@@ -196,8 +210,10 @@ def test_상한과_같은_길이는_자르지_않고_한_글자_넘으면_자른
          ["2026-10-15T03:59:59-04:00", "2026-10-16T04:00:00-04:00"]),
         (MON, ["2026-10-16T04:00:00-04:00", "2026-10-17T12:00:00-04:00", "2026-10-19T03:59:59-04:00"],
          ["2026-10-16T03:59:59-04:00", "2026-10-19T04:00:00-04:00"]),
+        (THANKSGIVING_FRI, ["2026-11-25T04:00:00-05:00", "2026-11-26T12:00:00-05:00", "2026-11-27T03:59:59-05:00"],
+         ["2026-11-25T03:59:59-05:00", "2026-11-27T04:00:00-05:00"]),
     ],
-    ids=["금요일", "월요일은_주말_포함"],
+    ids=["금요일", "월요일은_주말_포함", "휴장일_다음_거래일은_휴장일_포함"],
 )
 def test_공시는_직전_거래일_04시부터_거래일_04시_전까지만_새_소식이다(store, day, inside, outside):
     filings = [filing(n, at, body=at) for n, at in enumerate(inside + outside, 1)]  # 본문 = 접수 시각
@@ -732,3 +748,189 @@ def test_출력_모양의_자리표시자를_그대로_돌려주면_분류로_�
     run(store, scenario([AAPL], [filing(1)], replies))
 
     assert store.list_classifications(FRI) == [Classification(f"{AAPL_CIK}-26-000001", "AAPL", unclassified=reason)]
+
+
+# 실행 잠금(#16 D4): 같은 거래일 실행은 하나만. 다른 연결(other_store) = 먼저 돌고 있는 실행
+BACKEND = Path(__file__).resolve().parent.parent
+LOCKED_LINE = "LOCKED: 2026-10-16 같은 거래일 실행이 이미 돌고 있어 종료합니다\n"
+
+
+@pytest.fixture
+def other_store(settings, admin):
+    with connect(settings) as conn:
+        yield CardStore(conn)
+
+
+def pipeline_runs(admin, day=FRI):
+    """실행 기록의 끝났는지 여부, 시작 순."""
+    return [r[0] for r in admin.execute(
+        "select finished_at is not null from public.pipeline_run where trading_day = %s order by id", (day,))]
+
+
+def test_같은_거래일_실행이_잠금을_쥐고_있으면_출처·LLM·카드·실행_기록에_닿지_않고_바로_끝난다(store, admin, other_store):
+    sc = scenario([AAPL], [filing(1)], [reply(label(1))])
+    fakes = {"prices": FakePriceSource(sc), "events": FakeEventSource(sc), "filings": FakeFilingSource(sc),
+             "indicators": FakeIndicatorSource(sc), "llm": FakeLLM(sc)}
+    with other_store.run_lock(FRI), pytest.raises(RunLocked, match="^2026-10-16$"):
+        run(store, sc, **fakes)
+
+    assert [f.calls for f in fakes.values() if f is not fakes["llm"]] == [[], [], [], []]
+    assert fakes["llm"].requests == []
+    assert store.list_cards(FRI) == [] and pipeline_runs(admin) == []
+    run(store, sc)  # 풀린 뒤에는 돈다
+    assert [c.ticker for c in store.list_cards(FRI)] == ["AAPL"] and pipeline_runs(admin) == [True]
+
+
+def test_다른_거래일_실행은_잠금과_관계없이_돈다(store, other_store):
+    with other_store.run_lock(FRI):
+        run(store, scenario([AAPL]), THU)
+
+    assert [c.ticker for c in store.list_cards(THU)] == ["AAPL"]
+
+
+def test_실행이_끝나면_연결이_열려_있어도_다른_연결이_같은_거래일_잠금을_바로_잡는다(store, other_store):
+    run(store, scenario([AAPL]))  # store 연결은 열린 채: 연결 종료가 아니라 실행이 잠금을 풀어야 한다
+
+    with other_store.run_lock(FRI):  # 못 잡으면 RunLocked
+        pass
+
+
+def held_locks(admin):
+    return admin.execute("select count(*) from pg_locks where locktype = 'advisory' and classid = 16 and objid = 20261016"
+                         ).fetchone()[0]
+
+
+def test_실행_프로세스가_죽으면_DB가_잠금을_풀어_다음_실행이_돈다(store, admin, settings):
+    # 입구 3: 잠금을 잡은 프로세스를 SIGKILL(finally·unlock 없이 죽는다)
+    probe = subprocess.Popen([sys.executable, "tests/lock_probe.py", "2026-10-16"], cwd=BACKEND, stdout=subprocess.PIPE,
+                             text=True, env={**os.environ, "SUPABASE_DB_URL": settings.database_url})
+    try:
+        assert probe.stdout.readline() == "locked\n"
+        with pytest.raises(RunLocked):  # 탐침이 정말 잠금을 쥐고 있다
+            run(store, scenario([AAPL]))
+    finally:
+        probe.kill()
+        probe.wait()
+        probe.stdout.close()
+    deadline = time.monotonic() + 10
+    while held_locks(admin) and time.monotonic() < deadline:  # 서버가 끊긴 연결을 알아채는 데 잠깐 걸린다
+        time.sleep(0.05)
+
+    run(store, scenario([AAPL]))
+    assert [c.ticker for c in store.list_cards(FRI)] == ["AAPL"]
+
+
+def test_CLI는_같은_거래일_실행이_돌고_있으면_LOCKED_한_줄만_찍고_1로_끝난다(other_store, first_card):
+    with other_store.run_lock(FRI):
+        r = subprocess.run([sys.executable, "-m", "m30.pipeline", "2026-10-16", "--scenario", str(first_card)],
+                           cwd=BACKEND, capture_output=True, text=True, timeout=60)
+
+    assert r.returncode == 1
+    assert r.stdout + r.stderr == LOCKED_LINE  # traceback·주소 없음. 날짜만
+
+
+# 실행 기록·이어 하기(#16 D5): 끝까지 가지 못한 실행 뒤의 재실행은 그 실행이 저장한 카드를 건너뛴다
+NVDA = Coverage("NVDA", "NVIDIA Corporation")  # CIK 없음
+BUY = json.dumps({"sentence": "Apple agreed to buy a startup"})  # 금지어 'buy': 두 번 걸리면 대체 줄 + 보류함
+
+
+def three_stocks(*replies):
+    """AAPL = 대체 줄 + 보류함(금지어), MSFT = 본문 없는 공시(대체 줄 + 보류함, 초안 LLM 없음), NVDA = 공시 출처 없음."""
+    return scenario([AAPL, MSFT, NVDA], [filing(1, body="Apple agreed to acquire a startup."), filing(2, cik=MSFT_CIK)],
+                    replies)
+
+
+FULL_RUN_REPLIES = (reply(label(1), label(2, "MSFT")), BUY, BUY)  # 분류 묶음 → AAPL 초안 → AAPL 재생성
+
+
+class CrashingPrices:
+    """MSFT 시세에서 버그 예외(SourceError 아님)를 낸다: AAPL 카드를 저장한 뒤 카드 루프 중간에 죽는 실행."""
+
+    def __init__(self, inner):
+        self._inner = inner
+
+    def daily_bars(self, ticker, start, end):
+        if ticker == "MSFT":
+            raise RuntimeError("crash")
+        return self._inner.daily_bars(ticker, start, end)
+
+
+def saved_state(store):
+    """확인 시각·갱신 시각을 뺀 카드, 보류함, 분류."""
+    def content(card):
+        lines = [(line.text, line.status, line.source_scope) for line in (card.news_line, card.event_line, card.price_fact_line)]
+        return (card.ticker, card.status, card.change_pct, card.change_status, card.news_line_accession,
+                card.previous_trading_day, lines)
+
+    return [content(c) for c in store.list_cards(FRI)], store.list_hold_items(FRI), store.list_classifications(FRI)
+
+
+def aapl_rows(store):
+    """AAPL 카드(갱신 시각 포함)·보류함·분류 행."""
+    return ({c.ticker: c for c in store.list_cards(FRI)}["AAPL"], [h for h in store.list_hold_items(FRI) if h.ticker == "AAPL"],
+            [r for r in store.list_classifications(FRI) if r.ticker == "AAPL"])
+
+
+def test_중간에_죽은_실행_뒤_재실행은_저장된_카드를_건너뛰고_나머지만_만든다(store, admin):
+    crash = three_stocks(*FULL_RUN_REPLIES)
+    with pytest.raises(RuntimeError, match="crash"):
+        run(store, crash, prices=CrashingPrices(FakePriceSource(crash)))
+
+    assert [c.ticker for c in store.list_cards(FRI)] == ["AAPL"]
+    assert [(h.ticker, h.stage) for h in store.list_hold_items(FRI)] == [("AAPL", HoldStage.COPY_RULES)]  # 카드와 같이 저장
+    assert pipeline_runs(admin) == [False]
+    aapl = aapl_rows(store)
+
+    resumed = run(store, three_stocks(reply(label(1, "MSFT"))))
+
+    assert resumed.summary.resumed == ("AAPL",)
+    assert resumed.summary.cards_saved == 2
+    assert aapl_rows(store) == aapl  # 갱신 시각까지 그대로: 다시 쓰지 않았다
+    assert resumed.filings.calls == [MSFT_CIK] and resumed.prices.calls == ["MSFT", "NVDA"]
+    assert [[item["tickers"] for item in block(r)] for r in resumed.llm.requests] == [[["MSFT"]]]  # AAPL 공시는 다시 보내지 않는다
+    assert resumed.summary.llm_call_limit == 2 * 4 + 1  # 남은 종목 수로
+    assert [c.ticker for c in store.list_cards(FRI)] == ["AAPL", "MSFT", "NVDA"]
+    assert pipeline_runs(admin) == [False, True]
+    after_resume = saved_state(store)
+
+    again = run(store, three_stocks(*FULL_RUN_REPLIES))  # 앞 실행이 끝까지 갔다 → 전부 다시 만든다
+
+    assert (again.summary.resumed, again.summary.cards_saved) == ((), 3)
+    assert saved_state(store) == after_resume  # 이어 한 결과 = 끝까지 한 번에 돈 결과
+    assert pipeline_runs(admin) == [False, True, True]
+
+
+def test_CLI_요약은_건너뛴_카드를_티커로만_찍는다(store, first_card):
+    crash = load_scenario(first_card)  # 공시 출처 없는 3종목
+    with pytest.raises(RuntimeError):
+        run(store, crash, prices=CrashingPrices(FakePriceSource(crash)))
+    r = subprocess.run([sys.executable, "-m", "m30.pipeline", "2026-10-16", "--scenario", str(first_card)],
+                       cwd=BACKEND, capture_output=True, text=True, timeout=60)
+
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.splitlines()[0] == "2026-10-16 cards_saved=2 resumed=AAPL change_delayed=NVDA"
+
+
+# 재실행에서 CIK 수집이 실패하면(#16 D6, #5 R-5): 앞 실행이 확인한 첫 번째 줄은 그대로 둔다. 수집 실패는 새 정보가 아니다
+@pytest.mark.parametrize(
+    "filings, replies, line",
+    [
+        ([filing(1, body="Apple named a new CFO.")], [reply(label(1)), LINE, FACT], LineStatus.CHECKED_FOUND),
+        ([filing(1, body="Apple agreed to acquire a startup.")], [reply(label(1)), BUY, BUY], LineStatus.CHECKED_FOUND),
+        ([], [], LineStatus.CHECKED_NONE),
+    ],
+    ids=["통과한_줄", "대체_줄과_대기_보류함_행", "공시_없음"],
+)
+def test_재실행에서_CIK_수집이_실패하면_앞_실행이_확인한_첫_번째_줄·분류·보류함이_그대로다(store, admin, filings, replies, line):
+    run(store, scenario([AAPL], filings, replies))
+    before = aapl_rows(store)
+    assert before[0].news_line.status is line
+
+    ran = run(store, scenario([AAPL], filings, failures={(Source.SEC_FILINGS, AAPL_CIK): FailurePlan("error")}))
+
+    card, holds, classifications = aapl_rows(store)
+    assert (card.news_line, card.news_line_accession) == (before[0].news_line, before[0].news_line_accession)  # 확인 시각까지
+    assert (holds, classifications) == before[1:]
+    assert admin.execute("select count(*) from public.stock_card_revision").fetchone()[0] == 0  # 내용이 바뀌지 않았다
+    assert ran.summary.failures == (SourceFailure(Source.SEC_FILINGS, AAPL_CIK, FailureReason.ERROR),)
+    assert run_failed(ran.summary) is True  # 실패는 그대로 드러난다

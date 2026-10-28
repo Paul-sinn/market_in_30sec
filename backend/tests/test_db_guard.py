@@ -3,6 +3,7 @@
 import os
 import subprocess
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 import psycopg
@@ -11,6 +12,7 @@ from psycopg.conninfo import make_conninfo
 
 from m30.config import Settings
 from m30.db.store import connect
+from m30.trading_day import is_trading_day
 
 BACKEND = Path(__file__).resolve().parent.parent
 CANARY = "Zq9LeakCanary77"  # 가짜 비밀번호. 출력에 한 번이라도 나오면 샌 것
@@ -134,19 +136,35 @@ def test_운영_모드에서_비밀값_하나가_없으면_DB에_붙기_전에_�
     assert not [c for c in CANARIES if c in out]
 
 
-def test_운영_모드에서_주말이면_DB에_붙지_않고_성공으로_끝난다():
-    code, out = run_cli(["--production", "2026-10-17"])  # 토요일
+@pytest.mark.parametrize("args", [["--production", "2026-11-26"], ["--production", "2026-10-17"],
+                                  ["2026-11-26", "--scenario", "scenarios/first_card.json"]],
+                         ids=["운영_휴장일", "운영_토요일", "시나리오_휴장일"])
+@pytest.mark.parametrize("secrets", [SECRETS, {}], ids=["설정_있음", "설정_없음"])
+def test_주말·휴장일이면_설정을_읽거나_DB에_붙지_않고_카드_없이_성공으로_끝난다(args, secrets):
+    code, out = run_cli(args, secrets)
 
     assert code == 0
-    assert "2026-10-17은 주말이라 카드를 만들지 않습니다" in out
-    assert "DB에 연결하지 못했습니다" not in out
+    assert out == f"{args[1] if args[0] == '--production' else args[0]}은 거래일이 아니라(주말·휴장일) 카드를 만들지 않습니다\n"
+
+
+@pytest.mark.parametrize("args", [["--production", "2029-01-02"], ["2029-01-02", "--scenario", "scenarios/first_card.json"]],
+                         ids=["운영", "시나리오"])
+def test_달력_표_밖의_해면_DB에_붙기_전에_표를_갱신하라고_멈춘다(args):
+    code, out = run_cli(args)
+
+    assert code == 2
+    assert out == "거래일 달력(trading_day.py)에 2029년 NYSE 휴장일이 없습니다. 표를 갱신하세요\n"
+    assert not [c for c in CANARIES if c in out]
 
 
 def test_운영_모드에서_공시_기간이_아직_안_닫힌_날짜면_DB에_붙기_전에_멈춘다():
-    code, out = run_cli(["--production", "2099-01-02"])  # 금요일, 미래
+    day = date.today() + timedelta(days=2)  # 미래 거래일(달력 표 안: test_거래일_달력은_내년_말까지_있다)
+    while not is_trading_day(day):
+        day += timedelta(days=1)
+    code, out = run_cli(["--production", day.isoformat()])
 
     assert code == 2
-    assert "2099-01-02 공시 기간은 그날 04:00 ET에 닫힙니다" in out
+    assert f"{day} 공시 기간은 그날 04:00 ET에 닫힙니다" in out
     assert "DB에 연결하지 못했습니다" not in out
 
 

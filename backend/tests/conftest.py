@@ -26,21 +26,26 @@ def settings():
     return s
 
 
+def _wipe(conn) -> None:
+    tables = [
+        r[0]
+        for r in conn.execute("select format('%I.%I', schemaname, tablename) from pg_tables where schemaname = 'public'")
+    ]
+    if tables:
+        conn.execute(f"truncate {', '.join(tables)} cascade")
+    conn.execute("delete from auth.users")  # 테스트 유저(make_user). settings가 로컬 DB만 받는다
+
+
 @pytest.fixture
 def admin(settings):
-    """마이그레이션 소유자(postgres) 연결. 스키마 검사·역할 전환용. 시작 전에 public 테이블을 비운다."""
+    """마이그레이션 소유자(postgres) 연결. 스키마 검사·역할 전환용. 시작 전과 끝난 뒤 public 테이블을 비운다
+    (끝난 뒤: 마지막 테스트의 카드·실행 기록이 남으면 웹 테스트·로컬 화면이 그 데이터를 본다)."""
     with connect(settings) as conn:
         conn.execute("reset role")  # 비밀번호 숨김은 connect가 맡는다. 관리자 연결이라 service_role만 되돌린다
-        tables = [
-            r[0]
-            for r in conn.execute(
-                "select format('%I.%I', schemaname, tablename) from pg_tables where schemaname = 'public'"
-            )
-        ]
-        if tables:
-            conn.execute(f"truncate {', '.join(tables)} cascade")
-        conn.execute("delete from auth.users")  # 테스트 유저(make_user). settings가 로컬 DB만 받는다
+        _wipe(conn)
         yield conn
+        conn.execute("reset role")  # 테스트가 role을 바꾼 채 끝났을 수 있다
+        _wipe(conn)
 
 
 @pytest.fixture
@@ -70,7 +75,7 @@ def first_card():
 
 @pytest.fixture
 def lookback_window():
-    """AAPL: 거래일 전 봉 4개. MSFT: 거래일 당일(10-16)·그 뒤(10-19) 봉이 섞여 있다."""
+    """AAPL: 거래일 전 봉 5개. MSFT: 거래일 당일(10-16)·그 뒤(10-19) 봉이 섞여 있다."""
     return SCENARIOS / "lookback_window.json"
 
 
