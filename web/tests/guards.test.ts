@@ -1,4 +1,4 @@
-/** 소스 규칙 검사(web-conventions 1절): 비밀값 접두사, 읽기 전용, server-only, 테마 토큰만 */
+/** 소스 규칙 검사(web-conventions 1절): 비밀값 접두사, 쓰기는 my-stocks만, server-only, 테마 토큰만 */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
@@ -12,9 +12,20 @@ test("NEXT_PUBLIC_ 환경 변수 없음", () => {
   expect(files.filter((f) => f.code.includes("NEXT_PUBLIC_")).map((f) => f.path)).toEqual([]);
 });
 
-test("DB 쓰기 호출 없음(select만)", () => {
+test("DB 쓰기 호출은 src/server/my-stocks.ts 한 곳(#37)", () => {
   const write = /\.(insert|update|upsert|delete|rpc)\(/;
-  expect(files.filter((f) => write.test(f.code)).map((f) => f.path)).toEqual([]);
+  expect(files.filter((f) => write.test(f.code)).map((f) => f.path)).toEqual([join("server", "my-stocks.ts")]);
+});
+
+test("이메일·비밀번호·OTP 로그인 호출 없음(HANDOFF 3-7, 테스트 도우미에만 있다)", () => {
+  const email = /\b(signInWithPassword|signInWithOtp|signUp|verifyOtp|signInAnonymously|resetPasswordForEmail)\b/;
+  expect(files.filter((f) => email.test(f.code)).map((f) => f.path)).toEqual([]);
+});
+
+test("Supabase 패키지는 src/server/에서만 import, 브라우저 클라이언트 없음(ADR-0003, #37)", () => {
+  const supabase = /from ["']@supabase\//;
+  expect(files.filter((f) => supabase.test(f.code) && !f.path.startsWith("server")).map((f) => f.path)).toEqual([]);
+  expect(files.filter((f) => f.code.includes("createBrowserClient")).map((f) => f.path)).toEqual([]);
 });
 
 test("src/server/ 모듈은 첫 줄이 server-only", () => {

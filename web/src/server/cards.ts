@@ -1,7 +1,5 @@
 import "server-only";
 
-import { createClient } from "@supabase/supabase-js";
-
 import {
   changeView,
   checkedFooter,
@@ -11,6 +9,8 @@ import {
   type DashboardView,
   type LineStatus,
 } from "@/lib/card-view";
+
+import { db } from "./db";
 
 // DB는 이 모듈에서만 읽는다(ADR-0003). select만 한다: 카드는 파이프라인만 쓴다
 const LINES = ["news_line", "event_line", "price_fact_line"] as const;
@@ -33,13 +33,6 @@ type Row = {
   coverage: { name: string };
 } & Record<`${Line}_status`, LineStatus | null> &
   Record<`${Line}_${"text" | "checked_at" | "source_scope"}`, string | null>;
-
-function db() {
-  const url = process.env.SUPABASE_URL;
-  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!url || !key) throw new Error("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set (see web/README.md)");
-  return createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
-}
 
 /** 가장 최근 거래일의 카드 전부, 종목순. 카드가 없으면 tradingDay null. */
 export async function getDashboard(): Promise<DashboardView> {

@@ -19,3 +19,8 @@ export const LOAD_FAILED = "Cards could not be loaded"; // DB 읽기 실패(app/
 export const TRY_AGAIN = "Try again"; // 위 화면의 다시 시도 버튼
 export const OPEN_CARDS = "Open the latest cards"; // 랜딩 → /cards 버튼(#27, 시안의 앱 다운로드 버튼 자리). 휴장일엔 직전 거래일 카드라 "today's"를 쓰지 않는다
 export const AUTH_REQUIRED = "Authentication required"; // 배포 보호 401 본문(브라우저 로그인 창을 취소하면 보인다, #25)
+
+// 로그인(#37, copy-reviewer 검수 대상)
+export const SIGN_IN = "Sign in to pick your stocks"; // 로그인 전 /cards 버튼(스펙 #36 스토리 17)
+export const SIGN_OUT = "Sign out"; // 로그인됨 /cards 버튼
+export const SIGN_IN_FAILED = "Sign-in could not be completed"; // 설정 없음·Google 꺼짐·취소·교환 실패·프로필 실패를 한 문구로(LOAD_FAILED와 같은 형식)

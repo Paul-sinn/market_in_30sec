@@ -8,10 +8,13 @@ import ErrorPage from "@/app/cards/error";
 import CardsLayout from "@/app/cards/layout";
 import RootLayout from "@/app/layout";
 import Landing from "@/app/page";
+import { AuthControl } from "@/components/auth-control";
 import { Dashboard } from "@/components/dashboard";
 import { SiteFooter } from "@/components/site-footer";
 import { StockCard } from "@/components/stock-card";
+import { TimezoneField } from "@/components/timezone-field";
 import type { CardView } from "@/lib/card-view";
+import { SIGN_IN, SIGN_IN_FAILED, SIGN_OUT } from "@/lib/copy";
 
 // next/font/google은 빌드 때 글꼴을 받는다. 레이아웃 렌더 테스트에서는 변수 이름만 준다(Inter 말고 다른 글꼴을 부르면 실패)
 vi.mock("next/font/google", () => ({ Inter: vi.fn(() => ({ variable: "font-sans-var" })) }));
@@ -291,4 +294,47 @@ test("Try again을 누르면 retry가 불린다(#24 qa G1)", () => {
   expect(retry).not.toHaveBeenCalled();
   button!.props.onClick!();
   expect(retry).toHaveBeenCalledTimes(1);
+});
+
+describe("로그인 버튼(#37)", () => {
+  const forms = (html: string) => [...html.matchAll(/<form\b([^>]*)>(.*?)<\/form>/g)].map((m) => ({ attrs: m[1], body: m[2] }));
+
+  test("로그인 전: POST /auth/sign-in 폼 + 숨은 타임존 + Sign in 버튼, 실패 문구 없음", () => {
+    const html = renderToStaticMarkup(<AuthControl signedIn={false} failed={false} />);
+    const [form, ...rest] = forms(html);
+    expect(rest).toEqual([]);
+    expect(form.attrs).toMatch(/method="post"/);
+    expect(form.attrs).toMatch(/action="\/auth\/sign-in"/);
+    expect(form.body).toMatch(/<input type="hidden" name="timezone" value=""\/>/);
+    expect(form.body).toMatch(new RegExp(`<button[^>]*type="submit"[^>]*>${SIGN_IN}</button>`));
+    expect(text(html)).not.toContain(SIGN_IN_FAILED);
+    expect(text(html)).not.toContain(SIGN_OUT);
+  });
+
+  test("로그인 실패: 실패 문구를 role=status로", () => {
+    const html = renderToStaticMarkup(<AuthControl signedIn={false} failed />);
+    expect(html).toMatch(new RegExp(`<p[^>]*role="status"[^>]*>${SIGN_IN_FAILED}</p>`));
+    expect(forms(html)[0].attrs).toMatch(/action="\/auth\/sign-in"/);
+  });
+
+  test("로그인됨: POST /auth/sign-out 폼 + Sign out, failed여도 실패 문구 없음", () => {
+    const html = renderToStaticMarkup(<AuthControl signedIn failed />);
+    const [form, ...rest] = forms(html);
+    expect(rest).toEqual([]);
+    expect(form.attrs).toMatch(/method="post"/);
+    expect(form.attrs).toMatch(/action="\/auth\/sign-out"/);
+    expect(form.body).toMatch(new RegExp(`<button[^>]*type="submit"[^>]*>${SIGN_OUT}</button>`));
+    expect(text(html)).not.toContain(SIGN_IN_FAILED);
+    expect(text(html)).not.toContain(SIGN_IN);
+  });
+
+  test("버튼은 터치 영역 44px 이상(min-h-11 이상)", () => {
+    const all = [true, false].flatMap((signedIn) => targets(renderToStaticMarkup(<AuthControl signedIn={signedIn} failed />)));
+    expect(all).toHaveLength(2);
+    for (const t of all) expect(t, t).toMatch(/class="[^"]*\b(min-)?h-1[12]\b/);
+  });
+
+  test("타임존 칸을 서버에서 그리면 빈 값(서버 타임존이 박히지 않게, 브라우저가 채운다)", () => {
+    expect(renderToStaticMarkup(<TimezoneField />)).toBe('<input type="hidden" name="timezone" value=""/>');
+  });
 });
