@@ -23,6 +23,20 @@
 - [ ] 2단계: #8 유저·내 종목, #9 무료/Plus 노출, 로그인(Google/Apple), #15 카드 API → SaaS
   - [x] #8 유저·내 종목·교체 제한·생성 대상 — PR #35, 닫힘(2026-10-28). DB 트리거가 규칙을 지킴(ADR-0004), 원격 마이그레이션 적용. 다음: 로그인 + 내 종목 고르기 화면(티켓 없음)
   - [x] 스펙 #36 → #37 Google 로그인·유저 프로필, #38 내 종목 고르기·빼기 — PR #39, 닫힘(2026-10-28). 남은 것: 사용자 Google 로그인 설정(`web/README.md`) 후 운영 수동 확인
+  - [x] #9 무료/Plus 줄 노출 — PR #40, 닫힘(2026-10-28)
+- [x] #16 거래일 달력·실행 잠금·이어 하기·발행 중단·종가 날짜 라벨 — PR #41, 닫힘
+- [x] #10 ETF 카드(상위 편입 종목 SEC N-PORT) — PR #42, 닫힘
+- [ ] #43 아침 실행 시각 보장(Supabase pg_cron → workflow_dispatch) — PR #44 병합·토큰 저장·시험 dispatch 성공. **다음 평일 09:17 UTC 정시 실행 확인 후 닫기**
+- [x] #17 실행 기록·Discord 요약·gitleaks — PR #45, 닫힘
+- [x] #12 아침 알림 문구 — PR #46, 닫힘
+- [ ] 다음: #11 시장 한눈에(시세 필요), #18·#21·#20(사람 몫), 커버 범위 확대(#20에서), 푸시 발송·즉시 생성(#15 후보)
+
+## 사용자 할 일 (2026-10-29 기준)
+- Google 로그인 설정 3가지(Google Cloud OAuth 클라이언트, Supabase Auth Google 켜기·Email 끄기·URL, Vercel `SUPABASE_PUBLISHABLE_KEY`) → 운영 로그인·내 종목 확인
+- Discord 웹훅 → `gh secret set DISCORD_WEBHOOK_URL --env production`
+- Tiingo Commercial 구독 결정($50/월, 공개 시 Redistribution 필요) → 가격 줄
+- `brew install gitleaks` 후 `git config core.hooksPath .githooks`
+- GitHub dispatch 토큰 만료일(약 2027-10) 전에 갱신 → Vault `github_dispatch_token`
 - [ ] #16·#17 운영(달력·잠금·실행 기록·Discord·gitleaks) → #20 10거래일 실험
 
 ## 사용자가 해야 할 일 (모아서 요청)
