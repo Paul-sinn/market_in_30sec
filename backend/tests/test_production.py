@@ -3,7 +3,9 @@
 입구 3: 운영 CLI를 하위 프로세스(production_probe)로 돌려 exit 코드·출력을 본다. 바꾸는 것은 전송 층 둘(SEC get·LLM)뿐."""
 
 import dataclasses
+import json
 import os
+import re
 import subprocess
 import sys
 from datetime import date
@@ -175,20 +177,31 @@ def test_SEC가_403으로_막아도_카드는_나가지만_실패한_실행이�
 BACKEND = Path(__file__).resolve().parent.parent
 KEY_CANARY, UA_CANARY = "sk-ant-KeyCanary93", "M30 Canary uaCanary41@example.invalid"
 TIINGO_CANARY = "tiingoKeyCanary57"
+WEBHOOK_CANARY = "https://discord.com/api/webhooks/123456789012345678/WebhookCanary88" + "x" * 60
+BACKUP_LINE = "BACKUP RUN: no finished run when the GitHub schedule backup started (check pg_cron dispatch)"
 
 
-def run_probe(settings, situation, tiingo_key=None, extra=(), trigger=None):
+def run_probe(settings, situation, tiingo_key=None, extra=(), trigger=None, webhook=None, day="2026-10-16"):
     """tiingo_key가 없으면 TIINGO_API_KEY를 뺀 환경(구독 전). 셸에 진짜 키가 있어도 하위 프로세스로 넘기지 않는다. extra = 덧붙일 CLI 인자.
-    trigger = 워크플로가 넘기는 RUN_TRIGGER(github.event_name). 없으면 변수 없이(로컬 실행)."""
-    env = {k: v for k, v in os.environ.items() if k not in ("TIINGO_API_KEY", "RUN_TRIGGER")} | {
+    trigger = 워크플로가 넘기는 RUN_TRIGGER(github.event_name). 없으면 변수 없이(로컬 실행).
+    webhook = DISCORD_WEBHOOK_URL. 없으면 변수 없이(셸의 진짜 웹훅을 넘기지 않는다)."""
+    env = {k: v for k, v in os.environ.items() if k not in ("TIINGO_API_KEY", "RUN_TRIGGER", "DISCORD_WEBHOOK_URL")} | {
         "SUPABASE_DB_URL": settings.database_url, "ANTHROPIC_API_KEY": KEY_CANARY, "SEC_USER_AGENT": UA_CANARY
-    } | ({"TIINGO_API_KEY": tiingo_key} if tiingo_key else {}) | ({"RUN_TRIGGER": trigger} if trigger else {})
-    r = subprocess.run([sys.executable, "tests/production_probe.py", situation, "--production", "2026-10-16", *extra],
+    } | ({"TIINGO_API_KEY": tiingo_key} if tiingo_key else {}) | ({"RUN_TRIGGER": trigger} if trigger else {}) | (
+        {"DISCORD_WEBHOOK_URL": webhook} if webhook else {})
+    r = subprocess.run([sys.executable, "tests/production_probe.py", situation, "--production", day, *extra],
                        cwd=BACKEND, env=env, capture_output=True, text=True, timeout=60)
     out = r.stdout + r.stderr
-    assert KEY_CANARY not in out and UA_CANARY not in out and TIINGO_CANARY not in out
+    leaked = [c for c in (KEY_CANARY, UA_CANARY, TIINGO_CANARY, "WebhookCanary88", settings.database_url) if c in out]
+    assert not leaked  # 키·연락처·시세 토큰·웹훅 주소·DB 접속 문자열(로컬이라 비밀번호는 캐너리가 아니다)
     assert out.endswith("fake_modules=[]\n")  # 실행한 운영 경로 어디서도(함수 안 import 포함) 가짜 어댑터를 불러오지 않았다
     return r.returncode, out
+
+
+def webhook_message(out):
+    """탐침이 받은 Discord 메시지(한 번만 보냈다)."""
+    [content] = [json.loads(line.removeprefix("webhook_content=")) for line in out.splitlines() if line.startswith("webhook_content=")]
+    return content
 
 
 @pytest.mark.parametrize(
@@ -208,6 +221,30 @@ def test_운영_CLI는_실행_요약과_CIK_갱신_여부를_찍고_실패한_�
     assert code == exit_code
     for line in lines:
         assert line in out, line
+
+
+def test_실패한_운영_실행은_요약_맨_위에_실패_배너와_실패_목록을_찍는다(settings, admin):
+    code, out = run_probe(settings, "denied")
+
+    assert code == 1
+    # 403 뒤 이번 실행은 SEC를 더 부르지 않는다: AAPL과 CIK 순으로 그 뒤 6개(MSFT·AMZN·NVDA·TSLA·META·GOOGL)가 차단으로 남는다
+    denied = ["0000320193", "0000789019", "0001018724", "0001045810", "0001318605", "0001326801", "0001652044"]
+    assert out.splitlines()[:3] == [
+        "!!! FAILED: failures=7 cards=15 !!!",
+        "failed: " + ", ".join(f"sec_filings/{cik}=access_denied" for cik in denied),
+        "ACCESS DENIED (not retried): sec_filings",
+    ]
+
+
+def test_정상_운영_실행은_배너_없이_LLM_토큰과_줄_상태별_카드_수를_찍는다(settings, admin):
+    code, out = run_probe(settings, "quiet")
+
+    assert code == 0
+    lines = out.splitlines()
+    assert not [line for line in lines if "!!!" in line or line.startswith("failed:")]
+    assert "filings=0 unclassified=0 batches=0 skipped=- llm_calls=0/60 tokens=in:0,out:0,cache_read:0,cache_write:0" in lines
+    # 0인 상태는 뺀다. 시세 키 없음 = 등락률·세 번째 줄 지연, 일정 출처 없음 = 미지원, 공시 없는 날 = 15장 모두 확인함·없음
+    assert "lines: change[delayed=15] news[checked_none=15] event[unsupported=15] price[delayed=15]" in lines
 
 
 def test_운영_실행_중_DB_오류는_예외_이름과_SQLSTATE만_찍고_행_내용은_공개_로그에_남기지_않는다(settings, admin):
@@ -286,11 +323,13 @@ def test_예약_실행은_그_거래일에_완료된_실행이_있으면_카드�
 def test_예약_실행은_그_거래일에_완료된_실행이_없으면_건너뛰지_않고_카드를_만든다(settings, admin, finished_at, day):
     admin.execute(f"insert into public.pipeline_run (trading_day, finished_at) values ('{day}', {finished_at})")
 
-    code, out = run_probe(settings, "quiet", trigger="schedule")
+    code, out = run_probe(settings, "quiet", trigger="schedule", webhook=WEBHOOK_CANARY)
 
     assert code == 0
     assert "2026-10-16 cards_saved=15 resumed=- " in out
     assert "ALREADY_DONE" not in out
+    # 정시 dispatch(pg_cron)가 그 거래일을 끝내지 못했다는 신호(#17 D7): 터미널과 Discord 메시지 첫 줄
+    assert out.splitlines()[0] == webhook_message(out).splitlines()[2] == BACKUP_LINE
 
 
 def test_예약_실행은_같은_거래일_실행이_진행_중이면_ALREADY_DONE이_아니라_LOCKED로_끝난다(settings, admin):
@@ -299,7 +338,9 @@ def test_예약_실행은_같은_거래일_실행이_진행_중이면_ALREADY_DO
         code, out = run_probe(settings, "quiet", trigger="schedule")
 
     assert code == 1
-    assert out == "LOCKED: 2026-10-16 같은 거래일 실행이 이미 돌고 있어 종료합니다\nfake_modules=[]\n"
+    # 끝난 실행이 없어 예비 실행이 돌기 시작했다(BACKUP RUN). GitHub 실행끼리는 concurrency로 줄을 서므로 잠금은 GitHub 밖 실행이다
+    assert out == ("BACKUP RUN: no finished run when the GitHub schedule backup started (check pg_cron dispatch)\n"
+                   "LOCKED: 2026-10-16 같은 거래일 실행이 이미 돌고 있어 종료합니다\nfake_modules=[]\n")
 
 
 @pytest.mark.parametrize("trigger", ["workflow_dispatch", None], ids=["dispatch", "변수_없음"])
@@ -310,4 +351,106 @@ def test_dispatch·수동_실행은_완료된_실행이_있어도_카드를_다�
 
     assert code == 0
     assert "2026-10-16 cards_saved=15 resumed=- " in out
-    assert "ALREADY_DONE" not in out
+    assert "ALREADY_DONE" not in out and BACKUP_LINE not in out
+
+
+# Discord 실패 알림(#17 D3): 탐침이 notify._OPENER만 바꾼다. 실제 Discord를 부르지 않는다
+def test_운영_실행은_Discord로_터미널과_같은_요약을_보내고_보냈다고_찍는다(settings, admin):
+    code, out = run_probe(settings, "quiet", webhook=WEBHOOK_CANARY)
+
+    assert code == 0
+    lines = out.splitlines()
+    content = webhook_message(out)
+    assert content.splitlines()[:2] == ["OK morning 2026-10-16 exit=0", "```text"]
+    summary = lines[:lines.index(next(line for line in lines if line.startswith("webhook_content=")))]
+    assert content == "OK morning 2026-10-16 exit=0\n```text\n" + "\n".join(summary) + "\n```"  # 터미널 줄 그대로
+    assert "prices=none" in summary
+    assert lines[-2:] == ["discord: sent", "fake_modules=[]"]  # 상태 줄은 메시지를 만든 뒤라 메시지에 없다
+
+
+def test_실패한_운영_실행의_Discord_메시지는_머리줄과_첫_줄에서_실패를_강조한다(settings, admin):
+    code, out = run_probe(settings, "denied", webhook=WEBHOOK_CANARY)
+
+    assert code == 1
+    assert webhook_message(out).splitlines()[:3] == ["**FAILED** morning 2026-10-16 exit=1", "```text",
+                                                    "!!! FAILED: failures=7 cards=15 !!!"]
+    assert "discord: sent" in out.splitlines()
+
+
+def test_Discord_보내기가_실패해도_실행_결과는_그대로이고_이유_코드만_찍는다(settings, admin):
+    code, out = run_probe(settings, "webhook_down", webhook=WEBHOOK_CANARY)  # 오류의 주소·사유에 웹훅 주소. 캐너리 검사는 run_probe
+
+    assert code == 0
+    assert "2026-10-16 cards_saved=15 resumed=- " in out
+    assert out.splitlines()[-2:] == ["discord: not sent (reason=http_500)", "fake_modules=[]"]
+
+
+def test_Discord_웹훅_주소가_틀리면_보내지_않고_bad_url만_찍는다(settings, admin):
+    code, out = run_probe(settings, "quiet", webhook=WEBHOOK_CANARY.replace("https://", "http://"))
+
+    assert code == 0
+    assert "webhook_content=" not in out
+    assert out.splitlines()[-2:] == ["discord: not sent (reason=bad_url)", "fake_modules=[]"]
+
+
+@pytest.mark.parametrize(
+    "situation, day, tiingo_key, exit_code, block",
+    [
+        ("quiet", "2026-10-16", f"{TIINGO_CANARY}\n", 2, ["TIINGO_API_KEY must be one line of printable ASCII without spaces"]),
+        ("db_lost", "2026-10-16", None, 1, ["RUN FAILED: OperationalError"]),
+        ("quiet", "2099-10-16", None, 2, ["거래일 달력(trading_day.py)에 2099년 NYSE 휴장일이 없습니다. 표를 갱신하세요"]),
+    ],
+    ids=["설정_오류", "실행_중_DB_끊김", "달력_표_밖"],
+)
+def test_카드를_만들지_못하고_끝난_운영_실행도_Discord로_그_줄을_보낸다(settings, admin, situation, day, tiingo_key, exit_code, block):
+    code, out = run_probe(settings, situation, tiingo_key=tiingo_key, webhook=WEBHOOK_CANARY, day=day)
+
+    assert code == exit_code
+    assert webhook_message(out) == f"**FAILED** morning {day} exit={exit_code}\n```text\n" + "\n".join(block) + "\n```"
+
+
+def test_운영_실행이_LOCKED로_끝나면_Discord로_그_한_줄을_보낸다(settings, admin):
+    with connect(settings) as conn, CardStore(conn).run_lock(FRI):
+        code, out = run_probe(settings, "quiet", webhook=WEBHOOK_CANARY)
+
+    assert code == 1
+    assert webhook_message(out) == ("**FAILED** morning 2026-10-16 exit=1\n```text\n"
+                                    "LOCKED: 2026-10-16 같은 거래일 실행이 이미 돌고 있어 종료합니다\n```")
+
+
+@pytest.mark.parametrize("day, line", [("2026-11-26", "2026-11-26은 거래일이 아니라(주말·휴장일) 카드를 만들지 않습니다"),
+                                       ("2026-10-16", "ALREADY_DONE 2026-10-16")], ids=["휴장일", "ALREADY_DONE"])
+def test_휴장일과_이미_끝난_예비_실행은_Discord로_보내지_않는다(settings, admin, day, line):
+    admin.execute("insert into public.pipeline_run (trading_day, finished_at) values ('2026-10-16', now())")
+
+    code, out = run_probe(settings, "quiet", trigger="schedule", webhook=WEBHOOK_CANARY, day=day)
+
+    assert code == 0
+    assert out == f"{line}\nfake_modules=[]\n"  # 매일 오는 예비 실행 소음을 보내지 않는다
+
+
+def test_품질_확인은_Discord로_보내지_않는다(settings, admin):
+    code, out = run_probe(settings, "quiet", extra=["--quality"], webhook=WEBHOOK_CANARY)
+
+    assert code == 0
+    assert "webhook_content=" not in out and "discord:" not in out
+
+
+def test_종목_하나의_예상_못_한_예외는_그_종목만_지연이고_Discord_실패_알림에_출처·대상·예외_이름이_간다(settings, admin):
+    code, out = run_probe(settings, "ticker_crash", webhook=WEBHOOK_CANARY)  # 예외 메시지에 키. 캐너리 검사는 run_probe
+
+    assert code == 1
+    assert "2026-10-16 cards_saved=15 resumed=- " in out
+    failed = "failed: sec_filings/0000320193=unexpected:ValueError"
+    assert failed in out.splitlines()
+    assert failed in webhook_message(out).splitlines()
+
+
+def test_가짜_어댑터를_불러오는_운영_코드는_시나리오_모드_CLI_하나뿐이다():
+    # fake_modules=[] 검사는 그 실행이 지난 경로만 본다: 공시가 있는 날에만 도는 함수 안 import는 놓친다(#26 R2)
+    src = BACKEND / "src" / "m30"
+    found = sorted(
+        path.relative_to(src).as_posix() for path in src.rglob("*.py")
+        if path != src / "adapters" / "fake.py" and re.search(r"adapters\.fake|adapters import[^\n]*\bfake\b", path.read_text())
+    )
+    assert found == ["pipeline/__main__.py"]

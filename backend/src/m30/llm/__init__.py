@@ -13,9 +13,21 @@ class LLMRequest:
     max_tokens: int
 
 
+TOKEN_FIELDS = ("input_tokens", "output_tokens", "cache_read_tokens", "cache_write_tokens")
+
+
+@dataclass(frozen=True)
+class LLMReply:
+    text: str
+    input_tokens: int = 0  # usage.input_tokens (캐시 아닌 입력)
+    output_tokens: int = 0
+    cache_read_tokens: int = 0  # usage.cache_read_input_tokens
+    cache_write_tokens: int = 0  # usage.cache_creation_input_tokens
+
+
 class LLM(Protocol):
-    def complete(self, request: LLMRequest) -> str:
-        """응답 텍스트. 실패: 타임아웃·429·5xx·529 → TransientSourceError, 401·403 → AccessDeniedError, 그 외 → SourceError."""
+    def complete(self, request: LLMRequest) -> LLMReply:
+        """응답 텍스트와 토큰 수. 실패: 타임아웃·429·5xx·529 → TransientSourceError, 401·403 → AccessDeniedError, 그 외 → SourceError."""
         ...
 
 
@@ -31,13 +43,17 @@ class LLMBudget:
         self._llm = llm
         self.limit = limit
         self.calls = 0
+        self.tokens = dict.fromkeys(TOKEN_FIELDS, 0)  # 이번 실행 합계. 실패한 시도는 응답이 없어 0이다
 
     def complete(self, request: LLMRequest) -> str:
-        """남은 호출이 없으면 부르지 않고 LLMCallLimitReached."""
+        """응답 텍스트. 남은 호출이 없으면 부르지 않고 LLMCallLimitReached."""
         if self.calls >= self.limit:
             raise LLMCallLimitReached
         self.calls += 1
-        return self._llm.complete(request)
+        reply = self._llm.complete(request)
+        for name in TOKEN_FIELDS:
+            self.tokens[name] += getattr(reply, name)
+        return reply.text
 
 
 def data_json(value: object) -> str:

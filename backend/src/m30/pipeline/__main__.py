@@ -7,9 +7,10 @@ import json
 import os
 import sys
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import date, datetime
 from pathlib import Path
+from typing import TextIO
 
 from m30.adapters.edgar import EdgarClient
 from m30.adapters.tiingo import TiingoPriceSource
@@ -22,6 +23,7 @@ from m30.config import (
     REVIEW_MODEL,
     ConfigError,
     is_local_db,
+    load_discord_settings,
     load_edgar_settings,
     load_llm_settings,
     load_settings,
@@ -30,7 +32,8 @@ from m30.config import (
 from m30.db.store import CardStore, DBConnectError, RunLocked, connect
 from m30.llm.anthropic import AnthropicLLM
 from m30.models import LineStatus, NewsKind
-from m30.pipeline.collect import filing_window
+from m30.notify import discord_content, send_discord
+from m30.pipeline.collect import FailureReason, error_name, filing_window
 from m30.pipeline.morning import MorningPipeline, RunSummary
 from m30.pipeline.production import run_failed, run_production
 from m30.trading_day import CalendarError, is_trading_day
@@ -107,50 +110,66 @@ def main(argv: Sequence[str] | None = None) -> int:
 LOCKED = "LOCKED: {} 같은 거래일 실행이 이미 돌고 있어 종료합니다"  # 공개 로그: 날짜만
 
 
-def _not_trading_day(day: date) -> int | None:
+def _not_trading_day(day: date, say: Callable[..., None] = print) -> int | None:
     """설정 읽기·DB 연결 전 거래일 확인. 거래일이면 None, 주말·휴장일이면 0(카드 없음이 정상), 달력 표 밖이면 2."""
     try:
         if is_trading_day(day):
             return None
     except CalendarError as e:
-        print(f"거래일 달력(trading_day.py)에 {e.year}년 NYSE 휴장일이 없습니다. 표를 갱신하세요", file=sys.stderr)
+        say(f"거래일 달력(trading_day.py)에 {e.year}년 NYSE 휴장일이 없습니다. 표를 갱신하세요", file=sys.stderr)
         return 2
-    print(f"{day}은 거래일이 아니라(주말·휴장일) 카드를 만들지 않습니다")
+    say(f"{day}은 거래일이 아니라(주말·휴장일) 카드를 만들지 않습니다")
     return 0
 
 
-def _print_summary(summary: RunSummary) -> None:
-    """결과 코드·건수·티커만. 레포가 공개라 Actions 로그도 공개다: 카드 문장·가격·URL·키·환경 변수 값을 찍지 않는다."""
-    # 예외 메시지·URL·키는 찍지 않는다. 401·403은 맨 위(터미널 강조·Discord는 #17)
+def _print_summary(summary: RunSummary, say: Callable[[str], None] = print) -> None:
+    """결과 코드·건수·티커만. 레포가 공개라 Actions 로그도 공개다: 카드 문장·가격·URL·키·환경 변수 값을 찍지 않는다.
+    실패한 실행이면 맨 위에 배너와 실패 목록(#17 D4). Discord 메시지도 이 줄 그대로다."""
+    if run_failed(summary):
+        failures = len(summary.failures) + len(summary.ticker_errors)
+        say(f"!!! FAILED: failures={failures} cards={summary.cards_saved + len(summary.resumed)} !!!")
+        if failures:  # 예외 메시지·URL·키는 찍지 않는다. 코드와 예외 이름만
+            say("failed: " + ", ".join(
+                [_failure(f.source, f.subject, f.reason, f.error) for f in summary.failures]
+                + [_failure("card", t.ticker, FailureReason.UNEXPECTED, t.error) for t in summary.ticker_errors]
+            ))
     if summary.access_denied:
-        print(f"ACCESS DENIED (not retried): {', '.join(summary.access_denied)}")
+        say(f"ACCESS DENIED (not retried): {', '.join(summary.access_denied)}")
     if summary.rate_limited:
-        print(f"RATE LIMITED (429, retried): {', '.join(summary.rate_limited)}")
+        say(f"RATE LIMITED (429, retried): {', '.join(summary.rate_limited)}")
     delayed = ", ".join(summary.change_delayed) or "-"
     resumed = ",".join(summary.resumed) or "-"  # 죽은 앞 실행이 저장해 이번에 건너뛴 카드
-    print(f"{summary.trading_day} cards_saved={summary.cards_saved} resumed={resumed} change_delayed={delayed}")
+    say(f"{summary.trading_day} cards_saved={summary.cards_saved} resumed={resumed} change_delayed={delayed}")
     skipped = ", ".join(f"{b.number}:{b.reason}" for b in summary.skipped_batches) or "-"
-    print(
+    tokens = summary.llm_tokens
+    say(
         f"filings={summary.filings_collected} unclassified={summary.filings_unclassified}"
         f" batches={summary.classify_batches} skipped={skipped} llm_calls={summary.llm_calls}/{summary.llm_call_limit}"
+        f" tokens=in:{tokens['input_tokens']},out:{tokens['output_tokens']},cache_read:{tokens['cache_read_tokens']}"
+        f",cache_write:{tokens['cache_write_tokens']}"
     )
-    print("news: " + " ".join(f"{ticker}={n.status}" for ticker, n in summary.news.items()))
+    say("lines: " + " ".join(
+        f"{name}[{' '.join(f'{status}={n}' for status, n in counts.items() if n)}]" for name, counts in summary.line_counts.items()
+    ))
+    say("news: " + " ".join(f"{ticker}={n.status}" for ticker, n in summary.news.items()))
     if summary.funds:  # ETF 편입 종목: 상태 코드와 커버 범위에서 못 찾은 회사 수만(회사 이름은 찍지 않는다)
-        print("holdings: " + " ".join(
+        say("holdings: " + " ".join(
             f"{ticker}={f.status}" + (f"(unmatched {f.unmatched})" if f.unmatched else "") for ticker, f in summary.funds.items()
         ))
     # 문장은 찍지 않는다(통과한 줄은 카드에, 걸린 줄은 보류함에 있다). 종목별 결과 코드만
     drafts = " ".join(f"{ticker}={d.problem or 'ok'}" for ticker, d in summary.drafts.items()) or "-"
-    print(f"drafts: {drafts}")
+    say(f"drafts: {drafts}")
     reviews = " ".join(
         f"{ticker}={'pass' if r.stage is None else f'hold:{r.stage}'}{'+retry' if r.retried else ''}"
         for ticker, r in summary.reviews.items()
     ) or "-"
-    print(f"review: {reviews}")
-    if summary.failures:
-        print("failed: " + ", ".join(
-            f"{f.source}/{f.subject}={f.reason}" if f.subject else f"{f.source}={f.reason}" for f in summary.failures
-        ))
+    say(f"review: {reviews}")
+
+
+def _failure(stage: str, subject: str | None, reason: str, error: str | None) -> str:
+    """{stage}/{subject}={reason}, 예상 못 한 예외는 =unexpected:{예외 이름}. 대상이 없으면(지표) {stage}={reason}."""
+    code = f"{reason}:{error}" if error else reason
+    return f"{stage}/{subject}={code}" if subject else f"{stage}={code}"
 
 
 QUALITY_LINES = (("news", "news_line"), ("event", "event_line"), ("price", "price_fact_line"))  # 품질 블록 줄 이름 → 카드 필드
@@ -199,34 +218,77 @@ def _quality_lines(summary: RunSummary, store: CardStore, prices: str) -> list[s
     return out
 
 
+class _Report:
+    """운영 실행이 찍은 줄(stdout·stderr 순서대로). Discord 메시지는 이 줄 그대로다(#17 D3)."""
+
+    def __init__(self) -> None:
+        self.lines: list[str] = []
+        self.notify = True  # False: 휴장일 exit 0, ALREADY_DONE(매일 오는 예비 실행 소음)
+
+    def __call__(self, line: str, file: TextIO | None = None) -> None:
+        print(line, file=file)  # None = 부를 때의 sys.stdout(capsys 호환)
+        self.lines.append(line)
+
+
+BACKUP_RUN = "BACKUP RUN: no finished run when the GitHub schedule backup started (check pg_cron dispatch)"
+
+
 def _production(requested: date | None, quality: bool = False) -> int:
-    """거래일·날짜 확인 → 설정 → DB 연결 → CIK 갱신·파이프라인(SEC·Anthropic·Tiingo) → 요약 → exit 코드. 외부 출처는 DB 연결 뒤에만 부른다.
-    시세: TIINGO_API_KEY가 있으면 Tiingo, 없으면(유료 구독 전) 시세 없이(등락률·세 번째 줄 지연).
-    quality(#14): 로컬 DB만, 시세는 항상 없이(무료 키 시간당 50회 보호. 품질 확인 대상은 첫 번째 줄), 끝에 품질 블록."""
+    """실행 → (보낼 경우) Discord 실패 알림 → exit 코드. 품질 확인(로컬 전용)은 보내지 않는다."""
     now = datetime.now(ET)
     day = requested or now.date()
-    if (code := _not_trading_day(day)) is not None:
+    report = _Report()
+    code = _run_production(day, now, quality, report)
+    if report.notify and not quality:
+        _notify(day, code, report.lines)
+    return code
+
+
+def _notify(day: date, code: int, lines: Sequence[str]) -> None:
+    """DISCORD_WEBHOOK_URL이 없으면 조용히. 형식이 틀렸거나 보내기에 실패하면 이유 코드 한 줄. exit 코드는 바꾸지 않는다."""
+    try:
+        settings = load_discord_settings()
+    except ConfigError:
+        print("discord: not sent (reason=bad_url)")
+        return
+    if settings is None:
+        return
+    reason = send_discord(settings, discord_content(day, code, lines))
+    print("discord: sent" if reason is None else f"discord: not sent (reason={reason})")
+
+
+def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> int:
+    """거래일·날짜 확인 → 설정 → DB 연결 → CIK 갱신·파이프라인(SEC·Anthropic·Tiingo) → 요약 → exit 코드. 외부 출처는 DB 연결 뒤에만 부른다.
+    시세: TIINGO_API_KEY가 있으면 Tiingo, 없으면(유료 구독 전) 시세 없이(등락률·세 번째 줄 지연).
+    quality(#14): 로컬 DB만, 시세는 항상 없이(무료 키 시간당 50회 보호. 품질 확인 대상은 첫 번째 줄), 끝에 품질 블록(say가 아니라 print:
+    Discord 메시지에 넣지 않는다)."""
+    if (code := _not_trading_day(day, say)) is not None:
+        say.notify = code != 0
         return code
     if now < filing_window(day)[1]:  # 미래 날짜 오타·밤늦은 PT 실행이 원격에 카드를 만들지 않게
-        print(f"{day} 공시 기간은 그날 04:00 ET에 닫힙니다. 그 뒤에 실행하거나 지난 거래일을 넣으세요", file=sys.stderr)
+        say(f"{day} 공시 기간은 그날 04:00 ET에 닫힙니다. 그 뒤에 실행하거나 지난 거래일을 넣으세요", file=sys.stderr)
         return 2
     try:  # DB·외부 출처에 닿기 전에 모두 확인한다. 메시지에는 변수 이름만 있다
         settings, llm_settings, edgar_settings = load_settings(), load_llm_settings(), load_edgar_settings()
         tiingo_settings = load_tiingo_settings()
     except ConfigError as e:
-        print(e, file=sys.stderr)
+        say(str(e), file=sys.stderr)
         return 2
     if quality and not is_local_db(settings.database_url):  # 카드 문장을 찍으므로 공개 로그(Actions = 원격 DB)에서 돌지 않게
-        print("--quality는 로컬 DB에서만 씁니다", file=sys.stderr)
+        say("--quality는 로컬 DB에서만 씁니다", file=sys.stderr)
         return 2
     tiingo = tiingo_settings is not None and not quality
+    error = None
     try:
         with connect(settings) as conn:
             store = CardStore(conn)
             # GitHub 예약 실행은 늦게 오는 예비(#43): 정시 dispatch가 그 거래일을 끝냈으면 카드·LLM 없이 끝낸다. 수동·dispatch는 다시 만든다
-            if os.environ.get("RUN_TRIGGER") == "schedule" and store.has_finished_run(day):
-                print(f"ALREADY_DONE {day}")
-                return 0
+            if os.environ.get("RUN_TRIGGER") == "schedule":
+                if store.has_finished_run(day):
+                    say(f"ALREADY_DONE {day}")
+                    say.notify = False
+                    return 0
+                say(BACKUP_RUN)  # 정시 dispatch가 오지 않았다는 신호(#17 D7). Discord에도 들어간다
             summary, refreshed = run_production(
                 store,
                 day,
@@ -236,19 +298,20 @@ def _production(requested: date | None, quality: bool = False) -> int:
             )
             lines = _quality_lines(summary, store, "none") if quality else []
     except RunLocked:  # 카드 0장과 같은 실패(exit 1). except Exception보다 먼저
-        print(LOCKED.format(day), file=sys.stderr)
+        say(LOCKED.format(day), file=sys.stderr)
         return 1
     except (ConfigError, DBConnectError) as e:  # 우리가 쓴 문구(변수 이름·포트만): 6543 거부, 연결 실패
-        print(e, file=sys.stderr)
+        say(str(e), file=sys.stderr)
         return 2 if isinstance(e, ConfigError) else 1
     except Exception as e:
         # 공개 로그: str(e)·traceback에는 서버 오류 DETAIL(행 내용 = 검수 전 문장)이나 라이브러리가 넣은 키가 섞일 수 있다
-        sqlstate = getattr(e, "sqlstate", None)
-        print(f"RUN FAILED: {type(e).__name__}" + (f" sqlstate={sqlstate}" if sqlstate else ""), file=sys.stderr)
+        error = error_name(e)
+    if error is not None:
+        say(f"RUN FAILED: {error}", file=sys.stderr)
         return 1
-    _print_summary(summary)
-    print("coverage: refreshed" if refreshed else "coverage: NOT REFRESHED (sec ticker list failed), stored rows used")
-    print("prices=tiingo" if tiingo else "prices=none")  # none = TIINGO_API_KEY 없음(구독 전) 또는 --quality
+    _print_summary(summary, say)
+    say("coverage: refreshed" if refreshed else "coverage: NOT REFRESHED (sec ticker list failed), stored rows used")
+    say("prices=tiingo" if tiingo else "prices=none")  # none = TIINGO_API_KEY 없음(구독 전) 또는 --quality
     for line in lines:
         print(line)
     return 1 if run_failed(summary) else 0

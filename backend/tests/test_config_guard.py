@@ -14,6 +14,7 @@ CANARIES = {
     "SUPABASE_DB_URL": "postgresql://postgres:Zq9CfgCanaryPw@127.0.0.1:54322/postgres",
     "ANTHROPIC_API_KEY": "sk-ant-Zq9CfgCanaryKey",
     "SEC_USER_AGENT": "M30 Canary ua-canary-Q7@example.invalid",
+    "DISCORD_WEBHOOK_URL": "https://discord.com/api/webhooks/123456789012345678/Zq9CfgCanaryHook",
 }
 
 
@@ -28,8 +29,10 @@ CANARIES = {
         ("test_SEC_설정을_읽는다", {"SEC_USER_AGENT": "M30 Canary ua-canary-Q7 no email"}, "SEC_USER_AGENT must be one line"),
         ("test_SEC_설정을_읽는다", {"SEC_USER_AGENT": "M30 Canary ua-canary-Q7@x.invalid\r\nX-Injected: 1"},
          "SEC_USER_AGENT must be one line"),
+        ("test_Discord_설정을_읽는다", {"DISCORD_WEBHOOK_URL": "http://discord.com/api/webhooks/1/Zq9CfgCanaryHook"},
+         "DISCORD_WEBHOOK_URL must be one line"),
     ],
-    ids=["db_missing", "llm_missing", "llm_newline", "llm_space", "sec_missing", "sec_no_email", "sec_newline"],
+    ids=["db_missing", "llm_missing", "llm_newline", "llm_space", "sec_missing", "sec_no_email", "sec_newline", "discord_http"],
 )
 def test_설정_읽기가_거부해도_환경의_비밀값과_거부한_값이_traceback_지역_변수에_남지_않는다(probe, change, message):
     env = {k: v for k, v in os.environ.items() if k not in CANARIES} | CANARIES

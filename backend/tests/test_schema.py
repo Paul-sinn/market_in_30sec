@@ -381,14 +381,29 @@ def test_종가_날짜가_카드_거래일과_같거나_뒤면_DB가_거부한�
                          f" values ('AAPL', '2026-10-16', 'fallback', 1.3, 'checked_found', '{day}')")
 
 
-def test_실행_기록은_서버가_넣고_끝_시각만_고칠_수_있고_지울_수_없다(admin):
+def test_실행_기록은_서버가_넣고_끝_시각과_실행_요약만_고칠_수_있고_지울_수_없다(admin):
     allowed = [p for p in ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE")
                if admin.execute("select has_table_privilege('service_role', 'public.pipeline_run', %s)", (p,)).fetchone()[0]]
     updatable = [r[0] for r in admin.execute(
         "select column_name from information_schema.columns where table_schema = 'public' and table_name = 'pipeline_run'"
         " and has_column_privilege('service_role', 'public.pipeline_run', column_name, 'UPDATE') order by column_name")]
     assert allowed == ["SELECT", "INSERT"]  # UPDATE는 컬럼 단위로만
-    assert updatable == ["finished_at"]
+    assert updatable == ["failed", "finished_at", "summary"]
+
+
+@pytest.mark.parametrize(
+    "columns, values",
+    [
+        ("finished_at, failed, summary", "now(), false, '[]'"),  # 배열: 키로 읽는 월 합계 조회가 깨진다
+        ("failed, summary", "false, '{}'"),  # 끝나지 않은 실행에 요약
+        ("finished_at, summary", "now(), '{}'"),  # 실패 여부 없이 요약
+        ("finished_at, failed", "now(), true"),  # 요약 없이 실패 여부
+    ],
+    ids=["배열_요약", "끝_시각_없음", "실패_여부_없음", "요약_없음"],
+)
+def test_실행_요약은_끝난_실행에_실패_여부와_함께_객체로만_남는다(admin, columns, values):
+    with pytest.raises(errors.CheckViolation):
+        as_service_role(admin, f"insert into public.pipeline_run (trading_day, {columns}) values ('2026-10-16', {values})")
 
 
 def test_실행_기록의_끝_시각은_시작_시각보다_앞설_수_없다(admin):

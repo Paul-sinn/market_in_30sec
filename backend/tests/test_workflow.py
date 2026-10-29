@@ -35,11 +35,11 @@ def test_수동_실행은_거래일을_비워_둘_수_있다():
                      text(), re.M)
 
 
-def test_비밀값은_secrets_셋뿐이고_실행_단계_env로만_넘기며_로그에_찍는_명령이_없다():
+def test_비밀값은_secrets_넷뿐이고_실행_단계_env로만_넘기며_로그에_찍는_명령이_없다():
     lines = text().splitlines()
     secret_lines = [i for i, line in enumerate(lines) if "secrets." in line]
     names = [re.search(r"secrets\.([A-Z_]+)", lines[i]).group(1) for i in secret_lines]
-    assert sorted(names) == ["ANTHROPIC_API_KEY", "SEC_USER_AGENT", "SUPABASE_DB_URL"]  # 각각 한 번씩
+    assert sorted(names) == ["ANTHROPIC_API_KEY", "DISCORD_WEBHOOK_URL", "SEC_USER_AGENT", "SUPABASE_DB_URL"]  # 각각 한 번씩
     (production,) = [i for i, line in enumerate(lines) if "--production" in line]
     assert all(i > production for i in secret_lines)  # 마지막 단계(실행)의 env: 아래에만. 설치 단계에는 비밀값이 없다
     assert not [line for line in lines if line.strip().startswith(("run:", "- run:")) and "${{" in line]
@@ -63,7 +63,7 @@ def test_실행_단계는_시작한_이벤트를_env로_넘겨_예약_실행만_
     lines = text().splitlines()
     (production,) = [i for i, line in enumerate(lines) if "--production" in line]
     assert [line.strip().split(":")[0] for line in lines[production + 1:]] == [
-        "env", "TRADING_DAY", "RUN_TRIGGER", "SUPABASE_DB_URL", "ANTHROPIC_API_KEY", "SEC_USER_AGENT"]
+        "env", "TRADING_DAY", "RUN_TRIGGER", "SUPABASE_DB_URL", "ANTHROPIC_API_KEY", "SEC_USER_AGENT", "DISCORD_WEBHOOK_URL"]
     assert re.findall(r"^\s*RUN_TRIGGER: (.*)$", text(), re.M) == ["${{ github.event_name }}"]
 
 

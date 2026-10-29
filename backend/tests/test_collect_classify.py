@@ -598,10 +598,15 @@ def test_CLI는_429를_낸_출처를_다시_시도해_성공해도_ACCESS_DENIED
     r = subprocess.run([sys.executable, "-m", "m30.pipeline", "2026-10-16", "--scenario", str(path)],
                        cwd=Path(__file__).resolve().parent.parent, capture_output=True, text=True, timeout=60)
 
-    assert r.returncode == 0, r.stderr
-    assert r.stdout.splitlines()[:2] == ["ACCESS DENIED (not retried): events", "RATE LIMITED (429, retried): sec_filings"]
-    # 429는 다시 시도로 풀려 실패로 남지 않는다(sec_filings 없음). SPY 일정은 MSFT 403 뒤라 부르지 않고 차단으로 남는다
-    assert r.stdout.splitlines()[-1] == "failed: events/MSFT=access_denied, events/SPY=access_denied"
+    assert r.returncode == 0, r.stderr  # 시나리오 모드는 실패한 실행이어도 0(exit 1은 운영 모드만)
+    # 실패한 실행이라 맨 위는 배너와 실패 목록(#17 D4). 429는 다시 시도로 풀려 실패로 남지 않는다(sec_filings 없음).
+    # SPY 일정은 MSFT 403 뒤라 부르지 않고 차단으로 남는다
+    assert r.stdout.splitlines()[:4] == [
+        "!!! FAILED: failures=2 cards=5 !!!",
+        "failed: events/MSFT=access_denied, events/SPY=access_denied",
+        "ACCESS DENIED (not retried): events",
+        "RATE LIMITED (429, retried): sec_filings",
+    ]
 
 
 def test_401·403이_난_출처는_이번_실행에서_다시_부르지_않는다(store):
@@ -846,15 +851,19 @@ def three_stocks(*replies):
 FULL_RUN_REPLIES = (reply(label(1), label(2, "MSFT")), BUY, BUY)  # 분류 묶음 → AAPL 초안 → AAPL 재생성
 
 
+class Killed(BaseException):
+    """프로세스 종료 흉내(SIGKILL·KeyboardInterrupt 자리). 종목 예외 격리(#17 D5)는 Exception만 잡으므로 실행이 그대로 죽는다."""
+
+
 class CrashingPrices:
-    """MSFT 시세에서 버그 예외(SourceError 아님)를 낸다: AAPL 카드를 저장한 뒤 카드 루프 중간에 죽는 실행."""
+    """MSFT 시세에서 Killed를 낸다: AAPL 카드를 저장한 뒤 카드 루프 중간에 죽는 실행."""
 
     def __init__(self, inner):
         self._inner = inner
 
     def daily_bars(self, ticker, start, end):
         if ticker == "MSFT":
-            raise RuntimeError("crash")
+            raise Killed("crash")
         return self._inner.daily_bars(ticker, start, end)
 
 
@@ -876,7 +885,7 @@ def aapl_rows(store):
 
 def test_중간에_죽은_실행_뒤_재실행은_저장된_카드를_건너뛰고_나머지만_만든다(store, admin):
     crash = three_stocks(*FULL_RUN_REPLIES)
-    with pytest.raises(RuntimeError, match="crash"):
+    with pytest.raises(Killed, match="crash"):
         run(store, crash, prices=CrashingPrices(FakePriceSource(crash)))
 
     assert [c.ticker for c in store.list_cards(FRI)] == ["AAPL"]
@@ -905,7 +914,7 @@ def test_중간에_죽은_실행_뒤_재실행은_저장된_카드를_건너뛰�
 
 def test_CLI_요약은_건너뛴_카드를_티커로만_찍는다(store, first_card):
     crash = load_scenario(first_card)  # 공시 출처 없는 3종목
-    with pytest.raises(RuntimeError):
+    with pytest.raises(Killed):
         run(store, crash, prices=CrashingPrices(FakePriceSource(crash)))
     r = subprocess.run([sys.executable, "-m", "m30.pipeline", "2026-10-16", "--scenario", str(first_card)],
                        cwd=BACKEND, capture_output=True, text=True, timeout=60)

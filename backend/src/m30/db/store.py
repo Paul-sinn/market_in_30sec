@@ -1,6 +1,6 @@
 """카드 저장소. 파이프라인은 DB를 이 모듈로만 만진다. 줄(CardLine) ↔ 컬럼 변환도 여기서만."""
 
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import date, datetime
 
@@ -96,11 +96,15 @@ def connect(settings: Settings) -> psycopg.Connection:
     # URI에는 공백이 올 수 없다(secret 붙여넣기 앞뒤 공백·줄바꿈). 키=값 형식은 공백이 구분자라 제외
     if "://" in settings.database_url and any(c.isspace() for c in settings.database_url):
         raise _connect_error("bad_url")
-    # 원래 예외를 끊고(from None, 지역 변수에서도 지움) 다시 던진다: psycopg 프레임 인자(conninfo)·주소 파싱 오류 메시지에 비밀번호가 있다
+    # 원래 예외를 끊고 다시 던진다: psycopg 프레임 인자(conninfo)·주소 파싱 오류 메시지에 비밀번호가 있다.
+    # except 안에서 던지면 파이썬이 __context__에 원래 예외를 다시 채운다(from None은 표시만 끈다) → 이유 코드만 들고 except 밖에서 던진다
+    reason = None
     try:
         ports = (conninfo_to_dict(settings.database_url).get("port") or "").split(",")  # 여러 호스트면 "5432,6543"
     except psycopg.Error:
-        raise _connect_error("bad_url") from None  # 파싱 메시지는 비밀번호를 담을 수 있어 읽지 않고 실패 위치로 정한다
+        reason = "bad_url"  # 파싱 메시지는 비밀번호를 담을 수 있어 읽지 않고 실패 위치로 정한다
+    if reason:
+        raise _connect_error(reason)
     if not local and any(p.strip().isdigit() and int(p) == 6543 for p in ports):
         raise ConfigError(
             f"{DB_URL_VAR}이 트랜잭션 풀러(포트 6543)입니다. 세션 풀러(포트 5432) 주소를 쓰세요: set role이 연결 내내 유지돼야 합니다"
@@ -109,8 +113,8 @@ def connect(settings: Settings) -> psycopg.Connection:
         conn = psycopg.connect(settings.database_url, autocommit=True, **({} if local else {"sslmode": "require"}))
     except psycopg.Error as e:
         reason = connect_failure_reason(str(e))
-        del e
-        raise _connect_error(reason) from None
+    if reason:
+        raise _connect_error(reason)
     try:
         conn.execute("set role service_role")
     except BaseException:
@@ -169,8 +173,12 @@ class CardStore:
         ).fetchone()
         return run_id, since and since.astimezone(ET)
 
-    def finish_run(self, run_id: int) -> None:
-        self._conn.execute("update public.pipeline_run set finished_at = now() where id = %s", (run_id,))
+    def finish_run(self, run_id: int, failed: bool, summary: Mapping[str, object]) -> None:
+        """끝 시각·실패 여부·실행 요약을 한 번에(#17). 죽은 실행은 셋 다 null로 남는다."""
+        self._conn.execute(
+            "update public.pipeline_run set finished_at = now(), failed = %s, summary = %s where id = %s",
+            (failed, Jsonb(summary), run_id),
+        )
 
     def has_finished_run(self, trading_day: date) -> bool:
         """이 거래일에 끝까지 간 실행(finished_at 있음)이 있는지. 진행 중·죽은 실행은 세지 않는다."""
