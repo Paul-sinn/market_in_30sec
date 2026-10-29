@@ -252,3 +252,17 @@ def test_운영_모드_품질_확인은_로컬이_아닌_DB면_접속하기_전�
     assert "--quality는 로컬 DB에서만 씁니다" in out
     assert "DB에 연결하지 못했습니다" not in out  # .invalid라 접속을 시도했으면 접속 실패 문구가 나온다
     assert not [c for c in CANARIES if c in out]
+
+
+@pytest.mark.parametrize(
+    "url",
+    [f"postgresql://postgres:{CANARY}%zz@127.0.0.1:54322/postgres", f"postgresql://postgres:{CANARY}@127.0.0.1:1/postgres"],
+    ids=["bad_url", "refused"],
+)
+def test_DB_연결_실패_예외는_원래_예외를_원인으로도_문맥으로도_들고_있지_않다(url):
+    # __context__를 따라가는 로거가 붙어도 비밀번호가 든 psycopg 메시지에 닿지 않게(#26 Q1)
+    with pytest.raises(psycopg.OperationalError) as raised:
+        connect(Settings(url))
+
+    assert (raised.value.__cause__, raised.value.__context__) == (None, None)
+    assert CANARY not in str(raised.value)

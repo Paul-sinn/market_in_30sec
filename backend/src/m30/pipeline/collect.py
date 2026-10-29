@@ -15,6 +15,7 @@ from m30.adapters.holdings import Holding, HoldingsReport
 from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.prices import DailyBar
 from m30.config import ET
+from m30.llm import LLMCallLimitReached
 from m30.pipeline.compute import round_pct
 from m30.trading_day import previous_trading_day
 
@@ -35,6 +36,7 @@ class FailureReason(StrEnum):
     RETRIES_EXHAUSTED = "retries_exhausted"  # 일시 실패 4번
     ERROR = "error"  # 재시도하지 않는 SourceError
     INVALID_DATA = "invalid_data"  # 받은 값이 계약에 안 맞음(타입·형식)
+    UNEXPECTED = "unexpected"  # SourceError가 아닌 예외(어댑터·검증 버그). error에 error_name(#17)
 
 
 @dataclass(frozen=True, order=True)
@@ -42,6 +44,14 @@ class SourceFailure:
     source: Source
     subject: str | None  # 티커(시세·일정), CIK(공시), 묶음 번호(LLM 분류)·접수번호(LLM 첫 번째 줄·판정), None(지표)
     reason: FailureReason
+    error: str | None = None  # UNEXPECTED일 때만: error_name
+
+
+def error_name(e: BaseException) -> str:
+    """공개 로그·실행 기록용 예외 이름: 클래스 이름 + (있으면) sqlstate. str(e)는 읽지 않는다(DB 오류 DETAIL의 행 내용,
+    라이브러리가 넣은 키·URL)."""
+    sqlstate = getattr(e, "sqlstate", None)
+    return type(e).__name__ + (f" sqlstate={sqlstate}" if sqlstate else "")
 
 
 class SourceCalls:
@@ -56,17 +66,27 @@ class SourceCalls:
 
     def call[T](self, source: Source, subject: str | None, fetch: Callable[[], T], valid: Callable[[T], bool]) -> T:
         """최종 실패는 기록 후 그 SourceError를 그대로 올린다. 받은 값이 valid가 아니면 기록 후 SourceError.
-        SourceError가 아닌 예외는 기록하지 않고 올린다(버그, LLMCallLimitReached)."""
+        fetch·valid의 그 밖의 예외(버그)도 그 대상만 지연: UNEXPECTED로 기록 후 SourceError(#17 D5 층 1).
+        그대로 올리는 것: LLMCallLimitReached(상한 처리 경로), AssertionError(테스트 대역 신호), BaseException(프로세스 종료)."""
+        error = None
         try:
             if source in self._denied:  # 차단된 출처를 계속 부르면 SEC 차단이 길어지고 키 오류는 같은 실패만 반복한다
                 raise AccessDeniedError(f"{source} denied earlier in this run")
             value = self._retrying(source, fetch)
+            usable = valid(value)
         except SourceError as e:
             if isinstance(e, AccessDeniedError):
                 self._denied.add(source)
             self._failures.append(SourceFailure(source, subject, _reason(e)))
             raise
-        if not valid(value):  # 어댑터 반환값은 신뢰 경계. 이상한 값 하나가 실행 전체를 멈추지 않게 그 대상만 지연
+        except (LLMCallLimitReached, AssertionError):
+            raise
+        except Exception as e:
+            error = error_name(e)
+        if error is not None:  # except 밖에서 던진다: 안에서 던지면 __context__가 원래 예외(메시지에 키·URL)를 든다
+            self._failures.append(SourceFailure(source, subject, FailureReason.UNEXPECTED, error))
+            raise SourceError(f"{source} unexpected error for {subject}")
+        if not usable:  # 어댑터 반환값은 신뢰 경계. 이상한 값 하나가 실행 전체를 멈추지 않게 그 대상만 지연
             self._failures.append(SourceFailure(source, subject, FailureReason.INVALID_DATA))
             raise SourceError(f"{source} returned invalid data for {subject}")
         return value

@@ -28,11 +28,14 @@ from m30.adapters.prices import DailyBar
 from m30.config import ET
 from m30.models import CardStatus, Coverage, FundHoldings, HoldStage, LineStatus
 from m30.pipeline.collect import FailureReason, SourceFailure
-from m30.pipeline.morning import MorningPipeline
+from m30.llm import LLMCallLimitReached
+from m30.pipeline import morning
+from m30.pipeline.morning import MorningPipeline, TickerError, run_failed
 from m30.pipeline.newsline import NEWSLINE_SYSTEM
 from m30.trading_day import is_trading_day
 from conftest import SCENARIOS
-from test_collect_classify import CrashingPrices
+from test_collect_classify import AAPL, LINE, MSFT, CrashingPrices, Killed, filing, label, reply, scenario
+from test_collect_classify import run as run_with  # 출처를 바꿔 넣는 run: summary·가짜 출처를 돌려준다
 from test_my_stock import add, set_plan
 
 TUE = date(2026, 10, 13)
@@ -751,7 +754,7 @@ def test_레버리지_ETF는_배율_태그를_유지하고_같은_지수_ETF의_
 
 def test_이어_하기로_건너뛴_생성_대상도_ETF_편입_종목이면_공시를_다시_받아_ETF_줄에_쓴다(store, etf_lite):
     crash = load_scenario(etf_lite)
-    with pytest.raises(RuntimeError, match="crash"):  # 카드 루프 AAPL 저장 뒤 MSFT에서 죽는다
+    with pytest.raises(Killed, match="crash"):  # 카드 루프 AAPL 저장 뒤 MSFT에서 죽는다
         run_etf(store, crash, prices=CrashingPrices(FakePriceSource(crash)))
     aapl = cards_by_ticker(store, FRI)["AAPL"]
     classified = store.list_classifications(FRI)
@@ -835,3 +838,232 @@ def test_CLI_요약은_ETF마다_편입_종목_상태와_못_찾은_회사_수�
 
 def test_CLI_요약은_ETF_생성_대상이_없으면_편입_종목_줄을_찍지_않는다(admin, first_card):
     assert not any(line.startswith("holdings:") for line in cli(first_card))
+
+
+# 실행 기록(#17 D1): 끝난 실행마다 pipeline_run 한 행에 실패 여부와 실행 요약(코드·건수·티커만)
+NVDA_NO_CIK = Coverage("NVDA", "NVIDIA Corporation")
+TWO_BARS = [bar("2026-10-14", 200), bar("2026-10-15", "202.5")]  # 등락률 계산함, 가격 사실 없음
+
+
+def reviewed_day(**more):
+    """AAPL = 1차 통과, MSFT = 금지어로 재생성 뒤 통과, NVDA = CIK·시세 없음. LLM 6회: 분류 1묶음 → 초안 AAPL·MSFT →
+    판정 AAPL → 재생성 MSFT → 판정 MSFT."""
+    day = scenario(
+        [AAPL, MSFT, NVDA_NO_CIK],
+        [filing(1, body="Apple named a new CFO."), filing(2, cik=MSFT.cik, body="Microsoft named a new CFO.")],
+        [reply(label(1), label(2, "MSFT")), LINE, json.dumps({"sentence": "Microsoft agreed to buy a startup"}), json.dumps(FACT),
+         json.dumps({"sentence": "Microsoft named a new CFO"}), json.dumps(FACT)],
+        **more,
+    )
+    return dataclasses.replace(day, prices={"AAPL": TWO_BARS, "MSFT": TWO_BARS})
+
+
+def run_rows(admin):
+    """실행 기록 (끝났는지, 실패 여부, 실행 요약), 시작 순."""
+    return admin.execute(
+        "select finished_at is not null, failed, summary from public.pipeline_run order by id").fetchall()
+
+
+def statuses(checked_found=0, checked_none=0, delayed=0, unsupported=0):
+    return {"checked_found": checked_found, "checked_none": checked_none, "delayed": delayed, "unsupported": unsupported}
+
+
+def test_끝난_실행은_실행_기록_한_행에_단계별_건수·LLM_호출·토큰·줄_상태별_수를_남긴다(store, admin):
+    run(store, reviewed_day())
+
+    assert run_rows(admin) == [(True, False, {
+        "counts": {"cards_saved": 3, "resumed": 0, "change_delayed": 1, "funds": 0, "filings": 2, "unclassified": 0,
+                   "classify_batches": 1, "skipped_batches": 0, "drafts": 2, "draft_problems": 0,
+                   "review_pass_first": 1, "review_pass_retry": 1, "review_replaced": 0},
+        "lines": {"change": statuses(checked_found=2, delayed=1), "news": statuses(checked_found=2, unsupported=1),
+                  "event": statuses(unsupported=3), "price": statuses(checked_none=2, delayed=1)},
+        "failures": [], "access_denied": [], "rate_limited": [],
+        # 토큰 = FakeLLM 응답 6개 × (10, 2, 5, 1)
+        "llm": {"calls": 6, "limit": 13, "input_tokens": 60, "output_tokens": 12, "cache_read_tokens": 30,
+                "cache_write_tokens": 6},
+    })]
+
+
+def test_출처_실패가_있는_실행은_실행_기록에_실패로_남고_실패_목록에_출처·대상·사유가_있다(store, admin):
+    run(store, reviewed_day(failures={(Source.SEC_FILINGS, MSFT.cik): FailurePlan("access_denied")}))
+
+    [(finished, failed, summary)] = run_rows(admin)
+    assert (finished, failed) == (True, True)
+    assert summary["failures"] == [{"stage": "sec_filings", "subject": MSFT.cik, "reason": "access_denied", "error": None}]
+    assert summary["access_denied"] == ["sec_filings"]
+    assert summary["llm"]["calls"] == 4  # MSFT 공시를 못 받아 분류 → AAPL 초안 → AAPL 판정, 남은 응답은 쓰지 않는다
+
+
+def test_죽은_실행은_실행_기록의_끝_시각·실패_여부·실행_요약이_모두_비어_있다(store, admin):
+    crash = reviewed_day()
+    with pytest.raises(Killed):
+        run_with(store, crash, prices=CrashingPrices(FakePriceSource(crash)))  # AAPL 저장 뒤 MSFT에서 죽는다
+
+    assert run_rows(admin) == [(False, None, None)]
+
+
+# 종목 예외 격리 층 1(#17 D5): 외부 호출 하나의 예상 못 한 예외는 그 대상만 지연
+class BrokenFor:
+    """inner를 감싸 subject(티커)에서 error를 낸다."""
+
+    def __init__(self, inner, subject, error):
+        self._inner, self._subject, self._error = inner, subject, error
+
+    def daily_bars(self, ticker, start, end):
+        if ticker == self._subject:
+            raise self._error
+        return self._inner.daily_bars(ticker, start, end)
+
+
+def test_시세_어댑터가_예상_못_한_예외를_내면_그_종목만_등락률과_세_번째_줄이_지연이고_실행은_끝까지_간다(store, admin):
+    day = reviewed_day()
+
+    ran = run_with(store, day, prices=BrokenFor(FakePriceSource(day), "MSFT", RuntimeError("bug")))
+
+    cards = cards_by_ticker(store, FRI)
+    assert [(t, c.change_status, c.price_fact_line.status) for t, c in cards.items()] == [
+        ("AAPL", LineStatus.CHECKED_FOUND, LineStatus.CHECKED_NONE),
+        ("MSFT", LineStatus.DELAYED, LineStatus.DELAYED),
+        ("NVDA", LineStatus.DELAYED, LineStatus.DELAYED),  # 원래 시세 없음
+    ]
+    assert cards["MSFT"].news_line.status is LineStatus.CHECKED_FOUND  # 다른 줄은 그대로
+    assert ran.summary.failures == (SourceFailure(Source.PRICES, "MSFT", FailureReason.UNEXPECTED, "RuntimeError"),)
+    assert run_failed(ran.summary) is True
+    [(finished, failed, summary)] = run_rows(admin)
+    assert (finished, failed) == (True, True)
+    assert summary["failures"] == [{"stage": "prices", "subject": "MSFT", "reason": "unexpected", "error": "RuntimeError"}]
+
+
+class BrokenDraftLLM:
+    """inner를 감싸 두 번째 요청(AAPL 첫 번째 줄 초안)에서 error를 낸다. 그 요청에는 inner 응답을 쓰지 않는다."""
+
+    def __init__(self, inner, error):
+        self._inner, self._error, self.calls = inner, error, 0
+
+    def complete(self, request):
+        self.calls += 1
+        if self.calls == 2:
+            raise self._error
+        return self._inner.complete(request)
+
+
+AAPL_8K_1 = "0000320193-26-000001"
+
+
+@pytest.mark.parametrize(
+    "error, rule, failures",
+    [
+        (KeyError("bug"), "1 draft: llm_failed", (SourceFailure(Source.LLM, AAPL_8K_1, FailureReason.UNEXPECTED, "KeyError"),)),
+        (LLMCallLimitReached(), "1 draft: call_limit", ()),  # 상한은 출처 실패가 아니다: 지금 경로 그대로
+    ],
+    ids=["KeyError", "호출_상한"],
+)
+def test_LLM_어댑터가_예상_못_한_예외를_내면_그_초안만_대체_줄이고_호출_상한은_원래_경로로_간다(store, error, rule, failures):
+    day = dataclasses.replace(reviewed_day(), llm_replies=[r for i, r in enumerate(reviewed_day().llm_replies) if i not in (1, 3)])
+
+    ran = run_with(store, day, llm=BrokenDraftLLM(FakeLLM(day), error))
+
+    aapl = cards_by_ticker(store, FRI)["AAPL"]
+    assert (aapl.news_line.text, aapl.news_line.status) == ("Apple filed a company update (SEC filing)", LineStatus.CHECKED_FOUND)
+    assert [(h.ticker, h.rules) for h in store.list_hold_items(FRI)] == [("AAPL", (rule,))]
+    assert ran.summary.failures == failures
+    assert ran.summary.reviews["MSFT"].stage is None  # 다른 종목은 그대로 검수를 통과했다
+
+
+def test_LLM_대역의_AssertionError는_격리하지_않고_실행을_멈춘다(store, admin):
+    day = reviewed_day()
+
+    with pytest.raises(AssertionError, match="must not be called"):
+        run_with(store, day, llm=BrokenDraftLLM(FakeLLM(day), AssertionError("LLM must not be called")))
+
+    assert run_rows(admin) == [(False, None, None)]
+
+
+# 종목 예외 격리 층 2(#17 D5): 카드 만들기·저장의 예외는 그 종목 카드만 전 줄 지연
+MSFT_BARS = [bar("2026-10-14", 300), bar("2026-10-15", 303)]
+ALL_DELAYED = {"news": ("Update delayed", LineStatus.DELAYED, "SEC filings"),
+               "event": ("Update delayed", LineStatus.DELAYED, "Earnings and dividend calendar"),
+               "price": ("Update delayed", LineStatus.DELAYED, "Daily prices")}
+
+
+def card_lines(card):
+    return {name: (line.text, line.status, line.source_scope)
+            for name, line in (("news", card.news_line), ("event", card.event_line), ("price", card.price_fact_line))}
+
+
+def msft_day(**replies):
+    """reviewed_day + MSFT 봉이 AAPL과 다르다(계산 함수가 MSFT를 알아본다)."""
+    day = reviewed_day()
+    return dataclasses.replace(day, prices=day.prices | {"MSFT": MSFT_BARS}, **replies)
+
+
+def test_카드_만들기에서_종목_하나가_예외를_내면_그_카드만_전_줄_지연이고_보류함_행은_그대로다(store, admin, monkeypatch):
+    still_buy = json.dumps({"sentence": "Microsoft agreed to buy a startup"})
+    first = msft_day()
+    run(store, dataclasses.replace(first, llm_replies=first.llm_replies[:4] + [still_buy]))  # MSFT 재생성도 걸림 → 보류함 행
+    holds = store.list_hold_items(FRI)
+    assert [h.ticker for h in holds] == ["MSFT"]
+    real = morning.change_pct
+
+    def change_pct(bars):
+        if bars[-1].close == 303:
+            raise ZeroDivisionError("bug")
+        return real(bars)
+
+    monkeypatch.setattr(morning, "change_pct", change_pct)
+
+    summary = run(store, msft_day())  # 이번에는 MSFT가 재생성 뒤 통과하지만 카드 만들기에서 예외
+
+    cards = cards_by_ticker(store, FRI)
+    msft = cards["MSFT"]
+    assert (msft.status, msft.change_pct, msft.change_status, msft.news_line_accession) == (
+        CardStatus.NORMAL, None, LineStatus.DELAYED, None)
+    assert card_lines(msft) == ALL_DELAYED
+    assert msft.previous_trading_day == THU
+    assert store.list_hold_items(FRI) == holds  # 대체 카드는 보류함을 건드리지 않는다
+    assert (cards["AAPL"].change_pct, cards["AAPL"].news_line.status) == (Decimal("1.3"), LineStatus.CHECKED_FOUND)
+    assert cards["NVDA"].news_line.status is LineStatus.UNSUPPORTED
+    assert summary.ticker_errors == (TickerError("MSFT", "ZeroDivisionError"),)
+    assert (summary.cards_saved, summary.change_delayed, summary.failures) == (3, ("MSFT", "NVDA"), ())
+    assert run_failed(summary) is True
+    _, (finished, failed, record) = run_rows(admin)
+    assert (finished, failed) == (True, True)
+    assert record["failures"] == [{"stage": "card", "subject": "MSFT", "reason": "unexpected", "error": "ZeroDivisionError"}]
+    assert record["lines"]["news"] == statuses(checked_found=1, delayed=1, unsupported=1)
+
+
+class Unsaved(Exception):
+    """save_card 대역이 내는 예외."""
+
+
+def fail_msft_saves(store, monkeypatch, times):
+    """store.save_card가 MSFT 카드에서 times번 Unsaved를 낸다."""
+    real, left = store.save_card, [times]
+
+    def save_card(card, holds):
+        if card.ticker == "MSFT" and left[0]:
+            left[0] -= 1
+            raise Unsaved
+        real(card, holds)
+
+    monkeypatch.setattr(store, "save_card", save_card)
+
+
+def test_카드_저장이_종목_하나에서_실패하면_그_종목은_전_줄_지연_카드로_저장한다(store, monkeypatch):
+    fail_msft_saves(store, monkeypatch, 1)
+
+    summary = run(store, msft_day())
+
+    assert [c.ticker for c in store.list_cards(FRI)] == ["AAPL", "MSFT", "NVDA"]
+    assert card_lines(cards_by_ticker(store, FRI)["MSFT"]) == ALL_DELAYED
+    assert summary.ticker_errors == (TickerError("MSFT", "Unsaved"),)
+
+
+def test_전_줄_지연_카드마저_저장하지_못하면_실행이_죽고_이어_하기가_받는다(store, admin, monkeypatch):
+    fail_msft_saves(store, monkeypatch, 2)
+
+    with pytest.raises(Unsaved):
+        run(store, msft_day())
+
+    assert [c.ticker for c in store.list_cards(FRI)] == ["AAPL"]
+    assert run_rows(admin) == [(False, None, None)]

@@ -1,0 +1,5 @@
+#!/bin/sh
+# 커밋 전 비밀값 검사(#17). 켜기: brew install gitleaks && git config core.hooksPath .githooks (backend/README.md)
+# gitleaks가 없으면 커밋을 막는다(훅을 켰다 = 검사를 원한다). git commit --no-verify로 건너뛰지 않는다
+command -v gitleaks >/dev/null 2>&1 || { echo "pre-commit: gitleaks not found. brew install gitleaks (commit blocked)" >&2; exit 1; }
+exec gitleaks git --pre-commit --staged --redact --no-banner --config .gitleaks.toml

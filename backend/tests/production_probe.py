@@ -3,7 +3,7 @@
 그 둘, 스펙 #26 D4 + Tiingo opener)만 네트워크 없는 대역으로 바꾼다. Tiingo는 TiingoPriceSource를 그대로 두고 opener만 바꾼다:
 토큰이 실제 요청 헤더까지 가는 경로를 지난다. 사용법: python tests/production_probe.py <상황> --production 2026-10-16
 끝나면 stderr 마지막 줄에 불러온 가짜 모듈 목록(fake_modules=[…])을 찍는다. 그래서 가짜 어댑터를 불러오는 테스트 모듈
-(test_edgar 등)을 import하지 않는다."""
+(test_edgar 등)을 import하지 않는다. Discord 웹훅(#17)은 notify._OPENER만 바꾸고, 보낸 메시지를 stdout에 webhook_content=<JSON>으로 찍는다."""
 
 import io
 import json
@@ -15,6 +15,9 @@ from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
 
+import psycopg
+
+from m30 import notify
 from m30.adapters import AccessDeniedError, SourceError, tiingo
 from m30.adapters.edgar import SUBMISSION_TEXT_URL, SUBMISSIONS_URL, TICKERS_URL
 from m30.adapters.nport import MF_TICKERS_URL
@@ -91,6 +94,27 @@ class TiingoOpener:
         raise AssertionError("Tiingo must not be called")
 
 
+class WebhookOpener:
+    """notify._OPENER 자리. 받은 주소가 환경 변수 값인지 확인만 하고(찍지 않는다) 메시지를 찍는다.
+    webhook_down: 500인데 오류의 주소·사유에 받은 주소를 넣는다(라이브러리가 요청 값을 오류에 옮기는 최악)."""
+
+    def __init__(self, situation):
+        self._situation = situation
+
+    def open(self, request, timeout):
+        assert request.full_url == os.environ["DISCORD_WEBHOOK_URL"], "webhook url"
+        print(f"webhook_content={json.dumps(json.loads(request.data)['content'], ensure_ascii=False)}")
+        if self._situation == "webhook_down":
+            raise urllib.error.HTTPError(request.full_url, 500, f"down {request.full_url}", Message(), io.BytesIO(b""))
+        return urllib.response.addinfourl(io.BytesIO(b""), Message(), request.full_url, 204)
+
+
+def patch(module, name, value):
+    """속성 바꿔치기. 이름이 바뀌면 바꿔치기가 조용히 빈 동작이 되므로 먼저 있는지 확인한다(#26 R3)."""
+    assert hasattr(module, name), f"{module.__name__}.{name}"
+    setattr(module, name, value)
+
+
 def main(situation, args):
     import m30.pipeline.__main__ as cli
     from m30.models import HoldItem, HoldStage
@@ -101,9 +125,14 @@ def main(situation, args):
         "no_tickers": {TICKERS_URL: SourceError("sec tickers shape")},
         # 라이브러리가 키를 예외 메시지에 넣는 경우(http.client의 잘못된 헤더 값처럼)
         "crash": {TICKERS_URL: ValueError(f"Invalid header value {os.environ['ANTHROPIC_API_KEY']!r}")},
+        # 종목 하나의 예상 못 한 예외(#17 D5 층 1): 그 CIK만 지연, 실행은 끝까지
+        "ticker_crash": {
+            SUBMISSIONS_URL.format(cik=COMPANY_CIKS["AAPL"]): ValueError(f"bad {os.environ['ANTHROPIC_API_KEY']!r}")},
         "db_error": {},
+        "db_lost": {},
         "tiingo_quiet": {},
         "tiingo_denied": {},
+        "webhook_down": {},
     }[situation])
 
     def get(url):
@@ -112,9 +141,10 @@ def main(situation, args):
             raise outcome
         return outcome
 
-    cli.EdgarClient = lambda settings: SimpleNamespace(get=get)
-    cli.AnthropicLLM = lambda settings: NoCallLLM()
-    tiingo._OPENER = TiingoOpener(situation)
+    patch(cli, "EdgarClient", lambda settings: SimpleNamespace(get=get))
+    patch(cli, "AnthropicLLM", lambda settings: NoCallLLM())
+    patch(tiingo, "_OPENER", TiingoOpener(situation))
+    patch(notify, "_OPENER", WebhookOpener(situation))
     if situation == "db_error":
         # 검사 제약(replacement_iff_review)에 걸리는 보류함 행: 서버 오류 DETAIL에 행 내용(검수 전 문장)이 들어간다
         def run_production(store, day, *, get, llm, prices):
@@ -122,7 +152,13 @@ def main(situation, args):
                 "AAPL", day, [HoldItem("AAPL", day, "0000320193-26-000001", HoldStage.DRAFT, DRAFT_CANARY, ("r",), None)]
             )
 
-        cli.run_production = run_production
+        patch(cli, "run_production", run_production)
+    if situation == "db_lost":
+        # 실행 중 DB 연결이 끊김(#26 R1): 연결 실패(DBConnectError)와 같은 부모 클래스지만 우리가 쓴 문구가 아니다
+        def run_production(store, day, *, get, llm, prices):
+            raise psycopg.OperationalError(f"server closed the connection {os.environ['ANTHROPIC_API_KEY']}")
+
+        patch(cli, "run_production", run_production)
     try:
         return cli.main(args)
     finally:

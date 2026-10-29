@@ -28,8 +28,10 @@ from m30.models import (
 )
 from m30.pipeline.classify import Classified, FilingItem, SkippedBatch, batch_count, classify
 from m30.pipeline.collect import (
+    FailureReason,
     SourceCalls,
     SourceFailure,
+    error_name,
     filing_window,
     valid_bars,
     valid_events,
@@ -62,6 +64,12 @@ HOLDINGS_REFRESH_AFTER = timedelta(days=140)  # 저장분 기준일 + 이 기간
 HOLDINGS_MAX_AGE = timedelta(days=270)  # 쓸 보고의 기준일 + 이 기간을 넘으면 지연(한 분기를 놓친 여유)
 
 
+@dataclass(frozen=True, order=True)
+class TickerError:
+    ticker: str
+    error: str  # error_name(e). 메시지는 남기지 않는다
+
+
 @dataclass(frozen=True)
 class RunSummary:
     trading_day: date
@@ -71,6 +79,7 @@ class RunSummary:
     resumed: tuple[str, ...]  # 죽은 앞 실행이 저장해서 이번에 건너뛴 카드의 티커 (오름차순)
     change_delayed: tuple[str, ...]  # 등락률을 계산 못 해 delayed로 저장한 티커 (오름차순)
     failures: tuple[SourceFailure, ...]  # 재시도 뒤에도 실패한 출처·대상
+    ticker_errors: tuple[TickerError, ...]  # 카드 만들기·저장의 예외(대상 순서). 그 카드는 전 줄 지연(#17 D5 층 2)
     filings_collected: int  # 이번 거래일 공시 수(중복 제거 후)
     filings_unclassified: int  # 이번 거래일 공시 중 미분류
     classify_batches: int  # 분류 묶음 수
@@ -81,6 +90,9 @@ class RunSummary:
     drafts: dict[str, NewsDraft]  # 소식 있는 종목 → 첫 번째 줄 초안(검수 전). 카드에는 reviews의 줄만 간다
     reviews: dict[str, NewsReview]  # 소식 있는 종목 → 검수 결과(통과한 줄 또는 대체 줄)
     funds: dict[str, FundHoldings]  # ETF 생성 대상(holdings_ticker 있음) → 상위 편입 종목
+    llm_tokens: dict[str, int]  # TOKEN_FIELDS → 이번 실행 합계(LLMBudget.tokens)
+    # "change"|"news"|"event"|"price" → LineStatus 값 4개 → 이번에 저장한 카드 수(0 포함). 첫 번째 줄이 None인 카드는 news에서 빠진다
+    line_counts: dict[str, dict[str, int]]
 
 
 class MorningPipeline:
@@ -163,9 +175,9 @@ class MorningPipeline:
         drafts = write_news_drafts(news, by_accession, trading_day, send)
         reviews = review_drafts(drafts, news, by_accession, {c.ticker: c.name for c in collected}, trading_day, send)
         kept = self._store.republished_news(trading_day)  # 사람이 재발행한 첫 번째 줄은 재실행이 덮지 않는다
-        saved = 0
-        delayed = []
-        for cov in targets:
+
+        def build(cov: Coverage) -> tuple[StockCard, list[HoldItem] | None]:
+            """종목 하나의 카드와 보류함 행(None = 보류함 행을 건드리지 않는다)."""
             try:
                 bars = calls.call(
                     Source.PRICES,
@@ -200,34 +212,45 @@ class MorningPipeline:
                 ]
             else:
                 accession, news_line, holds = None, news_template_line(news[cov.ticker], checked_at, scope), []
-            self._store.save_card(
-                StockCard(
-                    ticker=cov.ticker,
-                    trading_day=trading_day,
-                    status=CardStatus.FALLBACK if news_line is None else CardStatus.NORMAL,  # 축소판은 7:45 마감(미구현)용
-                    change_pct=pct,
-                    change_status=LineStatus.DELAYED if pct is None else LineStatus.CHECKED_FOUND,
-                    news_line=news_line,
-                    event_line=self._event_line(cov.ticker, trading_day, checked_at, calls),
-                    price_fact_line=price_fact,
-                    leverage_tag=leverage_tag(cov.leverage),
-                    news_line_accession=accession,
-                    previous_trading_day=previous_trading_day(trading_day),
-                ),
-                holds,  # 카드와 한 트랜잭션: 중간에 죽어도 카드만 남고 보류함 행이 빠지는 일이 없다
+            card = StockCard(
+                ticker=cov.ticker,
+                trading_day=trading_day,
+                status=CardStatus.FALLBACK if news_line is None else CardStatus.NORMAL,  # 축소판은 7:45 마감(미구현)용
+                change_pct=pct,
+                change_status=LineStatus.DELAYED if pct is None else LineStatus.CHECKED_FOUND,
+                news_line=news_line,
+                event_line=self._event_line(cov.ticker, trading_day, checked_at, calls),
+                price_fact_line=price_fact,
+                leverage_tag=leverage_tag(cov.leverage),
+                news_line_accession=accession,
+                previous_trading_day=previous_trading_day(trading_day),
             )
-            saved += 1
-            if pct is None:
-                delayed.append(cov.ticker)
-        self._store.finish_run(run_id)
-        return RunSummary(
+            return card, holds
+
+        cards, ticker_errors = [], []
+        for cov in targets:
+            error = None
+            try:
+                card, holds = build(cov)
+                self._store.save_card(card, holds)  # 카드와 한 트랜잭션: 중간에 죽어도 카드만 남고 보류함 행이 빠지는 일이 없다
+            except AssertionError:  # 테스트 대역의 "불리면 안 됨" 신호. 운영 코드는 assert로 흐름을 정하지 않는다
+                raise
+            except Exception as e:  # 종목 예외(#17 D5 층 2): 그 종목만 전 줄 지연. BaseException(프로세스 종료)은 그대로
+                error = error_name(e)
+            if error is not None:  # except 밖: 새 예외가 나도 __context__에 원래 예외가 붙지 않는다
+                ticker_errors.append(TickerError(cov.ticker, error))
+                card = _error_card(cov, trading_day, checked_at)
+                self._store.save_card(card, None)  # 이것마저 실패하면 DB 문제: 그대로 올라가 실행이 죽고 이어 하기가 받는다
+            cards.append(card)
+        summary = RunSummary(
             trading_day=trading_day,
             access_denied=calls.access_denied,
             rate_limited=calls.rate_limited,
-            cards_saved=saved,
+            cards_saved=len(cards),
             resumed=resumed,
-            change_delayed=tuple(delayed),
+            change_delayed=tuple(c.ticker for c in cards if c.change_pct is None),
             failures=calls.failures,
+            ticker_errors=tuple(ticker_errors),
             filings_collected=len(items),
             filings_unclassified=sum(not isinstance(o, Classified) for o in outcomes.values()),
             classify_batches=batch_count(items),
@@ -238,7 +261,11 @@ class MorningPipeline:
             drafts=drafts,
             reviews=reviews,
             funds=funds,
+            llm_tokens=dict(budget.tokens),
+            line_counts=_line_counts(cards),
         )
+        self._store.finish_run(run_id, run_failed(summary), run_record(summary))
+        return summary
 
     def _collect_filings(
         self, coverage: list[Coverage], trading_day: date, calls: SourceCalls
@@ -327,6 +354,71 @@ class MorningPipeline:
         except SourceError:  # 다른 예외는 버그라 그대로 올린다
             return delayed_line(EVENT_SCOPE, checked_at)
         return event_line(events, trading_day, checked_at)
+
+
+def run_failed(summary: RunSummary) -> bool:
+    """워크플로를 실패로 끝낼 실행: 재시도 뒤에도 실패한 호출(401·403 포함)·종목 예외가 있거나 카드 0장(이어 하기로 건너뛴 카드도 0장).
+    미연결 출처는 실패를 남기지 않는다. 429 뒤 성공·건너뛴 분류 묶음·보류함은 실패가 아니다."""
+    return bool(summary.failures or summary.ticker_errors) or summary.cards_saved + len(summary.resumed) == 0
+
+
+def run_record(summary: RunSummary) -> dict:
+    """pipeline_run.summary(#17 D1). 코드·건수·티커만: 카드 문장·가격·예외 메시지를 넣지 않는다. 키를 바꾸면 조회도 바꾼다."""
+    reviews = summary.reviews.values()
+    return {
+        "counts": {
+            "cards_saved": summary.cards_saved,
+            "resumed": len(summary.resumed),
+            "change_delayed": len(summary.change_delayed),
+            "funds": len(summary.funds),
+            "filings": summary.filings_collected,
+            "unclassified": summary.filings_unclassified,
+            "classify_batches": summary.classify_batches,
+            "skipped_batches": len(summary.skipped_batches),
+            "drafts": len(summary.drafts),
+            "draft_problems": sum(d.problem is not None for d in summary.drafts.values()),
+            "review_pass_first": sum(r.stage is None and not r.retried for r in reviews),
+            "review_pass_retry": sum(r.stage is None and r.retried for r in reviews),
+            "review_replaced": sum(r.stage is not None for r in reviews),
+        },
+        "lines": summary.line_counts,
+        "failures": [
+            {"stage": f.source, "subject": f.subject, "reason": f.reason, "error": f.error} for f in summary.failures
+        ] + [
+            {"stage": "card", "subject": t.ticker, "reason": FailureReason.UNEXPECTED, "error": t.error} for t in summary.ticker_errors
+        ],
+        "access_denied": list(summary.access_denied),
+        "rate_limited": list(summary.rate_limited),
+        "llm": {"calls": summary.llm_calls, "limit": summary.llm_call_limit, **summary.llm_tokens},
+    }
+
+
+def _error_card(cov: Coverage, trading_day: date, checked_at: datetime) -> StockCard:
+    """종목 예외(층 2) 대체 카드: 등락률과 세 줄 모두 지연. 첫 번째 줄 범위는 ETF(편입 종목을 읽음)면 편입 고정 문구."""
+    return StockCard(
+        ticker=cov.ticker,
+        trading_day=trading_day,
+        status=CardStatus.NORMAL,
+        change_pct=None,
+        change_status=LineStatus.DELAYED,
+        news_line=delayed_line(NEWS_SCOPE if cov.holdings_ticker is None else HOLDINGS_SCOPE, checked_at),
+        event_line=delayed_line(EVENT_SCOPE, checked_at),
+        price_fact_line=delayed_line(PRICE_SCOPE, checked_at),
+        leverage_tag=leverage_tag(cov.leverage),
+        news_line_accession=None,
+        previous_trading_day=previous_trading_day(trading_day),
+    )
+
+
+def _line_counts(cards: list[StockCard]) -> dict[str, dict[str, int]]:
+    """줄 이름 → 상태 값 4개 → 카드 수(0 포함). 첫 번째 줄이 None인 카드(축소판)는 news에서 빠진다."""
+    counts = {name: dict.fromkeys(map(str, LineStatus), 0) for name in ("change", "news", "event", "price")}
+    for card in cards:
+        counts["change"][card.change_status] += 1
+        for name, line in (("news", card.news_line), ("event", card.event_line), ("price", card.price_fact_line)):
+            if line is not None:
+                counts[name][line.status] += 1
+    return counts
 
 
 def _classification_rows(items: list[FilingItem], outcomes: dict) -> list[Classification]:

@@ -13,7 +13,7 @@ from m30.adapters.filings import Filing, FilingForm
 from m30.adapters.holdings import Holding, HoldingsReport
 from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.prices import DailyBar
-from m30.llm import LLMRequest
+from m30.llm import LLMReply, LLMRequest
 from m30.models import Coverage
 
 REQUIRED_KEYS = {"coverage", "prices"}
@@ -297,6 +297,7 @@ class FakeHoldingsSource:
 
 
 _NO_REPLY = object()
+FAKE_TOKENS = (10, 2, 5, 1)  # FakeLLM 응답 하나의 (입력, 출력, 캐시 읽기, 캐시 쓰기) 토큰
 
 
 class FakeLLM:
@@ -307,10 +308,11 @@ class FakeLLM:
         self._failures = _Failures(scenario, Source.LLM)
         self.requests: list[LLMRequest] = []
 
-    def complete(self, request: LLMRequest) -> str:
+    def complete(self, request: LLMRequest) -> LLMReply:
+        """토큰 수는 응답마다 (10, 2, 5, 1): 칸끼리 값이 달라 테스트가 구분한다."""
         self.requests.append(request)
         self._failures.check(None)
         reply = next(self._replies, _NO_REPLY)  # None도 응답으로 돌려준다(이상한 값 시험)
         if reply is _NO_REPLY:  # 시나리오 작성 실수. SourceError로 감추지 않는다
             raise AssertionError(f"scenario has no llm reply for request {len(self.requests)}")
-        return reply
+        return LLMReply(reply, *FAKE_TOKENS)

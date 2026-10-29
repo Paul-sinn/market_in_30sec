@@ -55,6 +55,7 @@ uv run python -m m30.pipeline --production 2026-10-16   # 지난 거래일 다�
 - `.github/workflows/morning.yml`이 평일 09:17 UTC(05:17 EDT / 04:17 EST)에 이 명령을 돌린다. Actions → `morning-pipeline` → Run workflow로 수동 실행(거래일 입력은 비워도 된다). 실행은 한 번에 하나씩.
 - 출처: 공시 = SEC EDGAR, LLM = Anthropic, 시세 = Tiingo(`TIINGO_API_KEY`가 있을 때). 실제 출처가 아직 없는 자리는 가짜 데이터 없이 데이터 상태 문구만: 시세 키 없음 → 등락률 지연·세 번째 줄 `Update delayed`(실패로 치지 않는다), 일정(#21 전) → 두 번째 줄 `Not covered yet`, 지표 일정 → 저장 안 함. 마지막 줄 `prices=tiingo` / `prices=none`이 어느 쪽으로 돌았는지 알려 준다. 실행 전에 실험 종목 CIK를 SEC 티커 목록으로 갱신하고, 실패하면 저장된 행을 쓴다(`coverage: NOT REFRESHED …`).
 - 필요한 환경 변수 셋: `SUPABASE_DB_URL`, `ANTHROPIC_API_KEY`, `SEC_USER_AGENT`. 하나라도 없으면 DB에 붙기 전에 이름만 알리고 exit 2.
+- 선택 환경 변수 `DISCORD_WEBHOOK_URL`(#17, 실패 알림): 있으면 운영 실행마다 터미널 요약 줄 그대로를 Discord로 한 번 보낸다(머리줄 `OK morning <거래일> exit=0` 또는 `**FAILED** morning <거래일> exit=<코드>` + 코드 블록). 보내지 않는 경우: 변수 없음·빈 값(아무것도 찍지 않는다), 주말·휴장일 exit 0, `ALREADY_DONE`, `--quality`. 끝에 `discord: sent` 또는 `discord: not sent (reason=bad_url|http_<상태>|timeout|connection|error)`가 찍힌다. 보내기 실패는 exit 코드를 바꾸지 않고 다시 시도하지 않는다. 주소는 `https://discord.com/api/webhooks/…` 한 줄이어야 한다(아니면 `bad_url`). 메시지에는 터미널과 같은 코드·건수·티커만 있다(카드 문장·가격·URL·키 없음). 메시지가 2000자를 넘으면 뒤 줄부터 빼고 `… N more lines (see Actions log)`.
 - 선택 환경 변수 `TIINGO_API_KEY`: Tiingo **유료(Commercial) 구독 전까지 비워 둔다**. 없거나 빈 값이면 시세 없이 돈다(`prices=none`). 값이 있는데 한 줄 ASCII가 아니면(공백·줄바꿈) DB에 붙기 전에 이름만 알리고 exit 2.
 - **무료(Starter) 플랜 키는 GitHub(Actions secrets)·Vercel·원격 Supabase에 절대 넣지 않는다.** 무료 시세는 개인·비상업 전용이라 구독 전 성능 검사와 Paul의 Mac 로컬 미리보기에만 쓴다(HANDOFF 4장): 로컬 Supabase 주소로 `export SUPABASE_DB_URL`(위 `eval` 줄) + 셸에서 `export TIINGO_API_KEY` 뒤 `uv run python -m m30.pipeline --production <지난 거래일>`, 확인이 끝나면 레포 루트에서 `supabase db reset`. 유료 구독 뒤 Actions에 넣을 때는 `morning.yml`의 실행 단계 `env:`에 `TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}` 한 줄과 `tests/test_workflow.py`의 secrets 목록을 같이 고친다.
 - 원격 DB 주소는 Supabase **Session pooler**(포트 5432) URI만. Transaction pooler(6543)는 연결 전에 거부한다(`set role service_role`이 연결 내내 유지돼야 한다). Direct connection은 IPv6 전용이라 GitHub 러너에서 붙지 못한다. 비로컬 연결은 항상 `sslmode=require`.
@@ -65,8 +66,32 @@ uv run python -m m30.pipeline --production 2026-10-16   # 지난 거래일 다�
 - 잠금이 남아 같은 거래일이 계속 `LOCKED:`이면(세션 풀러가 끊긴 연결의 잠금을 안 푼 경우, 확인 못 한 위험): 돌고 있는 실행이 정말 없는지 Actions에서 확인한 뒤, 사용자 확인을 받고 SQL Editor에서 `select pg_terminate_backend(pid) from pg_locks where locktype = 'advisory' and classid = 16 and objid = <YYYYMMDD>`.
 - 발행 중단(#16): 잘못 나간 카드는 Supabase SQL Editor에서 `update public.stock_card set publish_suspended = true where ticker = '<티커>' and trading_day = '<YYYY-MM-DD>'`. 카드 데이터·보류함·이력은 남고 웹·알림 후보에서 빠진다. 파이프라인 재실행은 이 값을 바꾸지 않는다. 되돌리려면 `false`. 바꾼 기록은 수정 이력에 남는다.
 - 예상 못 한 예외는 `RUN FAILED: <예외 이름> [sqlstate=<코드>]` 한 줄만 찍는다(메시지·traceback 없음: DB 오류 DETAIL에 행 내용, 라이브러리 메시지에 키가 섞일 수 있다). 원인을 보려면 로컬 DB에서 같은 날짜로 `run_production`을 직접 부른다.
+- 종목 예외(#17): 외부 호출 하나(시세·일정·공시·편입 보고·LLM)에서 예상 못 한 예외가 나면 그 대상만 지연이고 `failed: <출처>/<대상>=unexpected:<예외 이름>`으로 남는다. 카드 만들기·저장에서 나면 그 종목 카드만 전 줄 지연으로 저장하고(보류함 행은 그대로) `failed: card/<티커>=unexpected:<예외 이름>`. 둘 다 실패한 실행(exit 1)이다. 전 줄 지연 카드마저 저장하지 못하면 `RUN FAILED`로 끝나고 다음 실행이 이어 한다.
+- 실패한 실행(exit 1이 되는 요약)은 맨 위에 `!!! FAILED: failures=<출처 실패 + 종목 예외> cards=<저장 + 이어 하기로 건너뛴 카드> !!!`와 `failed: …` 목록을 찍는다. 요약에는 LLM 토큰(`tokens=in:…,out:…,cache_read:…,cache_write:…`)과 줄 상태별 카드 수(`lines: change[…] news[…] event[…] price[…]`, 0은 뺀다)가 있다.
+- GitHub 예약 실행(예비)이 끝난 실행 없이 돌기 시작하면 첫 줄에 `BACKUP RUN: no finished run when the GitHub schedule backup started (check pg_cron dispatch)`. 정시 dispatch(pg_cron, #43)가 오지 않았거나 실패했다는 신호다.
+- 실행 기록(#17): 끝까지 간 실행은 `pipeline_run` 행에 `finished_at`과 함께 `failed`(exit 1이 되는 실행인지)와 `summary`(jsonb: `counts`·`lines`·`failures`·`access_denied`·`rate_limited`·`llm`, 코드·건수·티커만)를 남긴다. 죽은 실행은 셋 다 null(사후 기록 없음. 그 정보는 Actions 로그·Discord에 있다). 읽기 예: 최근 실패 `select trading_day, summary->'failures' from public.pipeline_run where failed order by id desc limit 10`, 이번 달 입력 토큰 `select sum((summary->'llm'->>'input_tokens')::bigint) from public.pipeline_run where started_at >= date_trunc('month', now())`.
 - **레포가 공개라 Actions 로그도 공개다.** CLI는 결과 코드·건수·티커만 찍는다(예외: 로컬 DB 전용 `--quality`, 맨 아래). 카드 문장·공시 본문·가격·URL·키·환경 변수 값을 출력에 더하지 않는다(#17·#18·#21도 같은 규칙).
-- 사용자 설정(값은 채팅·파일·커밋에 쓰지 않는다): ① Supabase Connect → Session pooler URI(비밀번호 칸 채움, 특수문자는 퍼센트 인코딩) ② GitHub Settings → Environments → `production`(배포 브랜치 `main`만) + environment secrets 셋(Tiingo 유료 구독 뒤에 `TIINGO_API_KEY` 추가) ③ 실패한 Actions 알림 켜기 ④ main 병합 뒤 첫 실행은 수동으로.
+- 사용자 설정(값은 채팅·파일·커밋에 쓰지 않는다): ① Supabase Connect → Session pooler URI(비밀번호 칸 채움, 특수문자는 퍼센트 인코딩) ② GitHub Settings → Environments → `production`(배포 브랜치 `main`만) + environment secrets 셋(Tiingo 유료 구독 뒤에 `TIINGO_API_KEY` 추가) ③ 실패한 Actions 알림 켜기 ④ main 병합 뒤 첫 실행은 수동으로 ⑤ (선택) Discord 채널 설정 → 연동 → 웹후크 → 새 웹후크 → URL 복사 → `gh secret set DISCORD_WEBHOOK_URL --env production`(프롬프트에 붙여 넣는다. 셸 기록에 남기지 않는다).
+
+## 커밋 전 비밀값 검사 (gitleaks, #17)
+
+키 모양 문자열(API 키·토큰·DB 접속 문자열의 비밀번호·Discord 웹훅 주소·Supabase 비밀 키)이 든 커밋을 커밋 전에 막는다. 규칙은 레포 루트 `.gitleaks.toml`(gitleaks 기본 규칙 + 이 레포 규칙 셋), 훅은 `.githooks/pre-commit`.
+
+```bash
+brew install gitleaks                        # 설치(클론한 Mac마다 한 번)
+git config core.hooksPath .githooks          # 켜기(클론마다 한 번, 레포 루트에서)
+# 확인(커밋하지 않는다): 가짜 웹훅 주소를 스테이지하고 훅을 직접 돌린다 → exit=1, 값은 REDACTED
+echo "x=https://discord.com/api/webhooks/123456789012345678/$(openssl rand -hex 34)" > leak_check.txt
+git add leak_check.txt && .githooks/pre-commit; echo "exit=$?"
+git rm --cached -q leak_check.txt && rm leak_check.txt
+```
+
+- 훅은 스테이지된 변경만 본다(`gitleaks git --pre-commit --staged --redact`). 찾으면 커밋이 막히고 값은 가려서 찍는다. 훅을 켰는데 gitleaks가 없으면 커밋을 막는다.
+- **`git commit --no-verify`로 건너뛰지 않는다.** 걸리면 그 값을 커밋에서 빼고 환경 변수로 옮긴다. 진짜 키였으면 키를 먼저 교체한다(이미 다른 곳에 복사됐을 수 있다).
+- 오탐이면 `.gitleaks.toml`의 `[[allowlists]]`에 경로나 값 정규식을 더한다(`.gitleaksignore` 지문은 쓰지 않는다). 테스트 캐너리는 이름에 `Canary`를 넣으면 걸리지 않는다. 규칙 정규식을 바꾸면 `uv run pytest -q tests/test_secret_scan.py`.
+- 훅을 켜지 않은 클론의 대안: `.github/workflows/secret-scan.yml`이 모든 push와 PR에서 전체 이력을 같은 설정으로 검사한다(gitleaks 버전·체크섬 고정, 값은 가린다). gitleaks를 올릴 때는 그 릴리스의 `gitleaks_<버전>_checksums.txt`에서 `linux_x64` 줄의 sha256을 `GITLEAKS_SHA256`에 넣는다.
+- 덧붙여 GitHub Settings → Code security → Secret scanning·Push protection을 켜 두면 공급자 형식 키를 push 단계에서도 막는다(공개 레포 무료).
+- SEC User-Agent(연락 이메일)는 키 모양이 아니라 gitleaks가 못 잡는다. 셸·secrets에만 둔다.
 
 ## 품질 확인 모드 (실제 Haiku, 로컬 DB만, #14)
 

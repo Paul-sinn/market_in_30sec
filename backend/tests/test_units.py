@@ -5,6 +5,8 @@ import json
 import re
 import urllib.error
 import urllib.request
+import urllib.response
+from email.message import Message
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
@@ -14,11 +16,12 @@ from m30.adapters import AccessDeniedError, RateLimitedError, SourceError, Trans
 from m30.adapters.events import Earnings, EarningsTiming, ExDividend
 from m30.adapters.holdings import Holding, HoldingsReport
 from m30.adapters.prices import DailyBar
-from m30.config import ET, ConfigError, is_local_db, load_llm_settings, load_settings
+from m30.config import ET, ConfigError, is_local_db, load_discord_settings, load_llm_settings, load_settings
 from m30.copy_rules import ALWAYS_BANNED, CARD_BANNED, EMOTION_VERBS, SOURCE_TAG, check_card
 from m30.db.store import connect_failure_reason
+from m30 import notify
 from m30.experiment import EXPERIMENT_COVERAGE
-from m30.llm import LLMRequest
+from m30.llm import LLMReply, LLMRequest
 from m30.llm.anthropic import AnthropicLLM
 from m30.models import CardLine, Coverage, FundHoldings, LineStatus
 from m30.pipeline.compute import (
@@ -75,6 +78,34 @@ def test_Anthropic_키가_없으면_변수_이름만_알려주고_멈춘다(env)
 
 def test_설정을_출력해도_Anthropic_키가_보이지_않는다():
     assert "sk-test-canary" not in repr(load_llm_settings({"ANTHROPIC_API_KEY": "sk-test-canary"}))
+
+
+WEBHOOK_CANARY = "https://discord.com/api/webhooks/123456789012345678/WebhookCanary88" + "x" * 60
+
+
+@pytest.mark.parametrize("env", [{}, {"DISCORD_WEBHOOK_URL": ""}], ids=["없음", "빈_값"])
+def test_Discord_웹훅이_없으면_알림_설정이_없다(env):
+    assert load_discord_settings(env) is None  # Actions는 없는 secret을 빈 문자열로 넣는다
+
+
+def test_Discord_웹훅_설정을_출력해도_주소가_보이지_않는다():
+    settings = load_discord_settings({"DISCORD_WEBHOOK_URL": WEBHOOK_CANARY})
+    assert settings.url == WEBHOOK_CANARY
+    assert "WebhookCanary88" not in repr(settings)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [WEBHOOK_CANARY.replace("https://", "http://"), WEBHOOK_CANARY + "\n", " " + WEBHOOK_CANARY,
+     WEBHOOK_CANARY.replace("discord.com", "discord.com.example.invalid"), "https://example.invalid/api/webhooks/WebhookCanary88",
+     WEBHOOK_CANARY.replace("WebhookCanary88", "WebhookCanary88é")],
+    ids=["http", "끝_줄바꿈", "앞_공백", "다른_호스트", "다른_주소", "ASCII_아님"],
+)
+def test_Discord_웹훅_주소가_디스코드_HTTPS_한_줄이_아니면_값을_빼고_설정_오류다(url):
+    with pytest.raises(ConfigError) as raised:
+        load_discord_settings({"DISCORD_WEBHOOK_URL": url})
+    assert str(raised.value).startswith("DISCORD_WEBHOOK_URL ")
+    assert "Canary" not in str(raised.value) and "example" not in str(raised.value)
 
 
 @pytest.mark.parametrize(
@@ -493,12 +524,32 @@ def test_Anthropic_요청은_사고를_끄고_응답의_사고_블록은_버리�
         sent.append(json.loads(request.data))
         return io.BytesIO(json.dumps({"content": content}).encode())
 
-    assert anthropic_complete(monkeypatch, urlopen) == "ab"
+    assert anthropic_complete(monkeypatch, urlopen).text == "ab"
     # 사고를 켜 두면 Haiku 5.5가 답 크기로 잡은 max_tokens를 사고에 다 써 text 없이 끝난다(PR #32)
     # system은 캐시 표시를 단 블록 하나: Haiku 5.5는 우리 지시문 길이(1,393·1,605토큰)에서 캐시를 만들고 읽었다(#14 M0)
     assert sent == [{"model": "claude-haiku-5-5", "max_tokens": 200, "thinking": {"type": "disabled"},
                      "system": [{"type": "text", "text": "sys", "cache_control": {"type": "ephemeral"}}],
                      "messages": [{"role": "user", "content": "usr"}]}]
+
+
+@pytest.mark.parametrize(
+    "usage, tokens",
+    [
+        ({"input_tokens": 120, "output_tokens": 30, "cache_read_input_tokens": 900, "cache_creation_input_tokens": 0},
+         (120, 30, 900, 0)),
+        ({"input_tokens": 7}, (7, 0, 0, 0)),  # 빠진 칸
+        ({"input_tokens": -1, "output_tokens": "3", "cache_read_input_tokens": True, "cache_creation_input_tokens": 2.0},
+         (0, 0, 0, 0)),  # 0 이상의 int가 아닌 값(bool 포함)
+        (None, (0, 0, 0, 0)),
+        ("x", (0, 0, 0, 0)),
+    ],
+    ids=["네_칸", "빠진_칸", "이상한_값", "usage_null", "usage_문자열"],
+)
+def test_Anthropic_응답의_토큰_수는_usage에서_읽고_이상하면_0으로_두며_응답을_실패로_만들지_않는다(monkeypatch, usage, tokens):
+    def urlopen(request, timeout):
+        return io.BytesIO(json.dumps({"content": [{"type": "text", "text": "ok"}], "usage": usage}).encode())
+
+    assert anthropic_complete(monkeypatch, urlopen) == LLMReply("ok", *tokens)
 
 
 @pytest.mark.parametrize(
@@ -748,3 +799,56 @@ def test_커버_범위에서_찾은_편입_회사가_없으면_미지원이다(h
     found = top_holdings(holdings_report(*holdings), [Coverage("AAPL", "Apple", cik="0000000002")])
 
     assert found == FundHoldings(LineStatus.UNSUPPORTED, unmatched=unmatched)
+
+
+# Discord 실패 알림(#17 D3). 가짜 opener만: 실제 Discord를 부르지 않는다
+class WebhookOpener:
+    """notify._OPENER 자리. outcome: 응답 상태 코드(int) 또는 낼 예외."""
+
+    def __init__(self, outcome):
+        self.outcome, self.sent = outcome, []
+
+    def open(self, request, timeout):
+        self.sent.append((request.full_url, request.get_method(), json.loads(request.data), dict(request.header_items()), timeout))
+        if isinstance(self.outcome, BaseException):
+            raise self.outcome
+        return urllib.response.addinfourl(io.BytesIO(b""), Message(), request.full_url, self.outcome)
+
+
+@pytest.mark.parametrize(
+    "outcome, reason",
+    [
+        (204, None),
+        (urllib.error.HTTPError(WEBHOOK_CANARY, 404, f"Unknown Webhook {WEBHOOK_CANARY}", Message(), io.BytesIO(b"{}")), "http_404"),
+        (TimeoutError(WEBHOOK_CANARY), "timeout"),
+        (urllib.error.URLError(WEBHOOK_CANARY), "connection"),
+        (ValueError(WEBHOOK_CANARY), "error"),
+    ],
+    ids=["204", "404", "타임아웃", "접속_실패", "그_밖의_예외"],
+)
+def test_Discord_보내기는_결과를_이유_코드로만_돌려주고_예외를_올리지_않는다(monkeypatch, outcome, reason):
+    opener = WebhookOpener(outcome)
+    monkeypatch.setattr(notify, "_OPENER", opener)
+
+    assert notify.send_discord(load_discord_settings({"DISCORD_WEBHOOK_URL": WEBHOOK_CANARY}), "hello @everyone") == reason
+    [(url, method, payload, headers, timeout)] = opener.sent
+    assert (url, method, timeout) == (WEBHOOK_CANARY, "POST", 10.0)
+    assert payload == {"content": "hello @everyone", "allowed_mentions": {"parse": []}}  # @everyone이 알림을 울리지 않는다
+    assert headers == {"Content-type": "application/json", "User-agent": notify.USER_AGENT}
+    assert notify.USER_AGENT.startswith("DiscordBot (")  # Cloudflare가 기본 Python-urllib UA를 막을 수 있다
+
+
+def test_Discord_메시지는_머리줄과_코드_블록이고_실패면_머리줄을_강조한다():
+    assert notify.discord_content(date(2026, 10, 16), 0, ["a", "b"]) == "OK morning 2026-10-16 exit=0\n```text\na\nb\n```"
+    assert notify.discord_content(date(2026, 10, 16), 2, ["x"]).startswith("**FAILED** morning 2026-10-16 exit=2\n```text\nx\n")
+
+
+def test_Discord_메시지가_2000자를_넘으면_뒤_줄부터_빼고_뺀_줄_수를_적는다():
+    lines = ["!!! FAILED: failures=1 cards=15 !!!"] + [f"{i:03d} " + "x" * 95 for i in range(30)]  # 줄마다 99자
+
+    content = notify.discord_content(date(2026, 10, 16), 1, lines)
+
+    # 머리줄 36 + 블록 시작 9 + 배너 35 + 99자 줄 k개(줄바꿈 포함 100씩) + 잘림 표시 줄 34 + 블록 끝 4 ≤ 2000 → k = 18
+    assert content.split("\n") == ["**FAILED** morning 2026-10-16 exit=1", "```text", *lines[:19],
+                                    "… 12 more lines (see Actions log)", "```"]  # 실패 배너(맨 위)는 남는다
+    assert len(content) == 1918

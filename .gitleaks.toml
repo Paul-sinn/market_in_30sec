@@ -1,0 +1,34 @@
+# 커밋 전 비밀값 검사 설정(#17). pre-commit 훅(.githooks/pre-commit)과 CI(.github/workflows/secret-scan.yml)가 같이 쓴다.
+# 문법은 CI가 고정한 gitleaks 버전(8.30.1)의 README를 따른다. 레포 규칙 정규식은 Python re와 RE2에서 같게 도는 문법만
+# (룩어라운드·역참조 없음): backend/tests/test_secret_scan.py가 re로 확인한다.
+# 오탐은 첫 CI 실행에서 나온 것만 아래 allowlist 규칙으로 더한다. .gitleaksignore 지문은 쓰지 않는다. 진짜 비밀값이면 키 교체가 먼저다.
+
+[extend]
+useDefault = true  # Anthropic 키·GitHub 토큰·JWT 등은 기본 규칙이 잡는다
+
+[[rules]]
+id = "m30-postgres-url-password"
+description = "Postgres URI with a password (SUPABASE_DB_URL)"
+regex = '''postgres(?:ql)?://[^:/\s@'"]+:([^@/\s'"{}]{12,})@'''
+secretGroup = 1
+keywords = ["postgres"]
+
+[[rules]]
+id = "m30-discord-webhook"
+description = "Discord webhook URL (DISCORD_WEBHOOK_URL)"
+regex = '''https://(?:[a-z]+\.)?discord(?:app)?\.com/api/webhooks/[0-9]{17,20}/[A-Za-z0-9_-]{60,}'''
+keywords = ["discord"]
+
+[[rules]]
+id = "m30-supabase-secret-key"
+description = "Supabase secret API key"
+regex = '''sb_secret_[A-Za-z0-9_-]{20,}'''
+keywords = ["sb_secret_"]
+
+[[allowlists]]
+description = "lockfile hashes, recorded public SEC data, this file"
+paths = ['''(?:^|/)package-lock\.json$''', '''(?:^|/)uv\.lock$''', '''^backend/tests/edgar_responses/''', '''^\.gitleaks\.toml$''']
+
+[[allowlists]]
+description = "test canaries, environment variable names"
+regexes = ['''(?i)canary''', '''^[A-Z]+(?:_[A-Z]+)+$''']

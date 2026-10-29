@@ -97,3 +97,24 @@ def load_tiingo_settings(env: Mapping[str, str] = os.environ) -> TiingoSettings 
     if not re.fullmatch(r"[\x21-\x7e]+", settings.api_key):
         raise ConfigError(f"{TIINGO_KEY_VAR} must be one line of printable ASCII without spaces")
     return settings
+
+
+DISCORD_VAR = "DISCORD_WEBHOOK_URL"  # 실행 요약 알림(#17). 없으면 알림만 꺼진다
+DISCORD_PREFIXES = ("https://discord.com/api/webhooks/", "https://discordapp.com/api/webhooks/")
+
+
+@dataclass(frozen=True)
+class DiscordSettings:
+    url: str = field(repr=False)  # 주소 자체가 비밀값(아는 사람은 누구나 채널에 쓸 수 있다)
+
+
+def load_discord_settings(env: Mapping[str, str] = os.environ) -> DiscordSettings | None:
+    """DISCORD_WEBHOOK_URL을 읽는 곳은 여기 하나. 없거나 빈 값이면 None. Discord 웹훅 HTTPS 주소 한 줄(공백 없는 출력 가능 ASCII)이
+    아니면 ConfigError(값 없이). env를 지우는 이유는 load_settings와 같다."""
+    settings = DiscordSettings(url=env.get(DISCORD_VAR, ""))
+    del env
+    if not settings.url:
+        return None
+    if not settings.url.startswith(DISCORD_PREFIXES) or not re.fullmatch(r"[\x21-\x7e]+", settings.url):
+        raise ConfigError(f"{DISCORD_VAR} must be one line of printable ASCII starting with {DISCORD_PREFIXES[0]}")
+    return settings
