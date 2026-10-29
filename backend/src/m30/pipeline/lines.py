@@ -105,6 +105,12 @@ def _event_text(event: CorporateEvent, trading_day: date) -> str:
     return f"Earnings {WEEKDAYS[event.day.weekday()]} {day}{timing}{est} (D-{(event.day - trading_day).days})"
 
 
+def is_today_event(text: str, trading_day: date) -> bool:
+    """_event_text로 만든 두 번째 줄이 trading_day 일정인지. 실적은 (D-0), 배당락은 M/D로 읽는다.
+    shortcut: 일정 창 끝(정확히 365일 뒤) 같은 M/D 배당락도 오늘로 읽힌다, 카드에 일정 날짜 컬럼이 생기면 그 값으로."""
+    return text.endswith("(D-0)") or text.startswith(f"Ex-dividend {trading_day.month}/{trading_day.day} ")
+
+
 def price_fact_line(bars: Sequence[DailyBar], checked_at: datetime) -> CardLine:
     """bars는 bars_usable 통과분. 아래 순서(U5 = A)로 처음 맞는 사실 하나, 없으면 확인함·없음.
     52주 이력이 없으면(상장 1년 미만) 52주 사실은 건너뛴다. 반올림해서 0.0이면 "같음"이다."""

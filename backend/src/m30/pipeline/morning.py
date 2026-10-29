@@ -54,6 +54,7 @@ from m30.pipeline.lines import (
     price_fact_line,
 )
 from m30.pipeline.newsline import NewsDraft, write_news_drafts
+from m30.pipeline.notice import morning_notice
 from m30.pipeline.review import NewsReview, review_drafts
 from m30.trading_day import is_trading_day, previous_trading_day
 
@@ -91,6 +92,7 @@ class RunSummary:
     reviews: dict[str, NewsReview]  # 소식 있는 종목 → 검수 결과(통과한 줄 또는 대체 줄)
     funds: dict[str, FundHoldings]  # ETF 생성 대상(holdings_ticker 있음) → 상위 편입 종목
     llm_tokens: dict[str, int]  # TOKEN_FIELDS → 이번 실행 합계(LLMBudget.tokens)
+    notices: int  # 저장한 아침 알림 문구 수(잠기지 않은 내 종목이 있는 유저 수)
     # "change"|"news"|"event"|"price" → LineStatus 값 4개 → 이번에 저장한 카드 수(0 포함). 첫 번째 줄이 None인 카드는 news에서 빠진다
     line_counts: dict[str, dict[str, int]]
 
@@ -242,6 +244,14 @@ class MorningPipeline:
                 card = _error_card(cov, trading_day, checked_at)
                 self._store.save_card(card, None)  # 이것마저 실패하면 DB 문제: 그대로 올라가 실행이 죽고 이어 하기가 받는다
             cards.append(card)
+        # 아침 알림(#12): 이어 하기로 건너뛴 카드까지 그날 카드 전부로. 보류함 재발행은 이 단계를 거치지 않는다(다시 만들지 않음)
+        saved = {c.ticker: c for c in self._store.list_cards(trading_day)}
+        importance = self._store.news_importance(trading_day)
+        notices = {
+            uid: morning_notice([saved[t] for t in tickers if t in saved], importance, plan, trading_day)
+            for uid, plan, tickers in self._store.list_notice_users()
+        }
+        self._store.replace_notices(trading_day, notices)
         summary = RunSummary(
             trading_day=trading_day,
             access_denied=calls.access_denied,
@@ -262,6 +272,7 @@ class MorningPipeline:
             reviews=reviews,
             funds=funds,
             llm_tokens=dict(budget.tokens),
+            notices=len(notices),
             line_counts=_line_counts(cards),
         )
         self._store.finish_run(run_id, run_failed(summary), run_record(summary))

@@ -3,8 +3,8 @@
 from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import date, datetime
-
 from decimal import Decimal
+from uuid import UUID
 
 import psycopg
 from psycopg.conninfo import conninfo_to_dict
@@ -26,6 +26,7 @@ from m30.models import (
     HoldState,
     LineStatus,
     NewsKind,
+    Plan,
     StockCard,
     UnclassifiedReason,
 )
@@ -347,7 +348,7 @@ class CardStore:
     def list_cards(self, trading_day: date) -> list[StockCard]:
         with self._conn.cursor(row_factory=dict_row) as cur:
             rows = cur.execute(
-                f"select {', '.join(CARD_COLUMNS)}, updated_at from public.stock_card"
+                f"select {', '.join(CARD_COLUMNS)}, updated_at, publish_suspended from public.stock_card"
                 " where trading_day = %s order by ticker",
                 (trading_day,),
             ).fetchall()
@@ -365,9 +366,45 @@ class CardStore:
                 updated_at=r["updated_at"].astimezone(ET),
                 news_line_accession=r["news_line_accession"],
                 previous_trading_day=r["previous_trading_day"],
+                publish_suspended=r["publish_suspended"],
             )
             for r in rows
         ]
+
+    def news_importance(self, trading_day: date) -> dict[str, int]:
+        """티커 → trading_day 카드 첫 번째 줄이 쓴 공시의 내부 중요도(그 공시 분류 행 중 가장 큰 값). 공시 없음·미분류 카드는 빠진다.
+        ETF 카드는 편입 종목 공시를 쓰므로 접수번호로만 찾는다."""
+        rows = self._conn.execute(
+            "select c.ticker, max(f.importance) from public.stock_card c"
+            " join public.filing_classification f on f.accession = c.news_line_accession"
+            " where c.trading_day = %s and f.importance is not null group by c.ticker",
+            (trading_day,),
+        )
+        return dict(rows.fetchall())
+
+    def list_notice_users(self) -> list[tuple[UUID, Plan, tuple[str, ...]]]:
+        """(user id, 플랜, 잠기지 않은 내 종목 티커 오름차순): 잠기지 않은 내 종목이 하나라도 있는 유저만, user id 순."""
+        rows = self._conn.execute(
+            "select p.user_id, p.plan::text, array_agg(s.ticker order by s.ticker) from public.user_profile p"
+            " join public.my_stock s on s.user_id = p.user_id and not s.locked group by p.user_id order by p.user_id"
+        )
+        return [(uid, Plan(plan), tuple(tickers)) for uid, plan, tickers in rows]
+
+    def replace_notices(self, trading_day: date, notices: Mapping[UUID, str]) -> None:
+        """한 트랜잭션: trading_day 알림 문구를 지우고 notices를 넣는다. 같은 거래일 재실행은 덮어쓴다(아직 발송이 없다)."""
+        with self._conn.transaction(), self._conn.cursor() as cur:
+            cur.execute("delete from public.morning_notice where trading_day = %s", (trading_day,))
+            cur.executemany(
+                "insert into public.morning_notice (user_id, trading_day, text) values (%s, %s, %s)",
+                [(uid, trading_day, text) for uid, text in notices.items()],
+            )
+
+    def list_notices(self, trading_day: date) -> dict[UUID, str]:
+        """user id → trading_day 아침 알림 문구."""
+        rows = self._conn.execute(
+            "select user_id, text from public.morning_notice where trading_day = %s order by user_id", (trading_day,)
+        )
+        return dict(rows.fetchall())
 
     def republished_news(self, trading_day: date) -> dict[str, tuple[str, str | None]]:
         """티커 → (카드 첫 번째 줄 문구, news_line_accession): trading_day 카드 중 republished 보류함 행이 있는 카드의 현재 값.
