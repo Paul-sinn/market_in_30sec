@@ -142,6 +142,7 @@
 - ✅ 비밀값(Anthropic, 시세 벤더, Supabase service role, Discord 웹훅, SEC User-Agent 연락처)은 환경 변수로만. 로그에 키·키가 들어간 URL을 남기지 않음. 커밋 전 gitleaks 검사(pre-commit 훅)
 - ✅ Supabase: 모든 테이블 RLS 켬. **앱(anon·로그인 유저)은 DB를 직접 읽지도 쓰지도 않음, DB 접근은 서버(service role)만** (2026-10-18). 로그인 없이 카드 보기는 서버의 카드 조회 API가 IP당 요청 제한·캐시·플랜별 노출 판단과 함께 맡음. 이유: anon 키는 앱 안에 들어가서, DB 직접 읽기를 열면 서버의 제한·잠금을 우회할 수 있음. service role 키는 서버 전용
 - ✅ 출시 전 REA로 우리 앱 빌드 점검(키·내부 주소 노출, 네트워크 기록). 경쟁사 앱에는 사용 안 함
+- ✅ (2026-10-28, MVP 운영 구조) 상시 서버 없이 클라우드 셋: 아침 파이프라인은 GitHub Actions(`morning.yml`), DB·로그인·Vault·정시 알람은 Supabase, 웹은 Vercel. GitHub 예약 실행이 매일 4~7시간 늦어서(10-22~10-28) **Supabase pg_cron이 평일 09:17 UTC에 workflow_dispatch를 부른다**(#43, 토큰은 Vault `github_dispatch_token`, 1년 만료 → 갱신 필요). GitHub schedule은 예비로 남고 그날 완료된 실행이 있으면 `ALREADY_DONE`으로 끝난다. 실행 기록 `pipeline_run`(#16·#17), 실패·예비 실행은 Discord 웹훅으로 알림(#17, 시크릿 `DISCORD_WEBHOOK_URL`)
 
 ### 3-8. 요금
 - ✅ 무료 + 유료 1개(**Plus**). 광고 없음. 연간 기본 선택. 가격 밑 하루 환산 표시. 인앱결제 기본
