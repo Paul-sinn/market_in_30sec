@@ -177,11 +177,12 @@ KEY_CANARY, UA_CANARY = "sk-ant-KeyCanary93", "M30 Canary uaCanary41@example.inv
 TIINGO_CANARY = "tiingoKeyCanary57"
 
 
-def run_probe(settings, situation, tiingo_key=None, extra=()):
-    """tiingo_key가 없으면 TIINGO_API_KEY를 뺀 환경(구독 전). 셸에 진짜 키가 있어도 하위 프로세스로 넘기지 않는다. extra = 덧붙일 CLI 인자."""
-    env = {k: v for k, v in os.environ.items() if k != "TIINGO_API_KEY"} | {
+def run_probe(settings, situation, tiingo_key=None, extra=(), trigger=None):
+    """tiingo_key가 없으면 TIINGO_API_KEY를 뺀 환경(구독 전). 셸에 진짜 키가 있어도 하위 프로세스로 넘기지 않는다. extra = 덧붙일 CLI 인자.
+    trigger = 워크플로가 넘기는 RUN_TRIGGER(github.event_name). 없으면 변수 없이(로컬 실행)."""
+    env = {k: v for k, v in os.environ.items() if k not in ("TIINGO_API_KEY", "RUN_TRIGGER")} | {
         "SUPABASE_DB_URL": settings.database_url, "ANTHROPIC_API_KEY": KEY_CANARY, "SEC_USER_AGENT": UA_CANARY
-    } | ({"TIINGO_API_KEY": tiingo_key} if tiingo_key else {})
+    } | ({"TIINGO_API_KEY": tiingo_key} if tiingo_key else {}) | ({"RUN_TRIGGER": trigger} if trigger else {})
     r = subprocess.run([sys.executable, "tests/production_probe.py", situation, "--production", "2026-10-16", *extra],
                        cwd=BACKEND, env=env, capture_output=True, text=True, timeout=60)
     out = r.stdout + r.stderr
@@ -268,3 +269,45 @@ def test_운영_품질_확인은_TIINGO_API_KEY가_있어도_시세를_부르지
         "quality 2026-10-16 classify=claude-haiku-5-5 newsline=claude-haiku-5-5 review=claude-haiku-5-5 prices=none")
     assert "lines news checked_found=0 checked_none=15 delayed=0 unsupported=0" in lines  # ETF 4개도 편입 종목 확인함·없음
     assert "hold -" in lines and "classify -" in lines
+
+
+def test_예약_실행은_그_거래일에_완료된_실행이_있으면_카드·LLM_없이_ALREADY_DONE만_찍고_0으로_끝난다(settings, admin, store):
+    admin.execute("insert into public.pipeline_run (trading_day, finished_at) values ('2026-10-16', now())")
+
+    code, out = run_probe(settings, "quiet", trigger="schedule")  # 탐침 LLM은 불리면 RUN FAILED
+
+    assert code == 0
+    assert out == "ALREADY_DONE 2026-10-16\nfake_modules=[]\n"
+    assert store.list_cards(FRI) == []
+    assert admin.execute("select count(*) from public.pipeline_run").fetchone()[0] == 1  # 새 실행 기록 없음
+
+
+@pytest.mark.parametrize("finished_at, day", [("null", "2026-10-16"), ("now()", "2026-10-15")], ids=["죽은_실행", "다른_거래일만_완료"])
+def test_예약_실행은_그_거래일에_완료된_실행이_없으면_건너뛰지_않고_카드를_만든다(settings, admin, finished_at, day):
+    admin.execute(f"insert into public.pipeline_run (trading_day, finished_at) values ('{day}', {finished_at})")
+
+    code, out = run_probe(settings, "quiet", trigger="schedule")
+
+    assert code == 0
+    assert "2026-10-16 cards_saved=15 resumed=- " in out
+    assert "ALREADY_DONE" not in out
+
+
+def test_예약_실행은_같은_거래일_실행이_진행_중이면_ALREADY_DONE이_아니라_LOCKED로_끝난다(settings, admin):
+    admin.execute("insert into public.pipeline_run (trading_day) values ('2026-10-16')")  # 진행 중: finished_at 없음 + 잠금
+    with connect(settings) as conn, CardStore(conn).run_lock(FRI):
+        code, out = run_probe(settings, "quiet", trigger="schedule")
+
+    assert code == 1
+    assert out == "LOCKED: 2026-10-16 같은 거래일 실행이 이미 돌고 있어 종료합니다\nfake_modules=[]\n"
+
+
+@pytest.mark.parametrize("trigger", ["workflow_dispatch", None], ids=["dispatch", "변수_없음"])
+def test_dispatch·수동_실행은_완료된_실행이_있어도_카드를_다시_만든다(settings, admin, trigger):
+    admin.execute("insert into public.pipeline_run (trading_day, finished_at) values ('2026-10-16', now())")
+
+    code, out = run_probe(settings, "quiet", trigger=trigger)
+
+    assert code == 0
+    assert "2026-10-16 cards_saved=15 resumed=- " in out
+    assert "ALREADY_DONE" not in out

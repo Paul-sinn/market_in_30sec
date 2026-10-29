@@ -4,6 +4,8 @@ name: morning-pipeline
 on:
   schedule:
     - cron: "17 9 * * 1-5"  # 09:17 UTC = 05:17 EDT / 04:17 EST, 월~금. 공시 기간(04:00 ET)이 닫힌 뒤, 7:30 ET 훨씬 전
+    # 예비: GitHub 예약은 4~7시간 늦게 온다. 정시 시작은 Supabase pg_cron(morning_dispatch)이 같은 시각에 workflow_dispatch로 한다(#43).
+    # 예약으로 시작한 실행(RUN_TRIGGER=schedule)은 그 거래일에 끝난 실행이 있으면 카드 없이 끝난다
   workflow_dispatch:
     inputs:
       trading_day:
@@ -37,6 +39,7 @@ jobs:
       - run: uv run --no-sync python -m m30.pipeline --production ${TRADING_DAY:+"$TRADING_DAY"}
         env:
           TRADING_DAY: ${{ inputs.trading_day }}
+          RUN_TRIGGER: ${{ github.event_name }}
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}

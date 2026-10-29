@@ -172,6 +172,12 @@ class CardStore:
     def finish_run(self, run_id: int) -> None:
         self._conn.execute("update public.pipeline_run set finished_at = now() where id = %s", (run_id,))
 
+    def has_finished_run(self, trading_day: date) -> bool:
+        """이 거래일에 끝까지 간 실행(finished_at 있음)이 있는지. 진행 중·죽은 실행은 세지 않는다."""
+        return self._conn.execute(
+            "select exists (select from public.pipeline_run where trading_day = %s and finished_at is not null)", (trading_day,)
+        ).fetchone()[0]
+
     def save_card(self, card: StockCard, holds: Sequence[HoldItem] | None) -> None:
         """한 트랜잭션: upsert_card(card) 다음, holds가 None이 아니면 replace_hold_items(card.ticker, card.trading_day, holds).
         None = 이번에 첫 번째 줄을 만들지 않았다(재발행 유지, CIK 실패 시 이전 값 유지) → 그 카드의 보류함 행을 건드리지 않는다."""
