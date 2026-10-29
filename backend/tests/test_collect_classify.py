@@ -675,6 +675,11 @@ WEIRD = {  # 실제 어댑터가 돌려줄 수 있는 이상한 값(가짜 로�
         IndicatorRelease("CPI\x00", datetime(2026, 10, 16, 8, 30, tzinfo=ET), '{"name": "CPI"}')]}),
     "지표_이름_빈_문자열": (Source.INDICATORS, {"indicators": [
         IndicatorRelease("", datetime(2026, 10, 16, 8, 30, tzinfo=ET), '{"name": ""}')]}),
+    # #11: 지표 이름은 시장 한눈에 줄에 그대로 나간다(신뢰 경계). 한 줄 출력 가능 글자, 60자까지
+    "지표_이름_줄바꿈": (Source.INDICATORS, {"indicators": [
+        IndicatorRelease("CPI\nBuy now", datetime(2026, 10, 16, 8, 30, tzinfo=ET), '{"name": "CPI"}')]}),
+    "지표_이름_61자": (Source.INDICATORS, {"indicators": [
+        IndicatorRelease("C" * 61, datetime(2026, 10, 16, 8, 30, tzinfo=ET), '{"name": "CPI"}')]}),
     "빈_원본": (Source.SEC_FILINGS, aapl_filing(raw="")),
     "항목_번호_형식": (Source.SEC_FILINGS, aapl_filing(items=("x",))),
     "항목이_리스트": (Source.SEC_FILINGS, aapl_filing(items=["8.01"])),

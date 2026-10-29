@@ -22,6 +22,7 @@ from m30.models import (
     FundHoldings,
     HoldItem,
     LineStatus,
+    MarketGlance,
     NewsCandidate,
     StockCard,
     TickerNews,
@@ -41,14 +42,18 @@ from m30.pipeline.collect import (
 )
 from m30.pipeline.compute import bars_usable, change_pct, top_holdings
 from m30.pipeline.lines import (
+    CLOSE_FUNDS,
     EVENT_SCOPE,
     EVENT_WINDOW,
     HOLDINGS_SCOPE,
+    INDICATOR_SCOPE,
     NEWS_SCOPE,
     PRICE_SCOPE,
+    close_line,
     delayed_line,
     event_line,
     holdings_scope,
+    indicator_line,
     leverage_tag,
     news_template_line,
     price_fact_line,
@@ -156,7 +161,7 @@ class MorningPipeline:
         items, failed_ciks = self._collect_filings(collected, trading_day, calls)
         # 카드 루프 전: 카드가 하나라도 저장됐으면 정정 공시 행은 이미 있다(이어 하기가 그 CIK를 다시 받지 않아도)
         self._store.flag_amended_cards(trading_day, [i.filing for i in items if i.filing.form is FilingForm.EIGHT_K_A])
-        self._collect_indicators(trading_day, calls)
+        indicator = self._collect_indicators(trading_day, checked_at, calls)
         budget = LLMBudget(self._llm, len(targets) * 4 + batch_count(items))
 
         def send(subject: str, request: LLMRequest) -> str:
@@ -252,6 +257,13 @@ class MorningPipeline:
             for uid, plan, tickers in self._store.list_notice_users()
         }
         self._store.replace_notices(trading_day, notices)
+        # 시장 한눈에(#11): 카드·알림 뒤. 여기서 예상 못 한 예외가 나도 카드·알림은 저장돼 있고 다음 실행이 이어 한다
+        fund_pcts = [saved[t].change_pct if t in saved else None for _, t in CLOSE_FUNDS]  # 같은 날 SPY·QQQ 카드와 같은 숫자
+        placeholder = CardLine("Not covered yet", LineStatus.UNSUPPORTED, checked_at, None)
+        glance = MarketGlance(
+            trading_day, close_line(*fund_pcts, previous_trading_day(trading_day), checked_at), indicator, placeholder
+        )
+        self._store.upsert_market_glance(glance)
         summary = RunSummary(
             trading_day=trading_day,
             access_denied=calls.access_denied,
@@ -343,16 +355,18 @@ class MorningPipeline:
             return FundHoldings(LineStatus.DELAYED)
         return top_holdings(report, coverage.values())
 
-    def _collect_indicators(self, trading_day: date, calls: SourceCalls) -> None:
+    def _collect_indicators(self, trading_day: date, checked_at: datetime, calls: SourceCalls) -> CardLine:
+        """거래일 발표를 저장하고 시장 한눈에 지표 일정 줄을 돌려준다. 실패는 그 줄만 지연(요약 failed:에 남는다)."""
         try:
             releases = calls.call(
                 Source.INDICATORS, None, lambda: self._indicators.releases(trading_day, trading_day), valid_releases
             )
         except SourceError:
-            return
-        self._store.save_indicator_releases(
-            trading_day, [r for r in releases if r.released_at.astimezone(ET).date() == trading_day]
-        )
+            return delayed_line(INDICATOR_SCOPE, checked_at)
+        if releases is not None:
+            releases = [r for r in releases if r.released_at.astimezone(ET).date() == trading_day]
+            self._store.save_indicator_releases(trading_day, releases)
+        return indicator_line(releases, checked_at)
 
     def _event_line(self, ticker: str, trading_day: date, checked_at: datetime, calls: SourceCalls) -> CardLine:
         try:

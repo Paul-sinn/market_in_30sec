@@ -44,7 +44,7 @@ class Scenario:
     prices: dict[str, list[DailyBar]]  # 티커 → 날짜 오름차순
     events: dict[str, list[CorporateEvent]] = field(default_factory=dict)  # 키가 없는 티커 = 일정 미지원
     filings: dict[str, list[Filing]] = field(default_factory=dict)  # CIK → 공시. 키가 없는 CIK = []
-    indicators: list[IndicatorRelease] = field(default_factory=list)
+    indicators: list[IndicatorRelease] | None = None  # None = 키 없음 = 지표 일정 미지원
     holdings: dict[str, HoldingsReport] = field(default_factory=dict)  # 편입을 읽을 ETF → 최신 보고. 키가 없는 ETF = None(미지원)
     llm_replies: list[str] = field(default_factory=list)  # 호출 순서대로
     # (출처, 대상) → 실패 계획. 대상: 시세·일정은 티커, 공시는 CIK, 편입 종목은 ETF 티커, 지표·LLM은 None
@@ -74,7 +74,7 @@ def load_scenario(path: Path) -> Scenario:
         prices=prices,
         events=events,
         filings={cik: [_filing(path, cik, row) for row in rows] for cik, rows in raw.get("filings", {}).items()},
-        indicators=[_indicator(path, row) for row in raw.get("indicators", [])],
+        indicators=[_indicator(path, row) for row in raw["indicators"]] if "indicators" in raw else None,
         holdings={fund: _holdings(path, fund, row) for fund, row in raw.get("holdings", {}).items()},
         # default=float: parse_float=Decimal로 읽은 숫자를 JSON 숫자로 되돌린다
         llm_replies=[r if isinstance(r, str) else json.dumps(r, default=float) for r in raw.get("llm_replies", [])],
@@ -278,10 +278,10 @@ class FakeIndicatorSource:
         self._failures = _Failures(scenario, Source.INDICATORS)
         self.calls: list[None] = []
 
-    def releases(self, start: date, end: date) -> list[IndicatorRelease]:
+    def releases(self, start: date, end: date) -> list[IndicatorRelease] | None:
         self.calls.append(None)
         self._failures.check(None)
-        return list(self._releases)
+        return None if self._releases is None else list(self._releases)
 
 
 class FakeHoldingsSource:

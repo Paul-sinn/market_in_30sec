@@ -6,7 +6,9 @@ from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from m30.adapters.events import CorporateEvent, Earnings, EarningsTiming
+from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.prices import DailyBar
+from m30.config import ET
 from m30.models import CardLine, LineStatus, TickerNews
 from m30.pipeline.compute import format_per_share, streak, week52_gaps
 
@@ -14,6 +16,7 @@ from m30.pipeline.compute import format_per_share, streak, week52_gaps
 NO_FILINGS = "No new SEC filings found"
 NO_EVENTS = "No confirmed events found"
 NO_PRICE_FACTS = "No additional price highlights"  # 가격 데이터가 정상인데 표시 조건에 맞는 사실이 없음
+NO_INDICATORS = "No economic releases found"  # 시장 한눈에 지표 일정 줄(#11)
 UPDATE_DELAYED = "Update delayed"
 NOT_COVERED = "Not covered yet"
 
@@ -22,6 +25,11 @@ NEWS_SCOPE = "SEC filings"
 HOLDINGS_SCOPE = "SEC filings of top holdings"  # ETF 편입 보고를 못 읽은 지연 줄 전용(웹 하단은 확인된 줄만 범위를 보여 준다)
 EVENT_SCOPE = "Earnings and dividend calendar"
 PRICE_SCOPE = "Daily prices"
+INDICATOR_SCOPE = "Economic calendar"
+
+# 시장 한눈에(#11)
+CLOSE_FUNDS = (("S&P 500", "SPY"), ("Nasdaq", "QQQ"))  # 지수 값 대신 ETF(HANDOFF 4장). 어제 마감 줄 순서
+INDICATORS_SHOWN = 2  # 지표 일정 줄에 이름을 쓰는 발표 수. 나머지는 +N more
 
 # 기준값 (사용자 결정 U1·U3·U4, 2026-10-18)
 EVENT_WINDOW = timedelta(days=365)  # U1 = C: 기간 제한 없이 가장 가까운 일정. 조회만 1년 앞까지
@@ -140,3 +148,39 @@ def leverage_tag(leverage: Decimal | None) -> str | None:
         return None
     multiple = format(abs(leverage).normalize(), "f")  # normalize만 쓰면 10.00이 1E+1이 된다
     return f"{multiple}x · resets daily" if leverage > 0 else f"\u2212{multiple}x inverse · resets daily"
+
+
+def format_change(pct: Decimal) -> str:
+    """어제 마감 줄의 등락률(DB 값 그대로, 소수 첫째 자리). +0.4% / −1.2%(U+2212) / 보합 0.0%."""
+    if pct > 0:
+        return f"+{pct}%"
+    return f"\u2212{-pct}%" if pct < 0 else "0.0%"
+
+
+def format_et_time(at: datetime) -> str:
+    """동부 12시간제: 8:30 AM ET, 12:00 PM ET. 서버 로캘과 무관하게(strftime %p를 쓰지 않는다)."""
+    et = at.astimezone(ET)
+    return f"{(et.hour - 1) % 12 + 1}:{et.minute:02d} {'AM' if et.hour < 12 else 'PM'} ET"
+
+
+def close_line(spy: Decimal | None, qqq: Decimal | None, previous_day: date, checked_at: datetime) -> CardLine:
+    """둘 다 있으면 'Thu 10/15 close: S&P 500 (SPY) +0.4%, Nasdaq (QQQ) −1.2%'(PRICE_SCOPE), 하나라도 없으면 줄 전체 지연
+    (한 줄에 상태는 하나: 반쪽만 보여 주지 않는다). 값 둘은 줄의 정의라 숫자 하나 규칙의 대상이 아니다(스펙 #11 D2)."""
+    if spy is None or qqq is None:
+        return delayed_line(PRICE_SCOPE, checked_at)
+    funds = ", ".join(f"{name} ({ticker}) {format_change(pct)}" for (name, ticker), pct in zip(CLOSE_FUNDS, (spy, qqq)))
+    day = f"{WEEKDAYS[previous_day.weekday()]} {previous_day.month}/{previous_day.day}"
+    return CardLine(f"{day} close: {funds}", LineStatus.CHECKED_FOUND, checked_at, PRICE_SCOPE)
+
+
+def indicator_line(releases: Sequence[IndicatorRelease] | None, checked_at: datetime) -> CardLine:
+    """None → 미지원, [] → NO_INDICATORS, 아니면 (발표 시각, 이름) 순 앞 INDICATORS_SHOWN개 '{이름} {h:mm AM} ET'를 ' · '로 + ' +N more'.
+    releases는 거래일 발표만(호출부가 거른다). 출처 실패는 호출부가 delayed_line."""
+    if releases is None:
+        return CardLine(NOT_COVERED, LineStatus.UNSUPPORTED, checked_at, None)
+    if not releases:
+        return CardLine(NO_INDICATORS, LineStatus.CHECKED_NONE, checked_at, INDICATOR_SCOPE)
+    ordered = sorted(releases, key=lambda r: (r.released_at, r.name))
+    text = " · ".join(f"{r.name} {format_et_time(r.released_at)}" for r in ordered[:INDICATORS_SHOWN])
+    more = len(ordered) - INDICATORS_SHOWN
+    return CardLine(text + (f" +{more} more" if more > 0 else ""), LineStatus.CHECKED_FOUND, checked_at, INDICATOR_SCOPE)

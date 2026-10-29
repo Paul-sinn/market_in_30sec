@@ -9,12 +9,14 @@ import urllib.response
 from email.message import Message
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 import pytest
 
 from m30.adapters import AccessDeniedError, RateLimitedError, SourceError, TransientSourceError, error_for_status
 from m30.adapters.events import Earnings, EarningsTiming, ExDividend
 from m30.adapters.holdings import Holding, HoldingsReport
+from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.prices import DailyBar
 from m30.config import ET, ConfigError, is_local_db, load_discord_settings, load_llm_settings, load_settings
 from m30.copy_rules import ALWAYS_BANNED, CARD_BANNED, EMOTION_VERBS, SOURCE_TAG, check_card
@@ -38,6 +40,9 @@ from m30.pipeline.lines import (
     REPLACEMENT_PHRASES,
     company_short_name,
     event_line,
+    format_change,
+    format_et_time,
+    indicator_line,
     leverage_tag,
     price_fact_line,
     replacement_sentence,
@@ -852,3 +857,49 @@ def test_Discord_메시지가_2000자를_넘으면_뒤_줄부터_빼고_뺀_줄_
     assert content.split("\n") == ["**FAILED** morning 2026-10-16 exit=1", "```text", *lines[:19],
                                     "… 12 more lines (see Actions log)", "```"]  # 실패 배너(맨 위)는 남는다
     assert len(content) == 1918
+
+
+# 시장 한눈에(#11) 코드 줄
+@pytest.mark.parametrize(
+    "pct, shown",
+    [("0.4", "+0.4%"), ("-1.2", "\u22121.2%"), ("0.0", "0.0%"), ("-0.0", "0.0%"), ("12.0", "+12.0%")],
+    ids=["상승", "하락_진짜_마이너스", "보합", "음수_0", "소수_첫째_자리_0"],
+)
+def test_어제_마감_등락률은_상승_플러스_하락_진짜_마이너스_보합은_부호_없이_쓴다(pct, shown):
+    assert format_change(Decimal(pct)) == shown
+
+
+@pytest.mark.parametrize(
+    "at, shown",
+    [
+        (datetime(2026, 10, 16, 8, 30, tzinfo=ET), "8:30 AM ET"),
+        (datetime(2026, 10, 16, 10, 5, tzinfo=ET), "10:05 AM ET"),
+        (datetime(2026, 10, 16, 12, 0, tzinfo=ET), "12:00 PM ET"),
+        (datetime(2026, 10, 16, 0, 15, tzinfo=ET), "12:15 AM ET"),
+        (datetime(2026, 10, 16, 18, 0, tzinfo=ZoneInfo("UTC")), "2:00 PM ET"),  # 동부로 바꿔 쓴다
+    ],
+    ids=["오전", "분_두_자리", "정오", "자정_뒤", "UTC_입력"],
+)
+def test_지표_발표_시각은_동부_12시간제로_쓴다(at, shown):
+    assert format_et_time(at) == shown
+
+
+def release(name, hour, minute):
+    return IndicatorRelease(name, datetime(2026, 10, 16, hour, minute, tzinfo=ET), "{}")
+
+
+@pytest.mark.parametrize(
+    "releases, text",
+    [
+        ([release("CPI", 8, 30)], "CPI 8:30 AM ET"),
+        ([release("Fed decision", 14, 0), release("CPI", 8, 30)], "CPI 8:30 AM ET · Fed decision 2:00 PM ET"),
+        ([release("Retail sales", 10, 0), release("Jobless claims", 8, 30), release("CPI", 8, 30)],
+         "CPI 8:30 AM ET · Jobless claims 8:30 AM ET +1 more"),
+        ([release("B", 12, 0), release("A", 12, 0), release("C", 10, 5), release("D", 9, 0)],
+         "D 9:00 AM ET · C 10:05 AM ET +2 more"),
+    ],
+    ids=["1건", "2건_시각_순", "3건_같은_시각은_이름_순", "4건"],
+)
+def test_지표_일정_줄은_앞_두_건만_이름을_쓰고_나머지는_개수로_붙인다(releases, text):
+    line = indicator_line(releases, CHECKED)
+    assert (line.text, line.status, line.source_scope) == (text, LineStatus.CHECKED_FOUND, "Economic calendar")

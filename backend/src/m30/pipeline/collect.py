@@ -23,6 +23,7 @@ RETRY_DELAYS = (1.0, 2.0, 4.0)  # U5 = A. 길이 = 재시도 횟수(3) → 최�
 CUTOFF = time(4, 0)  # 수집 시각(HANDOFF 3-6). 공시 기간의 경계
 ITEM = re.compile(r"[0-9]\.[0-9]{2}")
 CIK = re.compile(r"[0-9]{10}")
+INDICATOR_NAME_MAX = 60  # 지표 일정 줄에 두 이름 + 시각이 한 줄에 들어가게
 
 
 def filing_window(trading_day: date) -> tuple[datetime, datetime]:
@@ -212,14 +213,16 @@ def valid_holdings(report: object, fund: str) -> bool:
 
 
 def valid_releases(releases: object) -> bool:
-    return isinstance(releases, list) and all(
+    return releases is None or (isinstance(releases, list) and all(
         isinstance(r, IndicatorRelease)
         and _is_text(r.name)
         and r.name != ""
+        and r.name.isprintable()  # 이름은 시장 한눈에 줄에 그대로 나간다(#11): 한 줄, 제어 문자 없음
+        and len(r.name) <= INDICATOR_NAME_MAX
         and _is_aware(r.released_at)
         and _is_text(r.raw)
         for r in releases
-    )
+    ))
 
 
 def _is_text(value: object) -> bool:

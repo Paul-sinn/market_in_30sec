@@ -3,7 +3,6 @@
 
 from datetime import date
 
-from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.prices import DailyBar
 
 
@@ -25,8 +24,7 @@ class NoHoldingsSource:  # #10 B가 실제 N-PORT 어댑터로 바꾼다
         return None
 
 
-class NoIndicatorSource:
-    def releases(self, start: date, end: date) -> list[IndicatorRelease]:
-        """항상 [] → indicator_release 0행. 카드 줄 없음.
-        shortcut: 출처가 없는데 '확인함·없음'을 돌려준다, 지표를 읽는 기능(#11) 전에 실제 출처로 바꾼다."""
-        return []
+class NoIndicatorSource:  # 지표 일정 실제 어댑터 티켓이 바꾼다
+    def releases(self, start: date, end: date) -> None:
+        """항상 None(미지원) → indicator_release 0행, 시장 한눈에 지표 일정 줄 Not covered yet."""
+        return None
