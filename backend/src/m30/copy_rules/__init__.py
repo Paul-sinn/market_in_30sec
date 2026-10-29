@@ -16,6 +16,7 @@ CARD_BANNED = _card["banned"]
 EMOTION_VERBS = _card["emotion_verbs"]
 ALWAYS_BANNED = _arena["always_banned"]
 SOURCE_TAG = re.compile(r"\((" + "|".join(map(re.escape, _card["source_tags"])) + r")\)\s*$")
+NOTICE_TICKER = re.compile(r"^[A-Z][A-Z.\-]*: ")  # 아침 알림 맨 앞 "AAPL: "(코드가 붙인 티커)
 
 SECOND_PERSON = re.compile(r"\byou(r|rs|'re|'ll|'d)?\b", re.I)
 FIRST_PERSON_TRADE = re.compile(r"\b(I|I'm|I've|I'll|we|we're)\s+(\w+\s+)?(buy|bought|buying|sell|sold|selling)\b", re.I)
@@ -57,8 +58,9 @@ def word_pattern(term: str) -> re.Pattern:
     return re.compile(rf"\b({'|'.join(forms)})\b", re.I)
 
 
-def check_card(line: str) -> list[str]:
-    """카드 줄·시장 한눈에·아침 알림 검사. 위반 이유 목록, 빈 리스트 = 통과."""
+def check_card(line: str, *, notice: bool = False) -> list[str]:
+    """카드 줄·시장 한눈에·아침 알림 검사. 위반 이유 목록, 빈 리스트 = 통과.
+    notice=True(아침 알림)일 때만 코드가 붙인 맨 앞 "AAPL: "를 단어 수에서 뺀다. 카드 줄은 LLM 초안이라 같은 모양이어도 센다."""
     line = _normalize(line)
     issues = []
     for term in CARD_BANNED + ALWAYS_BANNED:
@@ -69,8 +71,11 @@ def check_card(line: str) -> list[str]:
             issues.append(f"감정 동사 '{verb}'")
     if SECOND_PERSON.search(line):
         issues.append("2인칭(you/your) — 카드는 사실만 전달")
-    # 줄 끝 출처 꼬리표(정해진 목록만)와 "+2 more"는 단어 수에서 뺀다. 다른 괄호는 본문으로 센다
+    # 줄 끝 출처 꼬리표(정해진 목록만), 아침 알림 맨 앞 티커, "+2 more"는 단어 수에서 뺀다. 다른 괄호는 본문으로 센다.
+    # 금지어·2인칭은 위에서 줄 전체(티커 포함)로 검사했다
     body = SOURCE_TAG.sub("", line)
+    if notice:
+        body = NOTICE_TICKER.sub("", body)
     body = re.sub(r"\+\d+ more", "", body)
     words = len(body.split())
     if words > MAX_WORDS:

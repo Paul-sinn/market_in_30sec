@@ -56,6 +56,8 @@ REQUIRED_EXAMPLES = {
         "Apple filed Item 2.02 with Q3 revenue of $94B (SEC filing)",
         "너도 사랑해",
         "그분은 의사세요",
+        # 티켓 #12: 아침 알림 고정 문구
+        "Today's stock cards are ready",
     ],
     "card_block.txt": [
         "Tesla shares soared after the launch (Company)",
@@ -81,6 +83,8 @@ REQUIRED_EXAMPLES = {
         "Apple (Company) announced its board of directors elected a new chair at the annual shareholder meeting",
         "Apple rose 3% Item 5.5% more",
         "Palantir shares skyrocketed after earnings (Company)",
+        # 티켓 #12: 아침 알림 티커 자리의 금지어
+        "BUY: Apple named a new CFO",
     ],
 }
 
@@ -188,3 +192,19 @@ def test_스킬_실행기는_외부_패키지_없이_서버_문구_규칙으로_
     r = subprocess.run([sys.executable, "-I", "-S", str(SKILL_RUNNER), "--mode", mode, "-"],
                        input=line + "\n", capture_output=True, text=True, timeout=30)
     assert (r.returncode, expected in r.stdout) == (code, True), r.stdout + r.stderr
+
+
+TICKER_15 = "NVDA: Nvidia announced its board of directors elected a new chair at the annual shareholder meeting"  # 티커 + 15단어
+
+
+def test_카드_줄은_맨_앞_티커도_단어로_센다():
+    # 첫 번째 줄은 LLM 초안이라 "NVDA: "로 시작해도 15단어 제한을 비켜 가면 안 된다(#12 수정 1)
+    assert check_card(TICKER_15) == ["16단어 — 최대 15"]
+
+
+@pytest.mark.parametrize("line, issues", [
+    (TICKER_15, []),
+    ("Revenue grew strongly this quarter: Apple named a new CFO and opened a new office downtown", ["16단어 — 최대 15"]),
+], ids=["대문자_티커는_뺀다", "대문자_티커가_아닌_접두는_센다"])
+def test_아침_알림은_맨_앞_대문자_티커만_단어_수에서_뺀다(line, issues):
+    assert check_card(line, notice=True) == issues

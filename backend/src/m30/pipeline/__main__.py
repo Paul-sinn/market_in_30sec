@@ -140,6 +140,7 @@ def _print_summary(summary: RunSummary, say: Callable[[str], None] = print) -> N
     delayed = ", ".join(summary.change_delayed) or "-"
     resumed = ",".join(summary.resumed) or "-"  # 죽은 앞 실행이 저장해 이번에 건너뛴 카드
     say(f"{summary.trading_day} cards_saved={summary.cards_saved} resumed={resumed} change_delayed={delayed}")
+    say(f"notices={summary.notices}")  # 아침 알림 문구 수만. 문구는 찍지 않는다
     skipped = ", ".join(f"{b.number}:{b.reason}" for b in summary.skipped_batches) or "-"
     tokens = summary.llm_tokens
     say(

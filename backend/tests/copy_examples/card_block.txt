@@ -79,3 +79,5 @@ Apple announced two new directors and a $60B share buyback (SEC filing)
 # 하이픈: 십 단위 복합(twenty-five)은 한 숫자, ten-for-one은 ten·one 둘(10-for-1과 같음)
 Apple hired twenty-five staff and paid $2B (SEC filing)
 Apple announced a ten-for-one stock split (SEC filing)
+# 아침 알림(#12): 금지어 검사는 맨 앞 티커에도 한다
+BUY: Apple named a new CFO

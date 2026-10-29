@@ -53,6 +53,13 @@ Apple completed an acquisition or sale (SEC filing)
 Apple filed a company update (SEC filing)
 Apple updated an earlier report (SEC filing)
 Apple reported quarterly results +2 more (SEC filing)
+# 아침 알림(#12): 티커 + 카드 문장 + 다른 종목 수, 100자 넘으면 단어 경계에서 자르고 …, 후보가 없을 때 고정 문구. 이 파일은 카드 모드로 검사해 티커도 단어로 센다(티커를 빼는 15단어 경계는 test_copy_rules·test_morning_notice)
+Today's stock cards are ready
+MSFT: Microsoft named a new CFO +1 more
+MSFT: Earnings Fri 10/16 before open (D-0) +1 more
+MSFT: Ex-dividend 10/16 · $0.91/share +1 more
+MSFT: Up 5 days in a row
+MSFT: Microsoft said its board authorized an additional share repurchase program covering… +1 more
 # ---- 카드 문장이 아닌 검사기 경계 예시 ----
 # 아래 줄은 출처 꼬리표·전문용어 규칙과 관계없이 검사기의 단어 경계·값 표기 판정만 확인한다. 카드 문구 예시로 쓰지 않는다
 # 금지어와 비슷한 다른 단어(seller)
