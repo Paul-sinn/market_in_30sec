@@ -26,10 +26,18 @@
   - [x] #9 무료/Plus 줄 노출 — PR #40, 닫힘(2026-10-28)
 - [x] #16 거래일 달력·실행 잠금·이어 하기·발행 중단·종가 날짜 라벨 — PR #41, 닫힘
 - [x] #10 ETF 카드(상위 편입 종목 SEC N-PORT) — PR #42, 닫힘
-- [ ] #43 아침 실행 시각 보장(Supabase pg_cron → workflow_dispatch) — PR #44 병합·토큰 저장·시험 dispatch 성공. **다음 평일 09:17 UTC 정시 실행 확인 후 닫기**
+- [x] #43 아침 실행 시각 보장(Supabase pg_cron → workflow_dispatch) — PR #44, 닫힘. 10-29 09:17:01 UTC 정시 실행 성공, GitHub 스케줄 대비 실행은 `ALREADY_DONE`
 - [x] #17 실행 기록·Discord 요약·gitleaks — PR #45, 닫힘
 - [x] #12 아침 알림 문구 — PR #46, 닫힘
-- [ ] 다음: #11 시장 한눈에(시세 필요), #18·#21·#20(사람 몫), 커버 범위 확대(#20에서), 푸시 발송·즉시 생성(#15 후보)
+- [ ] #11 시장 한눈에 — **보류(피봇)**. 백엔드 중간 작업은 `wip-11-market-glance` 브랜치(테스트 미실행, 원격 미적용, 로컬 DB에서도 되돌림). 설계 `_workspace/issue-11/01_architect_spec.md`(로컬)
+- [ ] 다음: #18·#21·#20(사람 몫), 커버 범위 확대(#20에서), 푸시 발송·즉시 생성(#15 후보) — 피봇 결정 후 다시 정리
+
+## 피봇 인수인계 (2026-10-29)
+사용자가 기능을 더 줄이는 피봇을 검토 중. 새 세션에서 이어 한다.
+1. 새 세션 ①: `/grill-with-docs`로 뺄 기능 결정 → HANDOFF·GLOSSARY·ADR 고침 → 하네스 점검(`harness:harness`, 에이전트·스킬을 새 범위에 맞춤)
+2. 재시작(에이전트 정의는 세션 시작 때만 읽힘) → 새 세션 ②: m30-dev로 리팩토링
+- 현재 운영: 매 평일 아침 카드 15개 자동 생성(pg_cron 09:17 UTC), 웹 https://web-theta-olive-25.vercel.app
+- 레포 루트 `debate.py`, `debate_*`, `gpt-context.md`, `docs/research/`는 사용자 파일, 커밋하지 않음
 
 ## 사용자 할 일 (2026-10-29 기준)
 - Google 로그인 설정 3가지(Google Cloud OAuth 클라이언트, Supabase Auth Google 켜기·Email 끄기·URL, Vercel `SUPABASE_PUBLISHABLE_KEY`) → 운영 로그인·내 종목 확인
