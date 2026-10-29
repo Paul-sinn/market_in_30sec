@@ -4,6 +4,7 @@ python -m m30.pipeline --production [YYYY-MM-DD]                          운영
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter
 from collections.abc import Sequence
@@ -222,6 +223,10 @@ def _production(requested: date | None, quality: bool = False) -> int:
     try:
         with connect(settings) as conn:
             store = CardStore(conn)
+            # GitHub 예약 실행은 늦게 오는 예비(#43): 정시 dispatch가 그 거래일을 끝냈으면 카드·LLM 없이 끝낸다. 수동·dispatch는 다시 만든다
+            if os.environ.get("RUN_TRIGGER") == "schedule" and store.has_finished_run(day):
+                print(f"ALREADY_DONE {day}")
+                return 0
             summary, refreshed = run_production(
                 store,
                 day,

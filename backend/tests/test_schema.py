@@ -206,7 +206,7 @@ def test_anon·authenticated는_public_함수를_실행할_수_없다(admin, rol
     functions = [r[0] for r in admin.execute(
         "select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'")]
     assert {"keep_card_revision", "republish_from_hold_queue", "user_local_date", "user_profile_timezone",
-            "lock_my_stocks_on_plan_change", "my_stock_rules", "log_my_stock_change"} <= set(functions)  # 검사 대상이 비어서 통과하지 않게
+            "lock_my_stocks_on_plan_change", "my_stock_rules", "log_my_stock_change", "dispatch_morning_workflow"} <= set(functions)  # 검사 대상이 비어서 통과하지 않게
     assert executable == []
 
 
@@ -477,3 +477,47 @@ def test_편입_종목_보고는_서버가_추가만_하고_고치거나_지울_
     for sql in ("update public.fund_holdings set payload = ''", "delete from public.fund_holdings"):
         with pytest.raises(errors.InsufficientPrivilege):
             as_service_role(admin, sql)
+
+
+DISPATCH_URL = "https://api.github.com/repos/Paul-sinn/market_in_30sec/actions/workflows/morning.yml/dispatches"
+
+
+def test_아침_dispatch_cron_작업은_평일_09시17분_UTC에_함수만_부르고_토큰_값이_없다(admin):
+    jobs = admin.execute("select schedule, command, username, active from cron.job where jobname = 'morning_dispatch'").fetchall()
+    assert jobs == [("17 9 * * 1-5", "select public.dispatch_morning_workflow()", "postgres", True)]
+    [body] = admin.execute("select prosrc from pg_proc where oid = 'public.dispatch_morning_workflow()'::regprocedure").fetchone()
+    assert DISPATCH_URL in body
+    assert "vault.decrypted_secrets" in body and "'github_dispatch_token'" in body  # 토큰은 Vault에서만
+    for token_shape in ("ghp_", "github_pat_", "gho_", "ghs_"):  # GitHub 토큰 접두사: 값이 코드에 박히지 않았다
+        assert token_shape not in body + jobs[0][1]
+    # cron(postgres = 소유자)만 부른다. 서버(service_role)도 GitHub 실행을 시작할 수 없다
+    assert admin.execute("select has_function_privilege('service_role', 'public.dispatch_morning_workflow()', 'EXECUTE')").fetchone() == (False,)
+
+
+def queued_dispatches(conn):
+    return conn.execute("select count(*) from net.http_request_queue where url = %s", (DISPATCH_URL,)).fetchone()[0]
+
+
+def test_Vault에_토큰이_없으면_아침_dispatch는_요청을_만들지_않는다(admin):
+    with admin.transaction(force_rollback=True):  # 로컬 Vault에 토큰이 있어도 이 검사 안에서만 지운다
+        admin.execute("delete from vault.secrets where name = 'github_dispatch_token'")
+        assert admin.execute("select public.dispatch_morning_workflow()").fetchone() == (None,)
+        assert queued_dispatches(admin) == 0
+
+
+TOKEN_CANARY = "dispatchTokenCanary72"
+
+
+def test_Vault_토큰이_있으면_main으로_morning_workflow_dispatch_요청_하나를_Bearer_헤더로_만든다(admin):
+    # 커밋하지 않는다: pg_net 작업자는 커밋된 요청만 보내므로 GitHub에 아무것도 가지 않는다
+    with admin.transaction(force_rollback=True):
+        admin.execute("delete from vault.secrets where name = 'github_dispatch_token'")
+        admin.execute("select vault.create_secret(%s, 'github_dispatch_token')", (TOKEN_CANARY,))
+        [request_id] = admin.execute("select public.dispatch_morning_workflow()").fetchone()
+        method, url, headers, body = admin.execute(
+            "select method, url, headers, convert_from(body, 'utf8') from net.http_request_queue where id = %s", (request_id,)
+        ).fetchone()
+        assert (method, url, json.loads(body)) == ("POST", DISPATCH_URL, {"ref": "main"})
+        assert headers == {"Authorization": f"Bearer {TOKEN_CANARY}", "Accept": "application/vnd.github+json",
+                           "Content-Type": "application/json", "User-Agent": "market_in_30sec-morning-dispatch"}
+    assert queued_dispatches(admin) == 0

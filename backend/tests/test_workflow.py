@@ -58,6 +58,15 @@ def test_단계는_설치와_운영_실행_둘뿐이고_날짜는_env로만_따�
     assert text().count("inputs.") == 1
 
 
+def test_실행_단계는_시작한_이벤트를_env로_넘겨_예약_실행만_완료된_거래일을_건너뛰게_한다():
+    # 정시 실행은 Supabase cron의 workflow_dispatch(#43). GitHub schedule은 늦게 오는 예비라 CLI가 RUN_TRIGGER=schedule일 때만 건너뛴다
+    lines = text().splitlines()
+    (production,) = [i for i, line in enumerate(lines) if "--production" in line]
+    assert [line.strip().split(":")[0] for line in lines[production + 1:]] == [
+        "env", "TRADING_DAY", "RUN_TRIGGER", "SUPABASE_DB_URL", "ANTHROPIC_API_KEY", "SEC_USER_AGENT"]
+    assert re.findall(r"^\s*RUN_TRIGGER: (.*)$", text(), re.M) == ["${{ github.event_name }}"]
+
+
 def test_실행은_운영_모드로_한_번에_하나씩_main_전용_environment에서_SHA로_고정한_액션으로_돈다():
     assert re.search(r"^      - run: uv run --no-sync python -m m30\.pipeline --production ", text(), re.M)
     assert re.search(r"^concurrency:\n  group: morning-pipeline(  #.*)?\n  cancel-in-progress: false$", text(), re.M)
