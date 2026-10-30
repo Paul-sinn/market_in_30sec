@@ -2,7 +2,11 @@
  * 로컬 Supabase에 카드를 넣고 getDashboard → exposeCards(#9)가 화면 모델로 바꾸는지 본다. 원격 금지.
  * 먼 미래 거래일(2099)·테스트 전용 티커만 쓰고 끝나면 지운다(시드 데이터는 건드리지 않는다).
  * 노출 비교용 유저는 로컬 Auth admin으로 만들고 끝나면 지운다(프로필·내 종목·이력은 cascade).
+ * 시장 한눈에(#11) 2099 행 2개는 지우지 못한다(service_role에 delete 권한 없음, 의도된 스키마): 매번 upsert로 덮어쓴다.
+ * backend pytest가 public 테이블을 비울 때 같이 지워진다.
  */
+import { randomUUID } from "node:crypto";
+
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, beforeAll, expect, test } from "vitest";
@@ -21,6 +25,35 @@ const EARLIER = "2099-12-30";
 const TICKERS = ["ZZWA", "ZZWB", "ZZWC", "ZZWD", "ZZWE"];
 const SUSPENDED_TEXT = "Web Test E suspended line"; // 발행 중단 카드(ZZWE)에만 있는 문구
 const AT = "2099-12-31T12:30:00+00:00"; // 7:30 AM EST
+const HOLD = `canary-hold-${randomUUID()}`; // 시장 한눈에 보류 기록(검수 안 된 문장). 웹은 읽지 않는다
+const EARLIER_GLANCE = `canary-earlier-glance-${randomUUID()}`; // 이전 거래일 행에만 있는 문구
+
+const glanceRow = (trading_day: string, close: string) => ({
+  trading_day,
+  close_line_text: close,
+  close_line_status: "checked_found",
+  close_line_checked_at: AT,
+  close_line_source_scope: "Daily prices",
+  indicator_line_text: "CPI 8:30 AM ET · Retail sales 10:00 AM ET",
+  indicator_line_status: "checked_found",
+  indicator_line_checked_at: "2099-12-31T12:20:00+00:00", // 7:20 AM EST: 하단은 가장 이른 시각
+  indicator_line_source_scope: "Economic calendar",
+  market_news_line_text: "Update delayed", // 검수에 걸려 대체된 소식 줄
+  market_news_line_status: "delayed",
+  market_news_line_checked_at: AT,
+  market_news_line_source_scope: "Official releases",
+  market_news_hold_draft: HOLD,
+  market_news_hold_rules: [`1 copy_rules: ${HOLD}`],
+});
+const CLOSE = "Wed 12/30 close: S&P 500 (SPY) +0.4%, Nasdaq (QQQ) \u22121.2%";
+const GLANCE = {
+  lines: [
+    { text: CLOSE, status: "checked_found" },
+    { text: "CPI 8:30 AM ET · Retail sales 10:00 AM ET", status: "checked_found" },
+    { text: "Update delayed", status: "delayed" },
+  ],
+  checked: "Checked 7:20 AM ET · Daily prices · Economic calendar", // 지연된 소식 줄의 출처는 빠진다
+};
 
 const line = (prefix: string, text: string | null, status: string | null, scope: string | null) => ({
   [`${prefix}_text`]: text,
@@ -112,6 +145,8 @@ beforeAll(async () => {
   if (cov.error) throw new Error(`coverage insert failed: ${cov.error.message}`);
   const ins = await admin.from("stock_card").insert(cards, { defaultToNull: false }); // 행마다 키가 달라도 빠진 컬럼은 DB 기본값(publish_suspended = false)
   if (ins.error) throw new Error(`stock_card insert failed: ${ins.error.message}`);
+  const glance = await admin.from("market_glance").upsert([glanceRow(DAY, CLOSE), glanceRow(EARLIER, EARLIER_GLANCE)]);
+  if (glance.error) throw new Error(`market_glance upsert failed: ${glance.error.message}`);
 });
 
 const created: string[] = [];
@@ -186,6 +221,14 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
   ]);
 });
 
+test("시장 한눈에(#11): 카드의 최신 거래일 행의 세 줄을 순서대로 + 하단. 보류 기록·이전 날 행은 결과 어디에도 없다", async () => {
+  const data = await getDashboard();
+  expect(data.glance).toEqual(GLANCE);
+  const all = JSON.stringify(data);
+  expect(all).not.toContain(HOLD);
+  expect(all).not.toContain(EARLIER_GLANCE);
+});
+
 test("로그인 전 = 무료 범위: 세 번째 줄은 잠금만, 하단에서도 그 줄의 출처가 빠진다. 지연·미지원은 그대로", async () => {
   const cards = exposeCards((await getDashboard()).cards, null);
   // ZZWE(발행 중단)는 없다
@@ -239,14 +282,15 @@ test("같은 카드를 Plus 유저와 무료 유저가 볼 때 세 번째 줄이
   const [free, plus] = [await user("free"), await user("plus")];
 
   // /cards 페이지와 같은 순서: 카드·내 종목을 읽고, 컴포넌트로 넘기기 전에 노출을 판단한다
-  const { tradingDay, cards } = await getDashboard();
+  const { tradingDay, glance, cards } = await getDashboard();
   const coverage = await getCoverage();
   const page = async (id: VerifiedUserId) => {
     const my = await getMyStocks(id);
-    const data = { tradingDay, cards: exposeCards(cards, my) };
+    const data = { tradingDay, glance, cards: exposeCards(cards, my) };
     return { data, html: renderToStaticMarkup(createElement(Dashboard, { data, mine: myDashboardView(data.cards, coverage, my, undefined) })) };
   };
   const [f, p] = [await page(free), await page(plus)];
+  const out = renderToStaticMarkup(createElement(Dashboard, { data: { tradingDay, glance, cards: exposeCards(cards, null) } }));
   const third = (d: typeof f, ticker: string) => d.data.cards.find((c) => c.ticker === ticker)!.lines[2];
 
   expect(third(p, "ZZWA")).toEqual({ text: "Up 5 days in a row", status: "checked_found" }); // Plus 내 종목
@@ -264,4 +308,11 @@ test("같은 카드를 Plus 유저와 무료 유저가 볼 때 세 번째 줄이
     expect(d.html).toContain("Summary arrives tomorrow morning");
     expect(d.html).not.toContain(SUSPENDED_TEXT);
   }
+
+  // 시장 한눈에(#11)는 로그인 전·무료·Plus가 같은 블록이고, 보류 기록은 HTML에 없다
+  const section = (html: string) => html.match(/<section[^>]*aria-labelledby="market-glance"[^>]*>.*?<\/section>/)?.[0];
+  expect(section(out)).toContain("CPI 8:30 AM ET · Retail sales 10:00 AM ET");
+  expect(section(f.html)).toBe(section(out));
+  expect(section(p.html)).toBe(section(out));
+  for (const html of [out, f.html, p.html]) expect(html).not.toContain(HOLD);
 });

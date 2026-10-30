@@ -10,6 +10,7 @@ from m30.adapters.events import EventSource
 from m30.adapters.filings import FilingForm, FilingSource
 from m30.adapters.holdings import HoldingsSource
 from m30.adapters.indicators import IndicatorSource
+from m30.adapters.market_news import MarketNewsItem, MarketNewsSource
 from m30.adapters.prices import PriceSource
 from m30.config import ET
 from m30.db.store import CardStore
@@ -22,6 +23,7 @@ from m30.models import (
     FundHoldings,
     HoldItem,
     LineStatus,
+    MarketGlance,
     NewsCandidate,
     StockCard,
     TickerNews,
@@ -37,22 +39,28 @@ from m30.pipeline.collect import (
     valid_events,
     valid_filings,
     valid_holdings,
+    valid_market_news,
     valid_releases,
 )
 from m30.pipeline.compute import bars_usable, change_pct, top_holdings
 from m30.pipeline.lines import (
+    CLOSE_FUNDS,
     EVENT_SCOPE,
     EVENT_WINDOW,
     HOLDINGS_SCOPE,
+    INDICATOR_SCOPE,
     NEWS_SCOPE,
     PRICE_SCOPE,
+    close_line,
     delayed_line,
     event_line,
     holdings_scope,
+    indicator_line,
     leverage_tag,
     news_template_line,
     price_fact_line,
 )
+from m30.pipeline.glance import GLANCE_CALLS, market_news_line
 from m30.pipeline.newsline import NewsDraft, write_news_drafts
 from m30.pipeline.notice import morning_notice
 from m30.pipeline.review import NewsReview, review_drafts
@@ -95,6 +103,8 @@ class RunSummary:
     notices: int  # 저장한 아침 알림 문구 수(잠기지 않은 내 종목이 있는 유저 수)
     # "change"|"news"|"event"|"price" → LineStatus 값 4개 → 이번에 저장한 카드 수(0 포함). 첫 번째 줄이 None인 카드는 news에서 빠진다
     line_counts: dict[str, dict[str, int]]
+    glance: MarketGlance | None  # 이번에 저장한 시장 한눈에(#11). None = 죽은 앞 실행이 저장해서 건너뜀
+    glance_review: str  # 소식 줄 검수: "-"(LLM 안 부름) | "pass" | "pass+retry" | "hold:<단계>" | "hold:<단계>+retry"
 
 
 class MorningPipeline:
@@ -106,6 +116,7 @@ class MorningPipeline:
         filings: FilingSource,
         indicators: IndicatorSource,
         holdings: HoldingsSource,
+        market_news: MarketNewsSource,
         llm: LLM,
         store: CardStore,
         sleep: Callable[[float], None] = time.sleep,
@@ -116,6 +127,7 @@ class MorningPipeline:
         self._filings = filings
         self._indicators = indicators
         self._holdings = holdings
+        self._market_news = market_news
         self._llm = llm
         self._store = store
         self._sleep = sleep
@@ -137,6 +149,9 @@ class MorningPipeline:
             t for t, c in stored.items()
             if resume_since is not None and c.status is CardStatus.NORMAL and c.updated_at >= resume_since
         )
+        stored_glance = self._store.get_market_glance(trading_day)
+        # 시장 한눈에도 카드와 같은 이어 하기 규칙: 끝나지 않은 앞 실행이 저장했으면 소식 수집·LLM·저장을 하지 않는다
+        glance_resumed = resume_since is not None and stored_glance is not None and stored_glance.updated_at >= resume_since
         checked_at = datetime.now(ET)  # 이 실행의 모든 줄이 같은 확인 시각을 쓴다
         calls = SourceCalls(self._sleep)
         # 활성 종목 ∪ 기본 종목. 건너뛴 종목은 공시 수집·분류·초안·검수·저장을 전부 하지 않는다
@@ -156,8 +171,10 @@ class MorningPipeline:
         items, failed_ciks = self._collect_filings(collected, trading_day, calls)
         # 카드 루프 전: 카드가 하나라도 저장됐으면 정정 공시 행은 이미 있다(이어 하기가 그 CIK를 다시 받지 않아도)
         self._store.flag_amended_cards(trading_day, [i.filing for i in items if i.filing.form is FilingForm.EIGHT_K_A])
-        self._collect_indicators(trading_day, calls)
-        budget = LLMBudget(self._llm, len(targets) * 4 + batch_count(items))
+        indicator = self._collect_indicators(trading_day, checked_at, calls)
+        news_status, news_items = (None, ()) if glance_resumed else self._collect_market_news(trading_day, calls)
+        # 시장 한눈에 소식 줄은 LLM을 부를 때만 생성 대상 하나 몫(#11 D6): 소식 없음·미지원이면 상한은 그대로
+        budget = LLMBudget(self._llm, len(targets) * 4 + batch_count(items) + (GLANCE_CALLS if news_items else 0))
 
         def send(subject: str, request: LLMRequest) -> str:
             """LLM 호출 창구 하나: 분류(묶음 번호)·첫 번째 줄·판정(접수번호)이 같은 상한·재시도·차단을 쓴다."""
@@ -252,6 +269,21 @@ class MorningPipeline:
             for uid, plan, tickers in self._store.list_notice_users()
         }
         self._store.replace_notices(trading_day, notices)
+        # 시장 한눈에(#11): 카드·알림 뒤. 여기서 예상 못 한 예외가 나도 카드·알림은 저장돼 있고 다음 실행이 이어 한다
+        glance, glance_review = None, "-"
+        if not glance_resumed:
+            fund_pcts = [saved[t].change_pct if t in saved else None for _, t in CLOSE_FUNDS]  # 같은 날 SPY·QQQ 카드와 같은 숫자
+            old = stored_glance and stored_glance.market_news_line
+            if news_status is LineStatus.DELAYED and old and old.status in CHECKED:
+                # 소식 기간은 고정이고 수집 실패는 새 정보가 아니다: 앞 실행이 확인한 줄(확인 시각 포함)을 그대로 둔다(첫 번째 줄 D6과 같다)
+                news_line, hold_draft, hold_rules = old, None, ()
+            else:
+                news_line, hold_draft, hold_rules, glance_review = market_news_line(
+                    news_status, news_items, trading_day, checked_at, send
+                )
+            close = close_line(*fund_pcts, previous_trading_day(trading_day), checked_at)
+            glance = MarketGlance(trading_day, close, indicator, news_line, hold_draft, hold_rules)
+            self._store.upsert_market_glance(glance)
         summary = RunSummary(
             trading_day=trading_day,
             access_denied=calls.access_denied,
@@ -274,6 +306,8 @@ class MorningPipeline:
             llm_tokens=dict(budget.tokens),
             notices=len(notices),
             line_counts=_line_counts(cards),
+            glance=glance,
+            glance_review=glance_review,
         )
         self._store.finish_run(run_id, run_failed(summary), run_record(summary))
         return summary
@@ -343,16 +377,32 @@ class MorningPipeline:
             return FundHoldings(LineStatus.DELAYED)
         return top_holdings(report, coverage.values())
 
-    def _collect_indicators(self, trading_day: date, calls: SourceCalls) -> None:
+    def _collect_indicators(self, trading_day: date, checked_at: datetime, calls: SourceCalls) -> CardLine:
+        """거래일 발표를 저장하고 시장 한눈에 지표 일정 줄을 돌려준다. 실패는 그 줄만 지연(요약 failed:에 남는다)."""
         try:
             releases = calls.call(
                 Source.INDICATORS, None, lambda: self._indicators.releases(trading_day, trading_day), valid_releases
             )
         except SourceError:
-            return
-        self._store.save_indicator_releases(
-            trading_day, [r for r in releases if r.released_at.astimezone(ET).date() == trading_day]
-        )
+            return delayed_line(INDICATOR_SCOPE, checked_at)
+        if releases is not None:
+            releases = [r for r in releases if r.released_at.astimezone(ET).date() == trading_day]
+            self._store.save_indicator_releases(trading_day, releases)
+        return indicator_line(releases, checked_at)
+
+    def _collect_market_news(self, trading_day: date, calls: SourceCalls) -> tuple[LineStatus, tuple[MarketNewsItem, ...]]:
+        """(UNSUPPORTED, ()) / (DELAYED, ()) / (CHECKED_NONE, ()) / (CHECKED_FOUND, 기간 안 항목). 기간은 공시와 같다.
+        어댑터가 범위를 어겨도 다시 거르고, 기간 안 항목만 저장한다. 실패는 요약 failed:에 남는다."""
+        since, until = filing_window(trading_day)
+        try:
+            items = calls.call(Source.MARKET_NEWS, None, lambda: self._market_news.items(since, until), valid_market_news)
+        except SourceError:
+            return LineStatus.DELAYED, ()
+        if items is None:
+            return LineStatus.UNSUPPORTED, ()
+        kept = tuple(i for i in items if since <= i.published_at < until)
+        self._store.save_market_news(trading_day, kept)
+        return (LineStatus.CHECKED_FOUND if kept else LineStatus.CHECKED_NONE), kept
 
     def _event_line(self, ticker: str, trading_day: date, checked_at: datetime, calls: SourceCalls) -> CardLine:
         try:
@@ -401,6 +451,10 @@ def run_record(summary: RunSummary) -> dict:
         "access_denied": list(summary.access_denied),
         "rate_limited": list(summary.rate_limited),
         "llm": {"calls": summary.llm_calls, "limit": summary.llm_call_limit, **summary.llm_tokens},
+        "glance": "resumed" if (g := summary.glance) is None else {
+            "close": g.close_line.status, "indicator": g.indicator_line.status, "market_news": g.market_news_line.status,
+            "review": summary.glance_review,
+        },
     }
 
 

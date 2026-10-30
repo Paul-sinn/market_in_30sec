@@ -14,6 +14,7 @@ from psycopg.types.json import Jsonb
 from m30.adapters.filings import Filing
 from m30.adapters.holdings import Holding, HoldingsReport
 from m30.adapters.indicators import IndicatorRelease
+from m30.adapters.market_news import MarketNewsItem
 from m30.config import DB_URL_VAR, ET, ConfigError, Settings, is_local_db
 from m30.models import (
     AMENDED_RULE,
@@ -25,6 +26,7 @@ from m30.models import (
     HoldStage,
     HoldState,
     LineStatus,
+    MarketGlance,
     NewsKind,
     Plan,
     StockCard,
@@ -48,6 +50,19 @@ _UPSERT_CARD = (
     f"insert into public.stock_card ({', '.join(CARD_COLUMNS)}) values ({', '.join(['%s'] * len(CARD_COLUMNS))})"
     " on conflict (ticker, trading_day) do update set "
     + ", ".join(f"{c} = excluded.{c}" for c in CARD_COLUMNS[2:])
+    + ", updated_at = now()"
+)
+GLANCE_LINES = ("close_line", "indicator_line", "market_news_line")
+GLANCE_COLUMNS = (
+    "trading_day",
+    *(f"{line}_{attr}" for line in GLANCE_LINES for attr in LINE_ATTRS),
+    "market_news_hold_draft",
+    "market_news_hold_rules",
+)
+_UPSERT_GLANCE = (
+    f"insert into public.market_glance ({', '.join(GLANCE_COLUMNS)}) values ({', '.join(['%s'] * len(GLANCE_COLUMNS))})"
+    " on conflict (trading_day) do update set "
+    + ", ".join(f"{c} = excluded.{c}" for c in GLANCE_COLUMNS[1:])
     + ", updated_at = now()"
 )
 
@@ -275,6 +290,15 @@ class CardStore:
                 [(r.name, r.released_at, trading_day, r.raw) for r in releases],
             )
 
+    def save_market_news(self, trading_day: date, items: Iterable[MarketNewsItem]) -> None:
+        """시장 전체 소식 원본. (출처, 키)로 중복 제거, 이미 있는 원본은 건드리지 않는다(처음 받은 거래일 유지)."""
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                "insert into public.market_news_item (source, key, published_at, trading_day, payload)"
+                " values (%s, %s, %s, %s, %s) on conflict (source, key) do nothing",
+                [(i.source, i.key, i.published_at, trading_day, i.raw) for i in items],
+            )
+
     def save_holdings(self, report: HoldingsReport) -> None:
         """편입 종목 보고 저장. 이미 있는 접수번호는 건드리지 않는다(처음 받은 원본 유지). pct는 Decimal 그대로 문자열로."""
         rows = [{"name": h.name, "cik": h.cik, "pct": str(h.pct), "asset_category": h.asset_category} for h in report.holdings]
@@ -344,6 +368,38 @@ class CardStore:
             (trading_day,),
         )
         return [r[0] for r in rows]
+
+    def list_raw_market_news(self, trading_day: date) -> list[str]:
+        """payload 목록, (발표 시각, 출처, 키) 순."""
+        rows = self._conn.execute(
+            "select payload from public.market_news_item where trading_day = %s order by published_at, source, key",
+            (trading_day,),
+        )
+        return [r[0] for r in rows]
+
+    def upsert_market_glance(self, glance: MarketGlance) -> None:
+        """거래일 행을 통째로 덮어쓴다(한 문장 upsert). 보류 규칙 ()은 null(DB CHECK: 규칙은 null 또는 비지 않은 배열). updated_at은 무시."""
+        self._conn.execute(_UPSERT_GLANCE, (
+            glance.trading_day,
+            *(v for line in (glance.close_line, glance.indicator_line, glance.market_news_line) for v in _line_values(line)),
+            glance.market_news_hold_draft,
+            list(glance.market_news_hold_rules) or None,
+        ))
+
+    def get_market_glance(self, trading_day: date) -> MarketGlance | None:
+        with self._conn.cursor(row_factory=dict_row) as cur:
+            r = cur.execute(
+                f"select {', '.join(GLANCE_COLUMNS)}, updated_at from public.market_glance where trading_day = %s", (trading_day,)
+            ).fetchone()
+        if r is None:
+            return None
+        return MarketGlance(
+            r["trading_day"],
+            *(_line(r, line) for line in GLANCE_LINES),
+            market_news_hold_draft=r["market_news_hold_draft"],
+            market_news_hold_rules=tuple(r["market_news_hold_rules"] or ()),
+            updated_at=r["updated_at"].astimezone(ET),
+        )
 
     def list_cards(self, trading_day: date) -> list[StockCard]:
         with self._conn.cursor(row_factory=dict_row) as cur:

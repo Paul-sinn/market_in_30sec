@@ -1,4 +1,4 @@
-"""가짜 시세·일정·공시·지표·편입 종목·LLM 어댑터. 시나리오 JSON 파일에서 데이터를 읽는다."""
+"""가짜 시세·일정·공시·지표·편입 종목·시장 전체 소식·LLM 어댑터. 시나리오 JSON 파일에서 데이터를 읽는다."""
 
 import json
 from collections import Counter
@@ -12,24 +12,26 @@ from m30.adapters.events import CorporateEvent, Earnings, EarningsTiming, ExDivi
 from m30.adapters.filings import Filing, FilingForm
 from m30.adapters.holdings import Holding, HoldingsReport
 from m30.adapters.indicators import IndicatorRelease
+from m30.adapters.market_news import MarketNewsItem
 from m30.adapters.prices import DailyBar
 from m30.llm import LLMReply, LLMRequest
 from m30.models import Coverage
 
 REQUIRED_KEYS = {"coverage", "prices"}
-OPTIONAL_KEYS = {"events", "filings", "indicators", "holdings", "llm_replies", "failures"}  # 다음 티켓은 선택 키로 더한다
+OPTIONAL_KEYS = {"events", "filings", "indicators", "holdings", "market_news", "llm_replies", "failures"}  # 다음 티켓은 선택 키로 더한다
 BAR_KEYS = {f.name for f in fields(DailyBar)}
 PRICE_KEYS = {"open", "high", "low", "close"}
 EVENT_KEYS = {"earnings": {"kind", "day", "confirmed", "timing"}, "ex_dividend": {"kind", "day", "amount"}}
 FILING_KEYS = {"accession", "form", "accepted_at", "items", "body", "exhibit99"}
 FILING_OPTIONAL_KEYS = {"report_date"}  # "YYYY-MM-DD" 또는 null
 INDICATOR_KEYS = {"name", "released_at"}
+MARKET_NEWS_KEYS = {"key", "source", "published_at", "title", "text"}
 HOLDINGS_KEYS = {"accession", "period_end", "holdings"}
 HOLDING_KEYS = {"name", "cik", "pct", "asset_category"}
 FAILURE_KEYS = {"source", "subject", "error", "times"}
 FAILURE_ERRORS = {"transient": TransientSourceError, "access_denied": AccessDeniedError, "error": SourceError,
                   "rate_limited": RateLimitedError}
-NO_SUBJECT = {Source.INDICATORS, Source.LLM}  # 대상 없이 출처 전체에 거는 실패. LLM은 호출 순서대로 앞의 times번
+NO_SUBJECT = {Source.INDICATORS, Source.MARKET_NEWS, Source.LLM}  # 대상 없이 출처 전체에 거는 실패. LLM은 호출 순서대로 앞의 times번
 
 
 @dataclass(frozen=True)
@@ -44,10 +46,11 @@ class Scenario:
     prices: dict[str, list[DailyBar]]  # 티커 → 날짜 오름차순
     events: dict[str, list[CorporateEvent]] = field(default_factory=dict)  # 키가 없는 티커 = 일정 미지원
     filings: dict[str, list[Filing]] = field(default_factory=dict)  # CIK → 공시. 키가 없는 CIK = []
-    indicators: list[IndicatorRelease] = field(default_factory=list)
+    indicators: list[IndicatorRelease] | None = None  # None = 키 없음 = 지표 일정 미지원
     holdings: dict[str, HoldingsReport] = field(default_factory=dict)  # 편입을 읽을 ETF → 최신 보고. 키가 없는 ETF = None(미지원)
+    market_news: list[MarketNewsItem] | None = None  # None = 키 없음 = 시장 전체 소식 미지원
     llm_replies: list[str] = field(default_factory=list)  # 호출 순서대로
-    # (출처, 대상) → 실패 계획. 대상: 시세·일정은 티커, 공시는 CIK, 편입 종목은 ETF 티커, 지표·LLM은 None
+    # (출처, 대상) → 실패 계획. 대상: 시세·일정은 티커, 공시는 CIK, 편입 종목은 ETF 티커, 지표·시장 전체 소식·LLM은 None
     failures: dict[tuple[Source, str | None], FailurePlan] = field(default_factory=dict)
 
 
@@ -74,8 +77,9 @@ def load_scenario(path: Path) -> Scenario:
         prices=prices,
         events=events,
         filings={cik: [_filing(path, cik, row) for row in rows] for cik, rows in raw.get("filings", {}).items()},
-        indicators=[_indicator(path, row) for row in raw.get("indicators", [])],
+        indicators=[_indicator(path, row) for row in raw["indicators"]] if "indicators" in raw else None,
         holdings={fund: _holdings(path, fund, row) for fund, row in raw.get("holdings", {}).items()},
+        market_news=[_market_news(path, row) for row in raw["market_news"]] if "market_news" in raw else None,
         # default=float: parse_float=Decimal로 읽은 숫자를 JSON 숫자로 되돌린다
         llm_replies=[r if isinstance(r, str) else json.dumps(r, default=float) for r in raw.get("llm_replies", [])],
         failures=_failures(path, raw.get("failures", [])),
@@ -156,6 +160,19 @@ def _indicator(path: Path, row: dict) -> IndicatorRelease:
     return IndicatorRelease(
         name=row["name"],
         released_at=_aware(path, f"indicator {row['name']} key 'released_at'", row["released_at"]),
+        raw=json.dumps(row, ensure_ascii=False, sort_keys=True),
+    )
+
+
+def _market_news(path: Path, row: dict) -> MarketNewsItem:
+    if set(row) != MARKET_NEWS_KEYS or not all(isinstance(row[k], str) for k in MARKET_NEWS_KEYS - {"published_at"}):
+        raise ValueError(f"{path.name}: market_news keys must be {sorted(MARKET_NEWS_KEYS)} with string values, got {sorted(row)}")
+    return MarketNewsItem(
+        key=row["key"],
+        source=row["source"],
+        published_at=_aware(path, f"market_news {row['key']} key 'published_at'", row["published_at"]),
+        title=row["title"],
+        text=row["text"],
         raw=json.dumps(row, ensure_ascii=False, sort_keys=True),
     )
 
@@ -278,10 +295,10 @@ class FakeIndicatorSource:
         self._failures = _Failures(scenario, Source.INDICATORS)
         self.calls: list[None] = []
 
-    def releases(self, start: date, end: date) -> list[IndicatorRelease]:
+    def releases(self, start: date, end: date) -> list[IndicatorRelease] | None:
         self.calls.append(None)
         self._failures.check(None)
-        return list(self._releases)
+        return None if self._releases is None else list(self._releases)
 
 
 class FakeHoldingsSource:
@@ -294,6 +311,20 @@ class FakeHoldingsSource:
         self.calls.append(fund)
         self._failures.check(fund)
         return self._reports.get(fund)
+
+
+class FakeMarketNewsSource:
+    """FakeFilingSource와 같은 이유로 기간으로 거르지 않는다."""
+
+    def __init__(self, scenario: Scenario) -> None:
+        self._items = scenario.market_news
+        self._failures = _Failures(scenario, Source.MARKET_NEWS)
+        self.calls: list[None] = []
+
+    def items(self, since: datetime, until: datetime) -> list[MarketNewsItem] | None:
+        self.calls.append(None)
+        self._failures.check(None)
+        return None if self._items is None else list(self._items)
 
 
 _NO_REPLY = object()

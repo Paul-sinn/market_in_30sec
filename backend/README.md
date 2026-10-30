@@ -9,7 +9,7 @@
 cd /Users/singyeongha/get_money_pj        # supabase/ 가 있는 레포 루트
 supabase start -x gotrue,realtime,storage-api,imgproxy,kong,mailpit,postgrest,postgres-meta,studio,edge-runtime,logflare,vector,supavisor
 supabase db reset                         # 로컬 DB를 비우고 마이그레이션을 처음부터 적용
-eval "export $(supabase status -o env --override-name db.url=SUPABASE_DB_URL | grep '^SUPABASE_DB_URL=')"
+eval "$(supabase status -o env --override-name db.url=SUPABASE_DB_URL | grep '^SUPABASE_DB_URL=' | sed 's/^/export /')"
 cd backend && uv run pytest               # 기본 테스트 (네트워크·API 키 없이. 로컬 DB 데이터는 지워짐)
 uv run python -m m30.pipeline 2026-10-16 --scenario scenarios/first_card.json   # 직접 돌려보기
 uv run python -m m30.pipeline 2026-10-13 --scenario scenarios/events_and_tags.json   # 두 번째 줄·태그 확인용

@@ -78,6 +78,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         FakeHoldingsSource,
         FakeIndicatorSource,
         FakeLLM,
+        FakeMarketNewsSource,
         FakePriceSource,
         load_scenario,
     )
@@ -94,6 +95,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 filings=FakeFilingSource(scenario),
                 indicators=FakeIndicatorSource(scenario),
                 holdings=FakeHoldingsSource(scenario),
+                market_news=FakeMarketNewsSource(scenario),
                 llm=AnthropicLLM(llm_settings) if args.quality else FakeLLM(scenario),  # 품질 확인은 llm_replies를 쓰지 않는다
                 store=store,
             ).run(args.trading_day)
@@ -165,6 +167,11 @@ def _print_summary(summary: RunSummary, say: Callable[[str], None] = print) -> N
         for ticker, r in summary.reviews.items()
     ) or "-"
     say(f"review: {reviews}")
+    if (g := summary.glance) is None:  # 시장 한눈에(#11): 줄 상태와 검수 코드만. 문장·지표 이름·등락률은 찍지 않는다
+        say("glance: resumed")
+    else:
+        say(f"glance: close={g.close_line.status} indicator={g.indicator_line.status}"
+            f" market_news={g.market_news_line.status} review={summary.glance_review}")
 
 
 def _failure(stage: str, subject: str | None, reason: str, error: str | None) -> str:

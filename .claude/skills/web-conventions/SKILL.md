@@ -19,6 +19,7 @@ description: "30초 종목 리포트 웹 SaaS(web/, Next.js App Router)의 구�
 | 등락률: DB 값(소수 첫째 자리)을 다시 계산하지 않고 형식만 입힌다. `+1.2%` / 진짜 마이너스 `−1.2%`(U+2212) / 보합 `0.0%`. 상승 초록·하락 빨강·보합 중립색, 색만으로 구분하지 않게 부호를 항상 붙인다 | HANDOFF 3-3, 접근성(색만으로 의미 전달 금지) |
 | 카드 하단에 확인 시각·출처 범위: `Checked 7:30 AM ET · SEC filings` (`checked_at`을 America/New_York으로, `source_scope` 그대로). 확인된 줄(checked_found·checked_none)만 넣고 시각은 그중 가장 이른 것, 확인된 줄이 없으면 하단을 그리지 않는다 | HANDOFF 3-3: 확인한 범위를 드러낸다. 실패한 출처가 "Checked"로 읽히면 안 된다(#24) |
 | 등락률 옆 라벨은 종가 날짜 `Thu 10/15 close`(DB `stock_card.previous_trading_day`를 포맷, 웹은 달력을 계산하지 않음, #16). 값이 없는 옛 카드와 랜딩 샘플은 `prev close`(사용자 시안, #27). 발행 중단(`publish_suspended`) 카드는 `exposeCards` 한 곳에서 뺀다. DB 읽기 실패는 `src/app/cards/error.tsx`의 `Cards could not be loaded` + `Try again`, 에러 내용은 화면에 그리지 않는다 | 등락률은 직전 거래일 기준이라 카드 날짜와 다르다. 실패를 "카드 없음"으로 보이지 않게(#24) |
+| 시장 한눈에(`market_glance`)는 줄 컬럼 12개만 select하고 `market_news_hold_*`·`market_news_item`은 읽지 않는다. 그날 행이 없으면 `Update delayed` 세 줄, 무료·Plus·로그인 전 모두 같다(#11) | 보류 칸은 검수에 걸린 AI 초안이다. 읽지 않으면 화면에 닿을 길이 없다 |
 | 줄을 숨기지 않는다. 조용한 날·지연·미지원도 문구를 그린다 | 카드 높이가 날마다 바뀌지 않고, "확인 못 함"이 "없음"으로 보이지 않게 한다 |
 | 방향 의견·등급 표현 없음. 아레나 화면은 만들지 않는다(보류) | ADR-0001 |
 | 모든 페이지 하단에 `Not investment advice` | HANDOFF 3-3 |

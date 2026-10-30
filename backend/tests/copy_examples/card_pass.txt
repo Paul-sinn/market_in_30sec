@@ -60,6 +60,12 @@ MSFT: Earnings Fri 10/16 before open (D-0) +1 more
 MSFT: Ex-dividend 10/16 · $0.91/share +1 more
 MSFT: Up 5 days in a row
 MSFT: Microsoft said its board authorized an additional share repurchase program covering… +1 more
+# 시장 한눈에(#11): 지표 일정 템플릿, 없음 문구, 출처 범위. 어제 마감 템플릿은 값 둘이 줄의 정의라 넣지 않는다(스펙 #11 D2)
+CPI 8:30 AM ET · Jobless claims 8:30 AM ET +1 more
+CPI 8:30 AM ET · Fed decision 2:00 PM ET
+No economic releases found
+No new official releases found
+Checked 7:30 AM ET · Daily prices · Economic calendar · Official releases
 # ---- 카드 문장이 아닌 검사기 경계 예시 ----
 # 아래 줄은 출처 꼬리표·전문용어 규칙과 관계없이 검사기의 단어 경계·값 표기 판정만 확인한다. 카드 문구 예시로 쓰지 않는다
 # 금지어와 비슷한 다른 단어(seller)

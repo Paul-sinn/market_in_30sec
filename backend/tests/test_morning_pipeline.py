@@ -20,6 +20,7 @@ from m30.adapters.fake import (
     FakeHoldingsSource,
     FakeIndicatorSource,
     FakeLLM,
+    FakeMarketNewsSource,
     FakePriceSource,
     Scenario,
     load_scenario,
@@ -57,6 +58,7 @@ def run(store, scenario, day=FRI):
         filings=FakeFilingSource(scenario),
         indicators=FakeIndicatorSource(scenario),
         holdings=FakeHoldingsSource(scenario),
+        market_news=FakeMarketNewsSource(scenario),
         llm=FakeLLM(scenario),
         store=store,
         sleep=lambda seconds: None,  # 실제로 기다리지 않는다
@@ -470,6 +472,7 @@ def test_생성_대상은_활성_종목과_기본_종목의_합집합이다(stor
         filings=filings,
         indicators=FakeIndicatorSource(scenario),
         holdings=FakeHoldingsSource(scenario),
+        market_news=FakeMarketNewsSource(scenario),
         llm=FakeLLM(scenario),
         store=store,
         sleep=lambda seconds: None,
@@ -497,6 +500,7 @@ def run_etf(store, scenario, day=FRI, defaults=ETF_DEFAULTS, **replaced):
         "filings": FakeFilingSource(scenario),
         "indicators": FakeIndicatorSource(scenario),
         "holdings": FakeHoldingsSource(scenario),
+        "market_news": FakeMarketNewsSource(scenario),
         "llm": FakeLLM(scenario),
     } | replaced
     summary = MorningPipeline(**fakes, store=store, sleep=lambda seconds: None).run(day)
@@ -881,6 +885,8 @@ def test_끝난_실행은_실행_기록_한_행에_단계별_건수·LLM_호출�
         # 토큰 = FakeLLM 응답 6개 × (10, 2, 5, 1)
         "llm": {"calls": 6, "limit": 13, "input_tokens": 60, "output_tokens": 12, "cache_read_tokens": 30,
                 "cache_write_tokens": 6},
+        # 시장 한눈에(#11): SPY·QQQ 카드 없음, 지표·소식 출처 키 없음(미지원), 소식 LLM 안 부름
+        "glance": {"close": "delayed", "indicator": "unsupported", "market_news": "unsupported", "review": "-"},
     })]
 
 

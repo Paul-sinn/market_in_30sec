@@ -1,5 +1,5 @@
 """검수: 첫 번째 줄 초안 → 숫자 대조 → 금지어(종목명 가림) → 사실/예측 판정(LLM) → 1회 재생성 → 실패면 대체 줄 + 보류함.
-LLM 문장이 카드로 가는 길은 여기서 통과(stage None)한 것뿐이다. 판정 프롬프트 문자열은 이 파일에만 둔다(copy-reviewer 검수 대상)."""
+LLM 문장이 카드·시장 한눈에로 가는 길은 여기서 통과(stage None)한 것뿐이다(review_sentence 한 벌). 판정 프롬프트 문자열은 이 파일에만 둔다(copy-reviewer 검수 대상)."""
 
 import json
 import re
@@ -49,7 +49,9 @@ FACTCHECK_USER = "<line>\n{line}\n</line>"
 
 MASK = "Name"  # 가린 종목명 단어 하나 = 이 단어 하나: 단어 수는 그대로, 금지어·숫자·2인칭에 안 걸린다
 _COMMA = re.compile(r"(?<!\d),|,(?!\d)")  # 숫자 사이 쉼표($1,234)는 천 단위 구분이라 뺀다
+_NO_NAMES = re.compile(r"(?!)")  # 아무 데도 맞지 않는다. 빈 대안 정규식은 모든 경계에 맞는다
 
+Draft = tuple[str | None, tuple[str, ...], DraftProblem | None]  # (문장, 숫자 대조 원본, 문제) = write_news 반환 모양
 
 
 class FactLabel(StrEnum):
@@ -72,6 +74,17 @@ class NewsReview:
     retried: bool  # 재생성했나. 재생성이 호출 상한에 막혀 끝났으면 False(규칙에는 "2 …: call_limit"이 남는다)
 
 
+@dataclass(frozen=True)
+class Reviewed:
+    """review_sentence 결과(첫 번째 줄·시장 한눈에 공용)."""
+
+    sentence: str | None  # 통과한 문장(card_form 전). None = 대체
+    stage: HoldStage | None  # None = 통과. 아니면 마지막 시도가 걸린 단계
+    last: str | None  # 마지막으로 받은 LLM 문장. 한 번도 못 받았으면 None
+    rules: tuple[str, ...]  # 시도마다 걸린 이유 "1 copy_rules: 금지어 'buy'". 1차 통과면 ()
+    retried: bool  # NewsReview.retried와 같다
+
+
 def name_terms(tickers: Iterable[str], names: Mapping[str, str]) -> tuple[str, ...]:
     """가릴 말: 티커마다 커버 범위 이름, company_short_name(이름), 티커. 긴 것 먼저, 중복 없음."""
     terms = {term for t in tickers for term in (names[t], company_short_name(names[t]), t)}
@@ -82,6 +95,8 @@ def _names(terms: Iterable[str]) -> re.Pattern:
     """terms를 대소문자 그대로, 앞뒤가 글자·숫자가 아닌 자리에서 찾는다(그룹 하나: split이 이름을 남긴다). 앞의 $도 막는다: $3M은 금액이다.
     긴 것 먼저 시도한다(정규식 대안은 앞에서부터 맞춘다): 'Best Buy Co., Inc.'가 'Best Buy'보다 먼저 맞는다."""
     longest_first = sorted(terms, key=len, reverse=True)
+    if not longest_first:  # 가릴 이름 없음(시장 한눈에): 원문 그대로
+        return _NO_NAMES
     return re.compile(r"(?<![\w$])(" + "|".join(map(re.escape, longest_first)) + r")(?!\w)")
 
 
@@ -151,51 +166,77 @@ def _review(
     trading_day: date,
     send: Callable[[str, LLMRequest], str],
 ) -> tuple[str, HoldStage | None, str | None, tuple[str, ...], bool]:
-    """(카드 문장, 단계, 마지막 LLM 문장, 규칙, 재생성했나). 1차가 재생성 대상이면 이유를 넣어 1회만 더, 2차 실패는 무엇이든 대체 줄."""
+    """(카드 문장, 단계, 마지막 LLM 문장, 규칙, 재생성했나). 통과하면 카드 표기, 아니면 대체 줄."""
     terms = name_terms(item.tickers, names)
+    reviewed = review_sentence(
+        (draft.sentence, draft.numbers, draft.problem),
+        lambda reasons, last: write_news(item, candidate, trading_day, send, reasons, last=last),
+        terms=terms,
+        subject=item.filing.accession,
+        send=send,
+        shown=lambda sentence: news_text(sentence, draft.more),
+    )
+    if reviewed.stage is None:
+        line = card_form(reviewed.sentence, terms)
+    else:
+        line = replacement_sentence(item.company, item.filing.items, candidate.amended)
+    return line, reviewed.stage, reviewed.last, reviewed.rules, reviewed.retried
 
-    def check(sentence: str | None, problem: DraftProblem | None):
-        return _check(sentence, problem, draft.numbers, draft.more, terms, item.filing.accession, send)
 
-    last = draft.sentence
-    stage, found, reasons = check(draft.sentence, draft.problem)
+def review_sentence(
+    first: Draft,
+    rewrite: Callable[[list[str], str | None], Draft],  # (이유, 직전 문장) → 다시 쓴 초안
+    *,
+    terms: tuple[str, ...],  # 가릴 이름. ()면 가리지 않는다
+    subject: str,  # send의 subject(접수번호 / "market_news")
+    send: Callable[[str, LLMRequest], str],
+    shown: Callable[[str], str] = lambda sentence: sentence,  # 금지어 검사 대상 = 화면에 보일 줄
+    reason_texts: Mapping[str, str] = RETRY_REASONS,
+) -> Reviewed:
+    """검사 → (고칠 수 있으면) 이유 넣어 1회 재생성 → 검사. 2차 실패는 무엇이든 대체. 숫자 대조 원본은 그 시도의 초안 것
+    (시장 한눈에는 재생성이 다른 항목을 고를 수 있다)."""
+    def check(draft: Draft):
+        return _check(*draft, shown, terms, subject, send, reason_texts)
+
+    last = first[0]
+    stage, found, reasons = check(first)
     rules = [f"1 {r}" for r in found]
     retried = False
     if stage is not None and reasons is not None:
-        sentence, _, problem = write_news(item, candidate, trading_day, send, reasons, last=draft.sentence)
-        retried = problem is not DraftProblem.CALL_LIMIT  # 상한에 막혀 끝났으면 재생성하지 못한 것으로 본다
-        last = last if sentence is None else sentence
-        stage, found, _ = check(sentence, problem)
+        second = rewrite(reasons, last)
+        retried = second[2] is not DraftProblem.CALL_LIMIT  # 상한에 막혀 끝났으면 재생성하지 못한 것으로 본다
+        last = last if second[0] is None else second[0]
+        stage, found, _ = check(second)
         rules += [f"2 {r}" for r in found]
-    line = card_form(last, terms) if stage is None else replacement_sentence(item.company, item.filing.items, candidate.amended)
-    return line, stage, last, tuple(rules), retried
+    return Reviewed(last if stage is None else None, stage, last, tuple(rules), retried)
 
 
 def _check(
     sentence: str | None,
-    problem: DraftProblem | None,
     numbers: tuple[str, ...],
-    more: int,
+    problem: DraftProblem | None,
+    shown: Callable[[str], str],
     terms: tuple[str, ...],
     subject: str,
     send: Callable[[str, LLMRequest], str],
+    reason_texts: Mapping[str, str],
 ) -> tuple[HoldStage | None, list[str], list[str] | None]:
     """한 시도의 검수(스펙 #7 D2 표). (걸린 단계 — None = 통과, 규칙(시도 번호 없이), 재생성 이유 — None = 재생성 대상 아님).
     숫자·금지어는 둘 다 돌려 이유를 한 번에 모은다(코드 검사라 비용 0). 둘 중 하나라도 걸리면 판정 LLM을 부르지 않는다."""
     if problem is None and _COMMA.search(mask_names(sentence, terms)):  # LLM 초안만 여기를 지난다: 대체 줄·템플릿 줄은 해당 없음
         problem = DraftProblem.COMMA
     if problem is not None:
-        return HoldStage.DRAFT, [f"draft: {problem}"], [draft_retry_reason(problem, sentence)] if problem in REVIEW_FAILURES else None
+        return HoldStage.DRAFT, [f"draft: {problem}"], [draft_retry_reason(problem, sentence, reason_texts)] if problem in REVIEW_FAILURES else None
     numbers_ok = numbers_from_source(mask_names(sentence, terms), numbers)
-    issues = check_card(mask_names(news_text(sentence, more), terms))  # 카드에 보이는 조립 줄 그대로(종목명만 가림)
+    issues = check_card(mask_names(shown(sentence), terms))  # 화면에 보이는 조립 줄 그대로(종목명만 가림)
     rules = ([] if numbers_ok else ["numbers: not from source"]) + [f"copy_rules: {i}" for i in issues]
     if rules:
-        reasons = ([] if numbers_ok else [RETRY_REASONS["numbers"]]) + copy_retry_reasons(issues)
+        reasons = ([] if numbers_ok else [reason_texts["numbers"]]) + copy_retry_reasons(issues)
         return (HoldStage.COPY_RULES if numbers_ok else HoldStage.NUMBERS), rules, reasons
     label = _fact_check(sentence, subject, send)
     if label is FactLabel.FACT:
         return None, [], []
-    return HoldStage.FACT_CHECK, [f"fact_check: {label}"], [RETRY_REASONS[label]] if isinstance(label, FactLabel) else None
+    return HoldStage.FACT_CHECK, [f"fact_check: {label}"], [reason_texts[label]] if isinstance(label, FactLabel) else None
 
 
 def _fact_check(sentence: str, subject: str, send: Callable[[str, LLMRequest], str]) -> FactLabel | DraftProblem:
