@@ -15,6 +15,8 @@ import pytest
 
 from m30.adapters import AccessDeniedError, RateLimitedError, SourceError, TransientSourceError, error_for_status
 from m30.adapters.events import Earnings, EarningsTiming, ExDividend
+from m30.adapters.gov import BEA_MAJOR, BLS_MAJOR, FOMC_NAME
+from m30.adapters.gov_news import AGENCY_NAMES
 from m30.adapters.holdings import Holding, HoldingsReport
 from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.prices import DailyBar
@@ -26,6 +28,7 @@ from m30.experiment import EXPERIMENT_COVERAGE
 from m30.llm import LLMReply, LLMRequest
 from m30.llm.anthropic import AnthropicLLM
 from m30.models import CardLine, Coverage, FundHoldings, LineStatus
+from m30.pipeline.collect import INDICATOR_NAME_MAX, MARKET_NEWS_SOURCE_MAX
 from m30.pipeline.compute import (
     card_numbers,
     change_pct,
@@ -37,6 +40,10 @@ from m30.pipeline.compute import (
 )
 from m30.pipeline.lines import (
     EVENT_WINDOW,
+    INDICATOR_SCOPE,
+    MARKET_NEWS_SCOPE,
+    NO_INDICATORS,
+    NO_MARKET_NEWS,
     REPLACEMENT_PHRASES,
     company_short_name,
     event_line,
@@ -709,6 +716,14 @@ def test_시장_한눈에_지시문의_예시_줄은_가상_기관이고_문구_
         assert len(example.split()) <= 12, example
 
 
+def test_시장_한눈에_지시문은_본문이_제목뿐이면_발표_사실만_쓰게_하고_FOMC_대신_Fed를_쓰게_한다():
+    for rule in ('If the "text" of a release is empty or only repeats its "title", state only that the agency or bank'
+                 " issued or released it.", 'Write "Fed", not "FOMC".'):
+        assert rule in GLANCE_SYSTEM  # 문장 해석은 copy-reviewer가 지시문 전문으로 검수한다
+    assert "Fabrikam Central Bank issued its policy statement" in GLANCE_EXAMPLES  # 연준 성명 RSS 모양(#50 수정 1)
+    assert [e for e in GLANCE_EXAMPLES if "policy rate" in e] == []  # 본문에 없는 결정을 쓰는 본보기를 두지 않는다
+
+
 def test_시장_한눈에_재생성_이유에는_회사_말이_없다():
     assert [k for k, reason in GLANCE_RETRY_REASONS.items() if "company" in reason.lower()] == []
     assert GLANCE_RETRY_REASONS.keys() == RETRY_REASONS.keys()  # 검수가 찾는 키가 다 있다
@@ -918,4 +933,13 @@ def release(name, hour, minute):
 )
 def test_지표_일정_줄은_앞_두_건만_이름을_쓰고_나머지는_개수로_붙인다(releases, text):
     line = indicator_line(releases, CHECKED)
-    assert (line.text, line.status, line.source_scope) == (text, LineStatus.CHECKED_FOUND, "Economic calendar")
+    assert (line.text, line.status, line.source_scope) == (text, LineStatus.CHECKED_FOUND, "BLS, BEA and Fed calendars")
+
+
+def test_지표_화면_이름과_범위·없음_문구의_약어는_CPI·GDP·BLS·BEA뿐이고_문구_검사를_통과한다():
+    names = [name for name, _ in BLS_MAJOR.values()] + [name for _, name in BEA_MAJOR] + [FOMC_NAME]
+    shown = [*names, INDICATOR_SCOPE, NO_INDICATORS, MARKET_NEWS_SCOPE, NO_MARKET_NEWS]
+    assert {token for text in shown for token in re.findall(r"\b[A-Z]{2,}\b", text)} <= {"CPI", "GDP", "BLS", "BEA"}  # Fed는 쉬운 말
+    assert {text: issues for text in shown if (issues := check_card(text))} == {}
+    assert max(len(name) for name in names) <= INDICATOR_NAME_MAX
+    assert all(name.isprintable() and len(name) <= MARKET_NEWS_SOURCE_MAX for name in AGENCY_NAMES.values())  # 소식 줄 맨 앞

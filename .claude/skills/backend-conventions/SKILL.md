@@ -13,7 +13,7 @@ description: "30초 종목 리포트 앱 Python 서버(backend/)의 구현 규�
 backend/
 ├── pyproject.toml        # uv
 ├── src/m30/
-│   ├── adapters/         # 외부 데이터: 시세, EDGAR, 지표 일정. 인터페이스 + fake + 실제 구현
+│   ├── adapters/         # 외부 데이터: 시세, EDGAR, 정부 지표 일정·공식 발표(gov, gov_news). 인터페이스 + fake + 실제 구현
 │   ├── pipeline/         # collect / classify / compute / lines(두·세 번째 줄) / newsline / review / notice(아침 알림) / glance(시장 한눈에) / publish
 │   ├── trading_day.py    # 직전 거래일 판단(휴장일 달력은 #16)
 │   ├── arena/            # 콜 생성, 판정, 포트폴리오
@@ -55,7 +55,7 @@ architect 스펙이 다르게 정하면 스펙을 따른다.
 | LLM 응답의 티커는 입력에 있던 티커만 인정한다 | 환각 티커 방지 |
 | 분할일 등락률은 조정가로 계산한다. 조정가가 없거나 봉 날짜가 직전 거래일이 아니면 "지연" | 가짜 급락·오래된 값 표시 방지 |
 | 숫자 반올림 규칙 하나(% 소수 첫째 자리, 금액 $94B·$1.2M)를 계산과 검수가 같이 쓴다 | 숫자 대조가 표기 차이로 어긋나지 않게 |
-| SEC EDGAR는 User-Agent 필수, 초당 10회 미만. 공시는 접수번호로 중복 제거, 8-K/A는 새 소식 + 보류함 "정정 공시 있음" | SEC 공정 접근 규칙. 이미 발행된 카드는 자동으로 고치지 않는다 |
+| SEC EDGAR는 User-Agent 필수, 초당 10회 미만. BLS도 연락처 User-Agent 필수(같은 `SEC_USER_AGENT` 값, BLS 요청에만), 정부 기관 요청은 1초 간격. 공시는 접수번호로 중복 제거, 8-K/A는 새 소식 + 보류함 "정정 공시 있음" | SEC 공정 접근 규칙. 이미 발행된 카드는 자동으로 고치지 않는다 |
 | 모든 테이블 RLS를 켠다. anon·authenticated에는 정책·테이블 권한을 주지 않는다(DB 접근은 service_role만, 앱은 서버 API로만). 스키마 테스트가 "RLS 꺼진 테이블 0개", "anon·authenticated 정책 0개"를 확인한다. `security definer` 함수는 쓰지 않는다 | 테이블 하나 빠뜨리면 전체 공개된다. anon 키는 앱에서 꺼낼 수 있어서 DB를 직접 열면 서버의 요청 제한·플랜 잠금을 우회한다 |
 
 ## 3. LLM 사용

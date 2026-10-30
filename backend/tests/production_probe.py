@@ -1,6 +1,6 @@
 """test_production이 하위 프로세스로만 돌리는 파일. test_ 접두사가 없어 기본 수집에서 빠진다.
-운영 CLI(m30.pipeline.__main__.main)를 그대로 돌리고, 바깥 전송 층 셋(EdgarClient.get·AnthropicLLM = run_production이 주입받는
-그 둘, 스펙 #26 D4 + Tiingo opener)만 네트워크 없는 대역으로 바꾼다. Tiingo는 TiingoPriceSource를 그대로 두고 opener만 바꾼다:
+운영 CLI(m30.pipeline.__main__.main)를 그대로 돌리고, 바깥 전송 층 넷(EdgarClient.get·GovClient.get·AnthropicLLM = run_production이
+주입받는 셋, 스펙 #26 D4·#50 D4 + Tiingo opener)만 네트워크 없는 대역으로 바꾼다. 기관 응답은 기본 quiet_gov(발표 없는 피드). Tiingo는 TiingoPriceSource를 그대로 두고 opener만 바꾼다:
 토큰이 실제 요청 헤더까지 가는 경로를 지난다. 사용법: python tests/production_probe.py <상황> --production 2026-10-16
 끝나면 stderr 마지막 줄에 불러온 가짜 모듈 목록(fake_modules=[…])을 찍는다. 그래서 가짜 어댑터를 불러오는 테스트 모듈
 (test_edgar 등)을 import하지 않는다. Discord 웹훅(#17)은 notify._OPENER만 바꾸고, 보낸 메시지를 stdout에 webhook_content=<JSON>으로 찍는다."""
@@ -18,8 +18,10 @@ from types import SimpleNamespace
 import psycopg
 
 from m30 import notify
-from m30.adapters import AccessDeniedError, SourceError, tiingo
+from m30.adapters import AccessDeniedError, SourceError, TransientSourceError, tiingo
 from m30.adapters.edgar import SUBMISSION_TEXT_URL, SUBMISSIONS_URL, TICKERS_URL
+from m30.adapters.gov import BEA_ICS_URL, BLS_ICS_URL
+from m30.adapters.gov_news import BEA_RSS_URL, BLS_FEED_URL, CENSUS_RSS_URL, FED_RSS_URL
 from m30.adapters.nport import MF_TICKERS_URL
 
 RESPONSES = Path(__file__).resolve().parent / "edgar_responses"
@@ -66,6 +68,47 @@ def quiet_day(**changes):
     return {TICKERS_URL: (RESPONSES / "company_tickers.json").read_bytes()} | {
         SUBMISSIONS_URL.format(cik=cik): empty_submissions(cik) for cik in COMPANY_CIKS.values()
     } | nport_responses() | changes
+
+
+GOV = Path(__file__).resolve().parent / "gov_responses"  # 실제 녹화(#50): 2026-10-29 ET에 받은 응답 그대로
+GOV_FILES = {
+    BLS_ICS_URL: "bls.ics", BEA_ICS_URL: "bea.ics",
+    **{BLS_FEED_URL.format(slug=slug): f"bls_{slug}.atom" for slug in ("empsit", "cpi", "ppi", "jolts", "eci")},
+    BEA_RSS_URL: "bea.rss", CENSUS_RSS_URL: "census.xml", FED_RSS_URL: "fed_monetary.xml",
+}
+
+
+def gov_day(**changes):
+    """기관 응답 녹화 그대로(주소 → 바이트). changes로 주소 하나를 다른 바이트·예외로 바꾼다."""
+    return {url: (GOV / name).read_bytes() for url, name in GOV_FILES.items()} | changes
+
+
+EMPTY_FEEDS = {url: b'<feed xmlns="http://www.w3.org/2005/Atom"><id>empty</id></feed>' if "/feed/" in url
+               else b'<rss version="2.0"><channel><title>empty</title></channel></rss>' for url in GOV_FILES if not url.endswith(".ics")}
+
+
+def quiet_gov(**changes):
+    """발표가 하나도 없는 피드 + 녹화 일정(2026-10-16은 주요 발표 없음): 시장 한눈에 두 줄 확인함·없음, LLM 0회."""
+    return gov_day(**EMPTY_FEEDS) | changes
+
+
+class GlanceLLM:
+    """시장 한눈에 소식 줄 요청만 답한다: 초안 → 항목 0의 숫자 없는 문장, 판정 → fact. 그 밖(분류·첫 번째 줄)은 실행을 크게 멈춘다."""
+
+    def __init__(self, sentence="Federal Reserve issued its policy statement"):
+        self.requests, self._sentence = [], sentence
+
+    def complete(self, request):
+        from m30.llm import LLMReply
+        from m30.pipeline.glance import GLANCE_SYSTEM
+        from m30.pipeline.review import FACTCHECK_SYSTEM
+
+        self.requests.append(request)
+        if request.system == GLANCE_SYSTEM:
+            return LLMReply(json.dumps({"item": 0, "number": None, "sentence": self._sentence}))
+        if request.system == FACTCHECK_SYSTEM:
+            return LLMReply(json.dumps({"label": "fact"}))
+        raise AssertionError("only market glance requests are expected")
 
 
 def tiingo_day():
@@ -115,9 +158,24 @@ def patch(module, name, value):
     setattr(module, name, value)
 
 
+GOV_CANARY = "GovCanaryQx"  # 숫자 없음(LLM 문장 숫자 대조). 기관 원문(BLS 본문·연준 제목)과 LLM 문장 자리. 공개 로그·실행 기록에 나오면 샌 것
+BLS_PPI = BLS_FEED_URL.format(slug="ppi")
+BLS_URLS = [url for url in GOV_FILES if url.startswith("https://www.bls.gov/")]
+
+
+def canary_gov():
+    """녹화 응답에 캐너리: BLS PPI 본문(10/16 기간 안)과 연준 FOMC 성명 제목(10/29 기간 안)."""
+    day = gov_day()
+    return day | {
+        BLS_PPI: day[BLS_PPI].replace(b"The Producer Price Index for final demand", f"{GOV_CANARY} prices".encode()),
+        FED_RSS_URL: day[FED_RSS_URL].replace(b"issues FOMC statement", f"issues {GOV_CANARY} statement".encode()),
+    }
+
+
 def main(situation, args):
     import m30.pipeline.__main__ as cli
     from m30.models import HoldItem, HoldStage
+    from m30.pipeline import collect
 
     responses = quiet_day(**{
         "quiet": {},
@@ -133,21 +191,35 @@ def main(situation, args):
         "tiingo_quiet": {},
         "tiingo_denied": {},
         "webhook_down": {},
+        "gov_canary": {},
+        "gov_denied": {},
+        "gov_down": {},
     }[situation])
 
-    def get(url):
-        outcome = responses[url]
-        if isinstance(outcome, Exception):
-            raise outcome
-        return outcome
+    gov_responses = {
+        "gov_canary": canary_gov(),
+        "gov_denied": quiet_gov(**dict.fromkeys(BLS_URLS, AccessDeniedError("bls http 403"))),  # 연락처 없는 로봇 차단
+        "gov_down": quiet_gov(**{BLS_ICS_URL: TransientSourceError("bls http 503")}),
+    }.get(situation) or quiet_gov()
 
-    patch(cli, "EdgarClient", lambda settings: SimpleNamespace(get=get))
-    patch(cli, "AnthropicLLM", lambda settings: NoCallLLM())
+    def recorded(table):
+        def get(url):
+            outcome = table[url]
+            if isinstance(outcome, Exception):
+                raise outcome
+            return outcome
+        return get
+
+    patch(cli, "EdgarClient", lambda settings: SimpleNamespace(get=recorded(responses)))
+    patch(cli, "GovClient", lambda settings: SimpleNamespace(get=recorded(gov_responses)))
+    llm = GlanceLLM(f"Federal Reserve issued its {GOV_CANARY} statement") if situation == "gov_canary" else NoCallLLM()
+    patch(cli, "AnthropicLLM", lambda settings: llm)
+    patch(collect, "RETRY_DELAYS", (0.0, 0.0, 0.0))  # 503 다시 시도를 실제로 기다리지 않는다
     patch(tiingo, "_OPENER", TiingoOpener(situation))
     patch(notify, "_OPENER", WebhookOpener(situation))
     if situation == "db_error":
         # 검사 제약(replacement_iff_review)에 걸리는 보류함 행: 서버 오류 DETAIL에 행 내용(검수 전 문장)이 들어간다
-        def run_production(store, day, *, get, llm, prices):
+        def run_production(store, day, *, get, gov_get, llm, prices):
             store.replace_hold_items(
                 "AAPL", day, [HoldItem("AAPL", day, "0000320193-26-000001", HoldStage.DRAFT, DRAFT_CANARY, ("r",), None)]
             )
@@ -155,7 +227,7 @@ def main(situation, args):
         patch(cli, "run_production", run_production)
     if situation == "db_lost":
         # 실행 중 DB 연결이 끊김(#26 R1): 연결 실패(DBConnectError)와 같은 부모 클래스지만 우리가 쓴 문구가 아니다
-        def run_production(store, day, *, get, llm, prices):
+        def run_production(store, day, *, get, gov_get, llm, prices):
             raise psycopg.OperationalError(f"server closed the connection {os.environ['ANTHROPIC_API_KEY']}")
 
         patch(cli, "run_production", run_production)

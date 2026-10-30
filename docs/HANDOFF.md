@@ -139,7 +139,7 @@
   - 카드 조회: 로그인 없이 가능. 공용 데이터(카드·시장 한눈에)만, IP당 요청 횟수 제한 + 캐시
   - 즉시 생성, 내 종목 저장, 푸시 등록: 로그인 유저만. 즉시 생성은 유저당 하루 상한
   - 사용자 데이터 최소 수집·암호화. 앱 안 계정 삭제. 뉴스 원문은 데이터로만 전달(프롬프트 인젝션 방어)
-- ✅ 비밀값(Anthropic, 시세 벤더, Supabase service role, Discord 웹훅, SEC User-Agent 연락처)은 환경 변수로만. 로그에 키·키가 들어간 URL을 남기지 않음. 커밋 전 gitleaks 검사(pre-commit 훅)
+- ✅ 비밀값(Anthropic, 시세 벤더, Supabase service role, Discord 웹훅, SEC User-Agent 연락처 — BLS 요청에도 같은 값, #50)은 환경 변수로만. 로그에 키·키가 들어간 URL을 남기지 않음. 커밋 전 gitleaks 검사(pre-commit 훅)
 - ✅ Supabase: 모든 테이블 RLS 켬. **앱(anon·로그인 유저)은 DB를 직접 읽지도 쓰지도 않음, DB 접근은 서버(service role)만** (2026-10-18). 로그인 없이 카드 보기는 서버의 카드 조회 API가 IP당 요청 제한·캐시·플랜별 노출 판단과 함께 맡음. 이유: anon 키는 앱 안에 들어가서, DB 직접 읽기를 열면 서버의 제한·잠금을 우회할 수 있음. service role 키는 서버 전용
 - ✅ 출시 전 REA로 우리 앱 빌드 점검(키·내부 주소 노출, 네트워크 기록). 경쟁사 앱에는 사용 안 함
 - ✅ (2026-10-28, MVP 운영 구조) 상시 서버 없이 클라우드 셋: 아침 파이프라인은 GitHub Actions(`morning.yml`), DB·로그인·Vault·정시 알람은 Supabase, 웹은 Vercel. GitHub 예약 실행이 매일 4~7시간 늦어서(10-22~10-28) **Supabase pg_cron이 평일 09:17 UTC에 workflow_dispatch를 부른다**(#43, 토큰은 Vault `github_dispatch_token`, 1년 만료 → 갱신 필요). GitHub schedule은 예비로 남고 그날 완료된 실행이 있으면 `ALREADY_DONE`으로 끝난다. 실행 기록 `pipeline_run`(#16·#17), 실패·예비 실행은 Discord 웹훅으로 알림(#17, 시크릿 `DISCORD_WEBHOOK_URL`)
@@ -187,6 +187,7 @@
 - ✅ Benzinga는 답장이 없어서 **못 쓴다는 가정**으로 진행 (Plan B가 기본). 답장 오면 Plan A로 확장
 - ✅ 회사 보도자료는 MVP에서 SEC EDGAR 8-K(첨부 Exhibit 99 포함)만. 실적 발표 등 큰 사건 대부분 잡히고 무료·사용 조건 명확. 보도자료 배포사 RSS는 약관 확인 후 v2
 - Plan B 무료 소스: SEC EDGAR(8-K, N-PORT로 ETF 편입 종목), BLS·BEA·Census·연준·재무부(지표 일정·데이터), FRED(정부 출처 시리즈만)
+  - ✅ 운영 연결(#50, `docs/vendors/gov-sources.md`): 지표 일정 = BLS·BEA ICS + FOMC 날짜 코드 표, 공식 발표 = BLS·BEA·Census·연준 RSS. 제외: Census 일정(HTML뿐, 스크래핑 금지), 재무부(RSS 없음), FRED(키 필요)
 - Plan B로 못 하는 것: 증권사 의견, 추정 실적일, ETF 분배금 일정(일부), 기자 뉴스
 - ✅ **실데이터 실험 시세** (2026-10-18): Marketstack Basic($9.99/월, 가격표에 "Commercial use")부터. 구독 전 확인: 분할·배당 조정가, APILayer 약관의 내부 상업 이용, HTTPS, TQQQ 포함, 1년 이력, 장 마감 후 업데이트 시각. 하나라도 안 맞으면 Tiingo Power Internal Commercial($50/월, 내부 상업 이용 명시, 월결제 해지 가능)
   - 무료 티어는 쓰지 않음: 확인한 무료 티어(Tiingo·Twelve Data·Massive·Marketstack 무료 등)는 거의 전부 개인·비상업 전용

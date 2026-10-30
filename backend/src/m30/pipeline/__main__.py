@@ -13,12 +13,14 @@ from pathlib import Path
 from typing import TextIO
 
 from m30.adapters.edgar import EdgarClient
+from m30.adapters.gov import GovClient
 from m30.adapters.tiingo import TiingoPriceSource
 from m30.adapters.unavailable import NoPriceSource
 from m30.config import (
     CLASSIFY_MODEL,
     DB_URL_VAR,
     ET,
+    GLANCE_MODEL,
     NEWSLINE_MODEL,
     REVIEW_MODEL,
     ConfigError,
@@ -226,6 +228,22 @@ def _quality_lines(summary: RunSummary, store: CardStore, prices: str) -> list[s
     return out
 
 
+def _glance_quality_lines(summary: RunSummary, store: CardStore) -> list[str]:
+    """운영 --quality의 시장 한눈에 블록(#50: 실제 기관 출처 live 확인용). 시나리오 품질 블록(test_newsline이 고정)에는 넣지 않는다.
+    글자 필드는 _quality_lines와 같이 json.dumps. 저장된 행을 읽는다(이어 하기로 건너뛴 실행도 그날 행)."""
+    def text(value: str | None) -> str:
+        return "-" if value is None else json.dumps(value, ensure_ascii=False)
+
+    out = [f"glance model={GLANCE_MODEL}"]
+    if (glance := store.get_market_glance(summary.trading_day)) is None:
+        return out + ["glance -"]
+    for name, line in (("close", glance.close_line), ("indicator", glance.indicator_line), ("market_news", glance.market_news_line)):
+        out.append(f"glance {name} {line.status} {text(line.text)}")
+    out.append(f"glance review {summary.glance_review}")
+    out.append(f"glance hold {text(glance.market_news_hold_draft)} {' | '.join(glance.market_news_hold_rules) or '-'}")
+    return out
+
+
 class _Report:
     """운영 실행이 찍은 줄(stdout·stderr 순서대로). Discord 메시지는 이 줄 그대로다(#17 D3)."""
 
@@ -266,7 +284,7 @@ def _notify(day: date, code: int, lines: Sequence[str]) -> None:
 
 
 def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> int:
-    """거래일·날짜 확인 → 설정 → DB 연결 → CIK 갱신·파이프라인(SEC·Anthropic·Tiingo) → 요약 → exit 코드. 외부 출처는 DB 연결 뒤에만 부른다.
+    """거래일·날짜 확인 → 설정 → DB 연결 → CIK 갱신·파이프라인(SEC·정부 기관·Anthropic·Tiingo) → 요약 → exit 코드. 외부 출처는 DB 연결 뒤에만 부른다.
     시세: TIINGO_API_KEY가 있으면 Tiingo, 없으면(유료 구독 전) 시세 없이(등락률·세 번째 줄 지연).
     quality(#14): 로컬 DB만, 시세는 항상 없이(무료 키 시간당 50회 보호. 품질 확인 대상은 첫 번째 줄), 끝에 품질 블록(say가 아니라 print:
     Discord 메시지에 넣지 않는다)."""
@@ -301,10 +319,11 @@ def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> in
                 store,
                 day,
                 get=EdgarClient(edgar_settings).get,
+                gov_get=GovClient(edgar_settings).get,  # 연락처는 BLS 요청에만(#50 U1)
                 llm=AnthropicLLM(llm_settings),
                 prices=TiingoPriceSource(tiingo_settings) if tiingo else NoPriceSource(),
             )
-            lines = _quality_lines(summary, store, "none") if quality else []
+            lines = _quality_lines(summary, store, "none") + _glance_quality_lines(summary, store) if quality else []
     except RunLocked:  # 카드 0장과 같은 실패(exit 1). except Exception보다 먼저
         say(LOCKED.format(day), file=sys.stderr)
         return 1

@@ -67,7 +67,10 @@ NEWSLINE_USER = "Trading day: {trading_day}\n\n<news>\n{news}\n</news>"
 RETRY_NOTE = ("\n\nYour last line was not accepted.{last}\nReasons:\n{reasons}\n"
               "Write the line again by the same rules and fix what the reasons name.")
 RETRY_LAST = "\n<last_line>\n{line}\n</last_line>"  # line = data_json({"line": 직전 문장}). 문장이 없던 문제(빈 응답·거절)는 블록 없이
-RETRY_REASONS = {  # 키: DraftProblem 값(REVIEW_FAILURES) + "numbers" + FactLabel 값(forecast, opinion)
+# count = 검사기가 센 N("숫자 N개 — 줄당 하나"). 모양이 다른 "숫자…" 위반은 RETRY_COPY_DEFAULT(자리표시자·한국어가 새지 않게)
+RETRY_COPY_COUNT = ("The line had {count} numbers. Keep only the single figure that matters most, usually revenue, and leave"
+                    " out the others and the words that go with them.")  # 수치 고르는 구절은 NEWSLINE_SYSTEM 숫자 줄과 같게
+RETRY_REASONS = {  # 키: DraftProblem 값(REVIEW_FAILURES) + "numbers" + FactLabel 값(forecast, opinion) + "copy_count"
     "empty": "The reply had no line.",
     "refusal": 'The reply was {"sentence": null}. If "text" states a fact you can write under the rules, write it. If it does not, reply with {"sentence": null} again.',
     "leftover": "The line had a # sign or a count such as +2 more. Write neither.",
@@ -77,15 +80,13 @@ RETRY_REASONS = {  # 키: DraftProblem 값(REVIEW_FAILURES) + "numbers" + FactLa
     "numbers": 'The line had a number that is not in "numbers". Years, dates, counts, and form names such as 8-K count as numbers. Copy one value from "numbers" exactly, or write no number.',
     "forecast": 'The line stated a forecast or used a number from one. Write only what the company did, such as raised, lowered, kept, or issued its forecast, with no forecast numbers, or state another fact from "text".',
     "opinion": "The line judged the news or the company. State only what happened.",
+    "copy_count": RETRY_COPY_COUNT,  # 시장 한눈에는 자기 문장을 넣는다(#50: "usually revenue"는 기관 발표에 맞지 않는다)
 }
 # 금지어 검사(check_card) 위반 → 영어 이유. 검사기 문자열은 한국어라 그대로 보내지 않는다(보류함 rules에는 원문 그대로)
 RETRY_COPY_WORD = "The word '{word}' is not allowed. State the same fact with a neutral word."  # word = 우리 금지어 목록 값
 RETRY_COPY_OTHER = {  # check_card 위반 문자열의 앞머리 → 이유
     "2인칭": 'The line used "you" or "your". Do not write them.',
 }
-# count = 검사기가 센 N("숫자 N개 — 줄당 하나"). 모양이 다른 "숫자…" 위반은 RETRY_COPY_DEFAULT(자리표시자·한국어가 새지 않게)
-RETRY_COPY_COUNT = ("The line had {count} numbers. Keep only the single figure that matters most, usually revenue, and leave"
-                    " out the others and the words that go with them.")  # 수치 고르는 구절은 NEWSLINE_SYSTEM 숫자 줄과 같게
 RETRY_COPY_DEFAULT = "The line broke a wording rule. State one plain fact in neutral words."  # 모르는 모양·한국어 금지어
 _COPY_WORD = re.compile(r"(?:금지어|감정 동사) '(.+)'")
 _COPY_COUNT = re.compile(r"숫자 (\d+)개")
@@ -148,15 +149,16 @@ def news_text(sentence: str, more: int) -> str:
     return f"{sentence}{count} ({NEWS_TAG})"
 
 
-def copy_retry_reasons(issues: Sequence[str]) -> list[str]:
-    """check_card 위반 문자열마다 재생성 이유 하나(영어). 모르는 모양은 RETRY_COPY_DEFAULT: 검사기 문자열이 늘어도 한국어가 새지 않게."""
+def copy_retry_reasons(issues: Sequence[str], texts: Mapping[str, str] = RETRY_REASONS) -> list[str]:
+    """check_card 위반 문자열마다 재생성 이유 하나(영어). 모르는 모양은 RETRY_COPY_DEFAULT: 검사기 문자열이 늘어도 한국어가 새지 않게.
+    숫자 개수 위반만 texts["copy_count"](검수의 reason_texts)를 쓴다."""
     reasons = []
     for issue in issues:
         word = _COPY_WORD.fullmatch(issue)
         if word and not _HANGUL.search(word[1]):
             reasons.append(RETRY_COPY_WORD.format(word=word[1]))
         elif count := _COPY_COUNT.match(issue):
-            reasons.append(RETRY_COPY_COUNT.format(count=count[1]))
+            reasons.append(texts["copy_count"].format(count=count[1]))
         else:
             reasons.append(next((r for prefix, r in RETRY_COPY_OTHER.items() if issue.startswith(prefix)), RETRY_COPY_DEFAULT))
     return reasons

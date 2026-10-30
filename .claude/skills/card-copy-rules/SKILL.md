@@ -47,9 +47,10 @@ description: "30초 종목 리포트 앱에 나가는 문장의 규칙. 첫 번�
 
 ### 시장 한눈에 (MarketGlance, #11)
 - 어제 마감(코드): `Thu 10/15 close: S&P 500 (SPY) +0.4%, Nasdaq (QQQ) −1.2%`. 값 둘이 줄의 정의라 실행기의 `숫자 2개` 위반은 예상 결과(코드 템플릿만, LLM 줄엔 적용 안 함). 하나라도 없으면 `Update delayed`
-- 오늘 지표 일정(코드): `CPI 8:30 AM ET · Jobless claims 8:30 AM ET +1 more`, 없으면 `No economic releases found`
-- 시장 전체 소식(LLM, 첫 번째 줄과 같은 검수 `review_sentence`): 출처 꼬리표 없이 범위는 하단. 검수 실패는 `Update delayed`(초안은 보류 칸, 웹은 안 읽음)
-- 출처가 없으면 `Not covered yet`(운영: 지표·소식 실제 어댑터 전). 보류 3건(`No new official releases found` 범위, 지표 약어 허용 목록, `RETRY_COPY_COUNT`의 "usually revenue")은 실제 어댑터 티켓에서 정한다
+- 오늘 지표 일정(코드): `CPI 8:30 AM ET · Fed decision 2:00 PM ET +1 more`. 이름은 닫힌 목록만(`Jobs report`, `CPI`, `Producer prices`, `Job openings`, `Labor costs`, `GDP`, `Income and spending`, `Trade balance`, `Fed decision`), 외부 제목은 화면에 안 나간다. 없으면 `No Fed decision or major BLS or BEA releases scheduled`(major = 위 목록, #50)
+- 시장 전체 소식(LLM, 첫 번째 줄과 같은 검수 `review_sentence`): 기관 정식 이름으로 시작, 출처 꼬리표 없이 범위는 하단. 본문이 제목뿐이면(연준 성명) 발표 사실만. `FOMC` 대신 `Fed`. 없으면 `No new major BLS, BEA, Census or Fed releases`. 검수 실패는 `Update delayed`(초안은 보류 칸, 웹은 안 읽음)
+- 허용 약어: `CPI`·`GDP`·`BLS`·`BEA`·`Fed`. 범위 문구: `BLS, BEA and Fed calendars`, `BLS, BEA, Census and Fed releases`
+- 출처가 없으면 `Not covered yet`
 
 ### 금지어 (카드·시장 한눈에·아침 알림)
 buy, sell, should, bullish, bearish, likely to rise, upside, downside, opportunity, undervalued, overvalued, momentum, breakout, rally ahead. 감정 동사 soars, plunges, skyrockets, crashes, tanks, surges, plummets, rockets, tumbles, slumps, spikes, jumps, rallies, sinks, sank, dives, collapses, explodes, nosedives. 어디서든 차단(아래 2장과 같음): you should, you must, guaranteed, risk-free, can't lose, cant lose, cannot lose, sure thing, easy money, get rich, double your money, 한국어 권유(목록은 `arena.toml` `always_banned`에만 둔다). 검사 기준 목록은 `backend/src/m30/copy_rules/card.toml`·`arena.toml`이다. 목록을 바꾸면 이 문단도 같이 바꾼다.
