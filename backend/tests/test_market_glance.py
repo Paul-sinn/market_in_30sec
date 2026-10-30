@@ -61,8 +61,8 @@ def test_SPY·QQQ_중_하나라도_등락률이_없으면_어제_마감_줄_전�
 @pytest.mark.parametrize(
     "indicators, line",
     [
-        ("scenario", ("CPI 8:30 AM ET · Jobless claims 8:30 AM ET +1 more", LineStatus.CHECKED_FOUND, "Economic calendar")),
-        ([], ("No economic releases found", LineStatus.CHECKED_NONE, "Economic calendar")),
+        ("scenario", ("CPI 8:30 AM ET · Jobless claims 8:30 AM ET +1 more", LineStatus.CHECKED_FOUND, "BLS, BEA and Fed calendars")),
+        ([], ("No Fed decision or major BLS or BEA releases scheduled", LineStatus.CHECKED_NONE, "BLS, BEA and Fed calendars")),
         (None, ("Not covered yet", LineStatus.UNSUPPORTED, None)),  # 출처 없음 = 미지원(가짜 "없음"을 만들지 않는다)
     ],
     ids=["거래일_발표_3건", "확인함_없음", "미지원"],
@@ -79,7 +79,7 @@ def test_지표_출처가_실패하면_지표_줄만_지연이고_요약_실패�
     ran = run(store, dataclasses.replace(load_scenario(GLANCE), failures={(Source.INDICATORS, None): FailurePlan("error")}))
 
     glance = store.get_market_glance(FRI)
-    assert shown(glance.indicator_line) == ("Update delayed", LineStatus.DELAYED, "Economic calendar")  # "없음"으로 쓰지 않는다
+    assert shown(glance.indicator_line) == ("Update delayed", LineStatus.DELAYED, "BLS, BEA and Fed calendars")  # "없음"으로 쓰지 않는다
     assert glance.close_line.status is LineStatus.CHECKED_FOUND
     assert ran.summary.failures == (SourceFailure(Source.INDICATORS, None, FailureReason.ERROR),)
 
@@ -93,7 +93,7 @@ def test_시장_전체_소식_줄은_LLM_문장이_숫자·금지어·판정을_
     ran = run(store, GLANCE)
 
     glance = store.get_market_glance(FRI)
-    assert shown(glance.market_news_line) == (NEWS_LINE, LineStatus.CHECKED_FOUND, "Official releases")  # 출처 꼬리표 없음
+    assert shown(glance.market_news_line) == (NEWS_LINE, LineStatus.CHECKED_FOUND, "BLS, BEA, Census and Fed releases")  # 출처 꼬리표 없음
     assert (glance.market_news_hold_draft, glance.market_news_hold_rules) == (None, ())
     assert ran.summary.glance_review == "pass"
     write, check = ran.llm.requests
@@ -155,6 +155,10 @@ RETRIES = {  # 1차 응답들 → 재생성 요청에 들어갈 이유(고정 �
     "판정_의견": ([NEWS_REPLY, json.dumps({"label": "opinion"})], "The line judged the news. State only what happened."),
     "판정_예측": ([NEWS_REPLY, json.dumps({"label": "forecast"})],
               "Write only what the agency or bank did, such as released, raised, lowered, or kept its forecast"),
+    # 첫 번째 줄 이유의 "usually revenue"는 기관 발표에 맞지 않는다(#50 D5 ③)
+    "숫자_두_개": ([sentence(1, "Bureau of Labor Statistics reported consumer prices rose 0.3% after 0.3%", "0.3%")],
+              "The line had 2 numbers. Keep only the single figure that matters most and leave out the others and the words"
+              " that go with them."),
 }
 
 
@@ -163,7 +167,7 @@ def test_소식_문장이_검수에_걸리면_이유를_넣어_한_번_다시_�
     ran = run(store, dataclasses.replace(load_scenario(GLANCE), llm_replies=[*first, NEWS_REPLY, FACT]))
 
     glance = store.get_market_glance(FRI)
-    assert shown(glance.market_news_line) == (NEWS_LINE, LineStatus.CHECKED_FOUND, "Official releases")
+    assert shown(glance.market_news_line) == (NEWS_LINE, LineStatus.CHECKED_FOUND, "BLS, BEA, Census and Fed releases")
     assert ran.summary.glance_review == "pass+retry"
     rewrite = ran.llm.requests[len(first)]
     assert (rewrite.system, rewrite.model) == (GLANCE_SYSTEM, config.GLANCE_MODEL)  # 지시문은 그대로(캐싱)
@@ -171,6 +175,7 @@ def test_소식_문장이_검수에_걸리면_이유를_넣어_한_번_다시_�
     assert "\n\nYour last line was not accepted.\n<last_line>\n" in rewrite.user
     assert reason in rewrite.user.split("Reasons:\n", 1)[1]
     assert "company" not in rewrite.user.split("Reasons:\n", 1)[1]  # 시장 소식에 회사 말이 섞이지 않는다
+    assert "revenue" not in rewrite.user.split("Reasons:\n", 1)[1]
 
 
 HOLDS = {  # (응답, 실패 계획) → (검수 코드, 보류 초안, 보류 규칙)
@@ -192,7 +197,7 @@ def test_소식_문장이_끝내_검수를_통과하지_못하면_지연으로_�
     ran = run(store, dataclasses.replace(load_scenario(GLANCE), llm_replies=replies, failures=failures))
 
     glance = store.get_market_glance(FRI)
-    assert shown(glance.market_news_line) == ("Update delayed", LineStatus.DELAYED, "Official releases")  # 닫힌 쪽
+    assert shown(glance.market_news_line) == ("Update delayed", LineStatus.DELAYED, "BLS, BEA, Census and Fed releases")  # 닫힌 쪽
     assert (ran.summary.glance_review, glance.market_news_hold_draft, glance.market_news_hold_rules) == held
     assert store.list_hold_items(FRI) == []  # 카드 보류함(hold_queue)은 쓰지 않는다
     # 검수 실패는 실행 실패가 아니다. 전송 실패만 같은 LLM 창구의 실패(subject market_news)로 남는다
@@ -217,10 +222,10 @@ def test_소식_응답의_항목_번호가_요청에_없는_값이면_같은_요
 
 QUIET = {  # 소식 출처 결과 → 소식 줄. 전부 LLM을 부르지 않는다
     "미지원": (None, {}, ("Not covered yet", LineStatus.UNSUPPORTED, None)),
-    "확인함_없음": ([], {}, ("No new official releases found", LineStatus.CHECKED_NONE, "Official releases")),
-    "기간_밖_발표만": ("out_of_window", {}, ("No new official releases found", LineStatus.CHECKED_NONE, "Official releases")),
+    "확인함_없음": ([], {}, ("No new major BLS, BEA, Census or Fed releases", LineStatus.CHECKED_NONE, "BLS, BEA, Census and Fed releases")),
+    "기간_밖_발표만": ("out_of_window", {}, ("No new major BLS, BEA, Census or Fed releases", LineStatus.CHECKED_NONE, "BLS, BEA, Census and Fed releases")),
     "출처_실패": ("scenario", {(Source.MARKET_NEWS, None): FailurePlan("error")},
-              ("Update delayed", LineStatus.DELAYED, "Official releases")),  # 실패를 "없음"으로 쓰지 않는다
+              ("Update delayed", LineStatus.DELAYED, "BLS, BEA, Census and Fed releases")),  # 실패를 "없음"으로 쓰지 않는다
 }
 
 
@@ -251,7 +256,7 @@ def test_LLM_호출_상한에_막혀_소식_판정을_못_받으면_지연과_�
 
     glance = store.get_market_glance(FRI)
     assert (ran.summary.llm_calls, ran.summary.llm_call_limit) == (4, 4)
-    assert shown(glance.market_news_line) == ("Update delayed", LineStatus.DELAYED, "Official releases")
+    assert shown(glance.market_news_line) == ("Update delayed", LineStatus.DELAYED, "BLS, BEA, Census and Fed releases")
     assert (glance.market_news_hold_draft, glance.market_news_hold_rules) == (
         NEWS_LINE, ("1 fact_check: opinion", "2 fact_check: call_limit"))
     assert ran.summary.glance_review == "hold:fact_check+retry"
@@ -267,7 +272,7 @@ def test_같은_거래일을_다시_돌리면_한_행을_덮어쓰고_소식_출
 
     again = store.get_market_glance(FRI)
     assert admin.execute("select count(*) from public.market_glance").fetchone() == (1,)
-    assert shown(first.market_news_line) == (NEWS_LINE, LineStatus.CHECKED_FOUND, "Official releases")
+    assert shown(first.market_news_line) == (NEWS_LINE, LineStatus.CHECKED_FOUND, "BLS, BEA, Census and Fed releases")
     assert again.market_news_line == first.market_news_line  # 확인 시각까지 앞 실행 그대로(기간이 고정이라 실패는 새 정보가 아니다)
     assert again.close_line.checked_at > first.close_line.checked_at  # 다른 줄은 이번 실행
     assert ran.llm.requests == []

@@ -23,12 +23,24 @@ from m30.models import FundHoldings, LineStatus
 from m30.adapters.nport import MF_TICKERS_URL
 from m30.pipeline.lines import NEWS_SCOPE, NO_FILINGS, NOT_COVERED, PRICE_SCOPE, UPDATE_DELAYED
 from m30.pipeline.production import run_failed, run_production
-from production_probe import COMPANY_CIKS, DRAFT_CANARY, ETFS, NoCallLLM, quiet_day
+from m30.adapters.gov import BEA_ICS_URL, BLS_ICS_URL
+from m30.adapters.gov_news import FED_RSS_URL
+from m30.pipeline import collect
+from m30.pipeline.collect import FailureReason, SourceFailure
+from m30.pipeline.glance import GLANCE_SYSTEM
+from m30.pipeline.review import FACTCHECK_SYSTEM
+from production_probe import COMPANY_CIKS, DRAFT_CANARY, ETFS, GOV_CANARY, GlanceLLM, NoCallLLM, gov_day, quiet_day, quiet_gov
+from test_gov import BEA, BEA_GDP, BEA_INCOME, FEED_URLS
 from test_edgar import RecordedGet
 from test_nport import OTHER_SERIES, QQQ_8, QQQ_CIK, SCHD_8, SCHWAB_CIK, SPY_8, SPY_CIK, txt_url
 from test_tiingo import body, row, source
 
 FRI = date(2026, 10, 16)
+
+
+def glance_lines(glance):
+    return {name: (line.text, line.status, line.source_scope) for name, line in (
+        ("close", glance.close_line), ("indicator", glance.indicator_line), ("news", glance.market_news_line))}
 
 
 def lines(card):
@@ -53,7 +65,7 @@ ETF_SCOPES = {"QQQ": "SEC filings of 6 top holdings", "SCHD": "SEC filings of 1 
 def test_운영_실행은_실제_공시·편입_보고와_미연결_출처만_써서_가짜_데이터_없이_카드를_만든다(store):
     get = RecordedGet(quiet_day())
 
-    summary, refreshed = run_production(store, FRI, get=get, llm=NoCallLLM(), prices=NoPriceSource())
+    summary, refreshed = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=get, llm=NoCallLLM(), prices=NoPriceSource())
 
     assert refreshed is True
     assert {c.ticker: c.cik for c in store.list_coverage()} == COMPANY_CIKS | dict.fromkeys(ETFS)
@@ -84,18 +96,92 @@ def test_운영_실행은_실제_공시·편입_보고와_미연결_출처만_�
     ] + [SUBMISSIONS_URL.format(cik=cik) for cik in sorted(COMPANY_CIKS.values())]
 
 
-def test_운영_실행의_시장_한눈에는_시세_구독과_실제_지표·소식_출처_전까지_지연·미지원·미지원이다(store):
-    summary, _ = run_production(store, FRI, get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
+def test_운영_실행의_시장_한눈에는_발표가_없는_날_두_줄_모두_확인한_기관_범위로_없음이다(store):
+    summary, _ = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=RecordedGet(quiet_day()), llm=NoCallLLM(),
+                                prices=NoPriceSource())
 
-    glance = store.get_market_glance(FRI)
-    assert {name: (line.text, line.status, line.source_scope) for name, line in (
-        ("close", glance.close_line), ("indicator", glance.indicator_line), ("news", glance.market_news_line))} == {
+    assert glance_lines(store.get_market_glance(FRI)) == {
         "close": (UPDATE_DELAYED, LineStatus.DELAYED, PRICE_SCOPE),  # SPY·QQQ 등락률 없음(#18 전)
-        "indicator": (NOT_COVERED, LineStatus.UNSUPPORTED, None),  # 가짜 일정·거짓 "없음"을 내보내지 않는다
-        "news": (NOT_COVERED, LineStatus.UNSUPPORTED, None),
+        "indicator": ("No Fed decision or major BLS or BEA releases scheduled", LineStatus.CHECKED_NONE, "BLS, BEA and Fed calendars"),
+        "news": ("No new major BLS, BEA, Census or Fed releases", LineStatus.CHECKED_NONE, "BLS, BEA, Census and Fed releases"),
     }
-    assert (summary.llm_calls, summary.glance_review) == (0, "-")  # 소식 출처가 없으면 LLM을 부르지 않는다
-    assert store.list_raw_market_news(FRI) == []
+    assert (summary.llm_calls, summary.glance_review) == (0, "-")  # 쓸 소식이 없으면 LLM을 부르지 않는다
+    assert store.list_raw_market_news(FRI) == [] and store.list_raw_indicators(FRI) == []
+
+
+THU = date(2026, 10, 29)
+
+
+def test_운영_실행은_BLS·BEA_일정과_FOMC_표로_지표_일정_줄을_쓰고_기관_발표로_소식_줄을_쓰며_원본을_저장한다(store):
+    gov, sec, llm = RecordedGet(gov_day()), RecordedGet(quiet_day()), GlanceLLM()
+
+    summary, _ = run_production(store, THU, get=sec, gov_get=gov, llm=llm, prices=NoPriceSource())
+
+    assert glance_lines(store.get_market_glance(THU)) == {
+        "close": (UPDATE_DELAYED, LineStatus.DELAYED, PRICE_SCOPE),
+        "indicator": ("GDP 8:30 AM ET · Income and spending 8:30 AM ET", LineStatus.CHECKED_FOUND, "BLS, BEA and Fed calendars"),
+        "news": ("Federal Reserve issued its policy statement", LineStatus.CHECKED_FOUND, "BLS, BEA, Census and Fed releases"),
+    }
+    gdp, income = store.list_raw_indicators(THU)  # 원본 = VEVENT 그대로
+    assert gdp.startswith("BEGIN:VEVENT") and "SUMMARY:GDP (Advance Estimate)\\, 3rd Quarter 2026" in gdp
+    assert income.startswith("BEGIN:VEVENT") and "SUMMARY:Personal Income and Outlays\\, September 2026" in income
+    [fomc] = store.list_raw_market_news(THU)  # 10/28 FOMC 성명(18:00 GMT)
+    assert "monetary20261028a.htm" in fomc
+    assert summary.failures == () and summary.glance_review == "pass"
+    assert [r.system for r in llm.requests] == [GLANCE_SYSTEM, FACTCHECK_SYSTEM]  # 소식 하나: 초안 + 판정
+    assert gov.urls == [BLS_ICS_URL, BEA_ICS_URL, *FEED_URLS]  # 기관 요청은 SEC 창구와 따로
+    assert TICKERS_URL in sec.urls and not [u for u in sec.urls if "sec.gov" not in u]
+
+
+FRI30 = date(2026, 10, 30)
+
+
+def test_같은_거래일을_두_번_운영_실행해도_공식_발표_원본은_기간_안_항목만_한_번씩_추가된다(store, admin):
+    for _ in range(2):
+        summary, _ = run_production(store, FRI30, get=RecordedGet(quiet_day()), gov_get=RecordedGet(gov_day()),
+                                    llm=GlanceLLM("Bureau of Economic Analysis released new data"), prices=NoPriceSource())
+
+    # 기간 [10/29 04:00, 10/30 04:00) 안 BEA GDP·소득지출(08:30)만. 피드의 나머지 수십 건은 저장하지 않는다
+    assert admin.execute("select source, key, trading_day from public.market_news_item order by key").fetchall() == [
+        (BEA, BEA_GDP, FRI30), (BEA, BEA_INCOME, FRI30)]
+    assert glance_lines(store.get_market_glance(FRI30))["indicator"] == (
+        "Labor costs 8:30 AM ET", LineStatus.CHECKED_FOUND, "BLS, BEA and Fed calendars")
+    assert summary.failures == ()
+
+
+def test_연준_피드가_깨지면_소식_줄만_지연이고_LLM을_부르지_않으며_앞_실행이_확인한_소식_줄은_그대로_둔다(store):
+    broken = {FED_RSS_URL: b"<rss><channel><item>"}
+
+    def run(gov, llm):
+        summary, _ = run_production(store, THU, get=RecordedGet(quiet_day()), gov_get=RecordedGet(gov), llm=llm,
+                                    prices=NoPriceSource())
+        return summary, store.get_market_glance(THU)
+
+    summary, delayed = run(gov_day(**broken), NoCallLLM())
+    _, checked = run(gov_day(), GlanceLLM())
+    again_summary, again = run(gov_day(**broken), NoCallLLM())
+
+    assert glance_lines(delayed)["news"] == (UPDATE_DELAYED, LineStatus.DELAYED, "BLS, BEA, Census and Fed releases")
+    assert delayed.indicator_line.status is LineStatus.CHECKED_FOUND  # 지표 일정 줄은 그대로
+    assert summary.failures == again_summary.failures == (SourceFailure(Source.MARKET_NEWS, None, FailureReason.ERROR),)
+    assert summary.llm_calls == again_summary.llm_calls == 0
+    assert checked.market_news_line.status is LineStatus.CHECKED_FOUND
+    assert again.market_news_line == checked.market_news_line  # 기간이 고정이라 실패는 새 정보가 아니다(#11)
+
+
+def test_BLS_일정이_503을_계속_내면_지표_일정_줄만_지연이고_다시_시도_뒤_실패로_남는다(store, monkeypatch):
+    monkeypatch.setattr(collect, "RETRY_DELAYS", (0.0, 0.0, 0.0))
+    gov = RecordedGet(quiet_gov(**{BLS_ICS_URL: TransientSourceError("bls http 503")}))
+
+    summary, _ = run_production(store, FRI, get=RecordedGet(quiet_day()), gov_get=gov, llm=NoCallLLM(), prices=NoPriceSource())
+
+    shown = glance_lines(store.get_market_glance(FRI))
+    assert shown["indicator"] == (UPDATE_DELAYED, LineStatus.DELAYED, "BLS, BEA and Fed calendars")  # "없음"으로 쓰지 않는다
+    assert shown["news"] == (  # 소식 어댑터는 따로 성공
+        "No new major BLS, BEA, Census or Fed releases", LineStatus.CHECKED_NONE, "BLS, BEA, Census and Fed releases")
+    assert summary.failures == (SourceFailure(Source.INDICATORS, None, FailureReason.RETRIES_EXHAUSTED),)
+    assert gov.urls.count(BLS_ICS_URL) == 4 and BEA_ICS_URL not in gov.urls  # 어댑터 호출 전체를 다시 한다
+    assert store.list_raw_indicators(FRI) == []
 
 
 def test_운영_실행은_그_분기_기본_종목으로_실험_15종목을_저장한다(store):
@@ -103,7 +189,7 @@ def test_운영_실행은_그_분기_기본_종목으로_실험_15종목을_저�
     experiment = sorted(COMPANY_CIKS | dict.fromkeys(ETFS))
 
     for _ in range(2):  # 재실행해도 그대로
-        run_production(store, FRI, get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
+        run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
 
         assert [c.ticker for c in store.list_generation_targets(date(2026, 10, 1))] == experiment  # 유저 0명 = 기본 종목
         assert [c.ticker for c in store.list_generation_targets(date(2026, 12, 31))] == experiment  # 2026Q4 끝까지
@@ -114,7 +200,7 @@ def test_운영_실행에_Tiingo_시세를_넣으면_15종목_모두_등락률�
     day = body(row("2026-10-14", 100), row("2026-10-15", 101))
     prices, opener = source(monkeypatch, dict.fromkeys(COMPANY_CIKS | dict.fromkeys(ETFS), day))
 
-    summary, _ = run_production(store, FRI, get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=prices)
+    summary, _ = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=prices)
 
     cards = store.list_cards(FRI)
     assert len(cards) == 15 and len(opener.requests) == 15  # 종목마다 한 번
@@ -132,10 +218,10 @@ def content(card):
 
 
 def test_같은_거래일을_다시_운영_실행해도_커버_범위와_카드가_중복_없이_그대로다(store):
-    run_production(store, FRI, get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
+    run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
     coverage, cards = store.list_coverage(), [content(c) for c in store.list_cards(FRI)]
 
-    summary, _ = run_production(store, FRI, get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
+    summary, _ = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
 
     assert store.list_coverage() == coverage
     assert len(coverage) == 15
@@ -146,7 +232,7 @@ def test_같은_거래일을_다시_운영_실행해도_커버_범위와_카드�
 def test_첫_실행에서_SEC_티커_목록을_못_받으면_카드_0장이라_실패한_실행이다(store):
     get = RecordedGet({TICKERS_URL: SourceError("sec tickers shape")})
 
-    summary, refreshed = run_production(store, FRI, get=get, llm=NoCallLLM(), prices=NoPriceSource())
+    summary, refreshed = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=get, llm=NoCallLLM(), prices=NoPriceSource())
 
     assert refreshed is False
     assert summary.cards_saved == 0
@@ -155,17 +241,17 @@ def test_첫_실행에서_SEC_티커_목록을_못_받으면_카드_0장이라_�
 
 
 def test_죽은_앞_실행이_카드를_모두_저장했으면_이어_한_실행은_카드_0장이어도_실패가_아니다(store):
-    summary, _ = run_production(store, FRI, get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
+    summary, _ = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
 
     assert run_failed(dataclasses.replace(summary, cards_saved=0, resumed=("AAPL",))) is False
     assert run_failed(dataclasses.replace(summary, cards_saved=0, resumed=())) is True
 
 
 def test_SEC_티커_목록을_못_받으면_지난_CIK로_카드를_만들고_실패로_치지_않는다(store):
-    run_production(store, FRI, get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
+    run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
 
     summary, refreshed = run_production(
-        store, FRI, get=RecordedGet(quiet_day(**{TICKERS_URL: TransientSourceError("sec timeout")})), llm=NoCallLLM(),
+        store, FRI, gov_get=RecordedGet(quiet_gov()), get=RecordedGet(quiet_day(**{TICKERS_URL: TransientSourceError("sec timeout")})), llm=NoCallLLM(),
         prices=NoPriceSource(),
     )
 
@@ -178,7 +264,7 @@ def test_SEC_티커_목록을_못_받으면_지난_CIK로_카드를_만들고_�
 def test_SEC가_403으로_막아도_카드는_나가지만_실패한_실행이다(store):
     get = RecordedGet(quiet_day(**{SUBMISSIONS_URL.format(cik=COMPANY_CIKS["AAPL"]): AccessDeniedError("sec http 403")}))
 
-    summary, _ = run_production(store, FRI, get=get, llm=NoCallLLM(), prices=NoPriceSource())
+    summary, _ = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=get, llm=NoCallLLM(), prices=NoPriceSource())
 
     assert summary.access_denied == (Source.SEC_FILINGS,)
     cards = {c.ticker: c for c in store.list_cards(FRI)}
@@ -222,7 +308,7 @@ def webhook_message(out):
     "situation, exit_code, lines",
     [
         ("quiet", 0, ["2026-10-16 cards_saved=15 resumed=- ", "coverage: refreshed", "prices=none",
-                      "glance: close=delayed indicator=unsupported market_news=unsupported review=-",
+                      "glance: close=delayed indicator=checked_none market_news=checked_none review=-",
                       "holdings: QQQ=checked_found(unmatched 4) SCHD=checked_found(unmatched 9)"
                       " SPY=checked_found(unmatched 3) TQQQ=checked_found(unmatched 4)"]),
         ("denied", 1, ["ACCESS DENIED (not retried): sec_filings", "cards_saved=15", "coverage: refreshed"]),
@@ -236,6 +322,42 @@ def test_운영_CLI는_실행_요약과_CIK_갱신_여부를_찍고_실패한_�
     assert code == exit_code
     for line in lines:
         assert line in out, line
+
+
+GOV_HOSTS_SHOWN = ("bls.gov", "bea.gov", "census.gov", "federalreserve.gov")  # 기관 주소 일부
+
+
+@pytest.mark.parametrize(
+    "situation, day, exit_code, lines",
+    [
+        ("gov_canary", "2026-10-16", 0,  # BLS PPI(본문에 캐너리)가 기간 안
+         ["glance: close=delayed indicator=checked_none market_news=checked_found review=pass"]),
+        ("gov_canary", "2026-10-29", 0,  # 연준 FOMC 성명(제목에 캐너리)이 기간 안
+         ["glance: close=delayed indicator=checked_found market_news=checked_found review=pass"]),
+        ("gov_denied", "2026-10-16", 1,  # 차단은 출처 단위: 소식 어댑터도 BLS 피드에서 403을 받는다
+         ["failed: indicators=access_denied, market_news=access_denied", "ACCESS DENIED (not retried): indicators, market_news",
+          "glance: close=delayed indicator=delayed market_news=delayed review=-"]),
+        ("gov_down", "2026-10-16", 1,
+         ["failed: indicators=retries_exhausted", "glance: close=delayed indicator=delayed market_news=checked_none review=-"]),
+    ],
+    ids=["캐너리_BLS", "캐너리_연준", "BLS_403", "BLS_503"],
+)
+def test_운영_CLI·Discord·실행_기록은_기관_출처의_줄_상태와_실패_코드만_남기고_원문·주소·연락처는_남기지_않는다(
+        settings, admin, situation, day, exit_code, lines):
+    code, out = run_probe(settings, situation, webhook=WEBHOOK_CANARY, day=day)  # 연락처(UA)·키 캐너리 검사는 run_probe
+
+    assert code == exit_code
+    for line in lines:
+        assert line in out.splitlines(), line
+        assert line in webhook_message(out).splitlines(), line
+    [(summary,)] = admin.execute("select summary from public.pipeline_run").fetchall()
+    recorded = json.dumps(summary)
+    assert [c for c in (GOV_CANARY, *GOV_HOSTS_SHOWN) if c in out + recorded] == []
+    if situation == "gov_canary":  # 캐너리가 실제로 원본과 줄에 들어간 실행이다
+        [(payloads, news_line)] = admin.execute(
+            "select (select string_agg(payload, '') from public.market_news_item), market_news_line_text from public.market_glance"
+        ).fetchall()
+        assert GOV_CANARY in payloads and GOV_CANARY in news_line
 
 
 def test_실패한_운영_실행은_요약_맨_위에_실패_배너와_실패_목록을_찍는다(settings, admin):
@@ -321,6 +443,36 @@ def test_운영_품질_확인은_TIINGO_API_KEY가_있어도_시세를_부르지
         "quality 2026-10-16 classify=claude-haiku-5-5 newsline=claude-haiku-5-5 review=claude-haiku-5-5 prices=none")
     assert "lines news checked_found=0 checked_none=15 delayed=0 unsupported=0" in lines  # ETF 4개도 편입 종목 확인함·없음
     assert "hold -" in lines and "classify -" in lines
+
+
+@pytest.mark.parametrize(
+    "situation, day, block",
+    [
+        ("quiet", "2026-10-16", [
+            'glance close delayed "Update delayed"',
+            'glance indicator checked_none "No Fed decision or major BLS or BEA releases scheduled"',
+            'glance market_news checked_none "No new major BLS, BEA, Census or Fed releases"',
+            "glance review -",
+            "glance hold - -",
+        ]),
+        ("gov_canary", "2026-10-29", [
+            'glance close delayed "Update delayed"',
+            'glance indicator checked_found "GDP 8:30 AM ET · Income and spending 8:30 AM ET"',
+            f'glance market_news checked_found "Federal Reserve issued its {GOV_CANARY} statement"',
+            "glance review pass",
+            "glance hold - -",
+        ]),
+    ],
+    ids=["발표_없는_날", "발표_있는_날"],
+)
+def test_운영_품질_확인은_품질_블록_끝에_시장_한눈에_세_줄·검수·보류를_모델과_함께_찍는다(settings, admin, situation, day, block):
+    code, out = run_probe(settings, situation, extra=["--quality"], day=day)  # 로컬 DB 전용: 문장을 찍는 유일한 출력
+
+    assert code == 0
+    lines = out.splitlines()
+    start = lines.index("glance model=claude-haiku-5-5")
+    assert lines[start + 1:start + 6] == block
+    assert lines.index("classify_counts kinds - importance - opinion=0 unclassified=0") < start
 
 
 def test_예약_실행은_그_거래일에_완료된_실행이_있으면_카드·LLM_없이_ALREADY_DONE만_찍고_0으로_끝난다(settings, admin, store):

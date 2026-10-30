@@ -23,7 +23,7 @@ GLANCE_MAX_TOKENS = 200  # NEWSLINE_MAX_TOKENS와 같은 이유
 
 GLANCE_EXAMPLES = (  # 가상 기관. 전부 check_card 위반 0, 형식 규칙 통과, 12단어 이하(test_units가 고정). 나쁜 예는 넣지 않는다
     "Contoso Labor Bureau reported consumer prices rose 0.3%",
-    "Fabrikam Central Bank kept its policy rate unchanged",
+    "Fabrikam Central Bank issued its policy statement",  # 본문이 제목뿐인 발표(연준 성명 RSS). 결정 내용을 쓰는 본보기는 두지 않는다
     "Northwind Statistics Office reported retail sales fell 0.4%",
     "Contoso Treasury announced changes to its bond auction schedule",
 )
@@ -42,12 +42,12 @@ The object has one field, "items": a list of releases. Each release has these fi
 - "numbers": the dollar amounts and percentages that appear in "text"
 
 Write the line by these rules:
-- Pick the one release that matters most for the US stock market as a whole. State one fact from that release only: the most important thing it reports. Use only facts stated in its "title" or "text". Do not add facts from memory or from other releases. Do not add a second fact with and, including, while, after, or a comma. A second figure is a second fact.
+- Pick the one release that matters most for the US stock market as a whole. State one fact from that release only: the most important thing it reports. Use only facts stated in its "title" or "text". Do not add facts from memory or from other releases. If the "text" of a release is empty or only repeats its "title", state only that the agency or bank issued or released it. Do not add what it decided or any number from memory. Do not add a second fact with and, including, while, after, or a comma. A second figure is a second fact.
 - Use at most 15 words, and aim for 12 or fewer. Start with the name from "source" of that release, and follow it with a verb.
 - Use the past tense. Use the future tense only for an event the agency or bank has scheduled.
 - If the release gives a forecast or projection, write only what the agency or bank did, in the past tense, such as released, raised, lowered, or kept its forecast. Do not repeat what it expects to happen. Do not write the forecast's numbers.
 - Use at most one number, copied exactly from "numbers" of that release. Never write any other number, in digits or in words, and never write a number in place of #. Never write the # sign itself. If the fact needs a number that was replaced with #, state the fact without a number. A range counts as two numbers, so state a range without numbers. Do not write years or dates. For a quarter, write Q1, Q2, Q3, or Q4.
-- Use plain words a casual investor knows. Do not use technical terms or the names of release forms.
+- Use plain words a casual investor knows. Do not use technical terms or the names of release forms. Write "Fed", not "FOMC".
 - Use neutral verbs such as reported, announced, released, kept, raised, lowered, rose, or fell. Do not use dramatic verbs such as soared, plunged, surged, or tumbled. Do not use the words buy, sell, should, upside, downside, opportunity, or momentum, even when the release does.
 - Do not give advice, opinions, or predictions, and do not say whether the news is good or bad for stocks or the market. Do not write "you" or "your".
 - Write one sentence with no period at the end. Do not add a source label or a count such as +2 more.
@@ -60,11 +60,13 @@ Reply with one JSON object and nothing else. No code fences, no text before or a
 {"item": <the "id" of the release you used>, "number": <one value from that release's "numbers", or null>, "sentence": "<the line>"}
 If no release has a fact you can state under these rules, reply with {"sentence": null}."""
 
-# 첫 번째 줄 재생성 이유에서 회사를 말하는 것만 바꾼다(forecast·opinion)
+# 첫 번째 줄 재생성 이유에서 회사·매출을 말하는 것만 바꾼다(forecast·opinion·copy_count)
 GLANCE_RETRY_REASONS = RETRY_REASONS | {
     "forecast": 'The line stated a forecast or used a number from one. Write only what the agency or bank did, such as'
                 ' released, raised, lowered, or kept its forecast, with no forecast numbers, or state another fact from "text".',
     "opinion": "The line judged the news. State only what happened.",
+    "copy_count": "The line had {count} numbers. Keep only the single figure that matters most and leave out the others"
+                  " and the words that go with them.",  # 첫 번째 줄의 "usually revenue"를 뺀 것(#50 D5 ③)
 }
 
 

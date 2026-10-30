@@ -5,7 +5,7 @@ from typing import Protocol
 
 @dataclass(frozen=True)
 class IndicatorRelease:
-    name: str  # 지표 이름, 출처 표기 그대로 ("CPI")
+    name: str  # 화면 이름. 어댑터 코드가 정한 값("CPI", "Jobs report"). 외부 제목을 그대로 넣지 않는다(#50, MarketNewsItem.source와 같은 규칙)
     released_at: datetime  # 발표 시각, tz-aware
     raw: str  # 출처가 준 원본 그대로
 

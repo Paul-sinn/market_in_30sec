@@ -231,7 +231,7 @@ def _check(
     issues = check_card(mask_names(shown(sentence), terms))  # 화면에 보이는 조립 줄 그대로(종목명만 가림)
     rules = ([] if numbers_ok else ["numbers: not from source"]) + [f"copy_rules: {i}" for i in issues]
     if rules:
-        reasons = ([] if numbers_ok else [reason_texts["numbers"]]) + copy_retry_reasons(issues)
+        reasons = ([] if numbers_ok else [reason_texts["numbers"]]) + copy_retry_reasons(issues, reason_texts)
         return (HoldStage.COPY_RULES if numbers_ok else HoldStage.NUMBERS), rules, reasons
     label = _fact_check(sentence, subject, send)
     if label is FactLabel.FACT:

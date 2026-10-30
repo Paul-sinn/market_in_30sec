@@ -16,8 +16,8 @@ from m30.pipeline.compute import format_per_share, streak, week52_gaps
 NO_FILINGS = "No new SEC filings found"
 NO_EVENTS = "No confirmed events found"
 NO_PRICE_FACTS = "No additional price highlights"  # 가격 데이터가 정상인데 표시 조건에 맞는 사실이 없음
-NO_INDICATORS = "No economic releases found"  # 시장 한눈에 지표 일정 줄(#11)
-NO_MARKET_NEWS = "No new official releases found"  # 시장 한눈에 소식 줄(#11). 실제 출처 티켓에서 범위에 맞게 다시 본다
+NO_INDICATORS = "No Fed decision or major BLS or BEA releases scheduled"  # 시장 한눈에 지표 일정 줄(#11). 연준은 성명일만 본다, major = 화면 이름 목록(#50 D5)
+NO_MARKET_NEWS = "No new major BLS, BEA, Census or Fed releases"  # 시장 한눈에 소식 줄(#11). 확인한 기관 이름(#50 D5)
 UPDATE_DELAYED = "Update delayed"
 NOT_COVERED = "Not covered yet"
 
@@ -26,8 +26,8 @@ NEWS_SCOPE = "SEC filings"
 HOLDINGS_SCOPE = "SEC filings of top holdings"  # ETF 편입 보고를 못 읽은 지연 줄 전용(웹 하단은 확인된 줄만 범위를 보여 준다)
 EVENT_SCOPE = "Earnings and dividend calendar"
 PRICE_SCOPE = "Daily prices"
-INDICATOR_SCOPE = "Economic calendar"
-MARKET_NEWS_SCOPE = "Official releases"
+INDICATOR_SCOPE = "BLS, BEA and Fed calendars"  # Census 일정은 HTML뿐이라 확인하지 않는다(#50)
+MARKET_NEWS_SCOPE = "BLS, BEA, Census and Fed releases"
 
 # 시장 한눈에(#11)
 CLOSE_FUNDS = (("S&P 500", "SPY"), ("Nasdaq", "QQQ"))  # 지수 값 대신 ETF(HANDOFF 4장). 어제 마감 줄 순서

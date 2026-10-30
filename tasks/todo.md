@@ -30,6 +30,8 @@
 - [x] #17 실행 기록·Discord 요약·gitleaks — PR #45, 닫힘
 - [x] #12 아침 알림 문구 — PR #46, 닫힘
 - [x] #11 시장 한눈에 — 닫힘(2026-10-30). 운영은 `Update delayed` / `Not covered yet` / `Not covered yet`(시세·지표·소식 출처 전). 후속: 지표 일정·공식 발표 실제 어댑터 티켓
+- [x] #50 지표 일정·공식 발표 실제 어댑터(BLS·BEA ICS + FOMC 표, BLS·BEA·Census·연준 RSS) — 닫힘(2026-10-30). live: 기관 2/2, Haiku 판정 11/11. **12월 중순까지 BLS 2027 일정 게재 확인**(없으면 12-31부터 지표 줄 지연 + 실패 알림)
+- [ ] #21 실적·배당 일정 — 출처 조사 완료(`docs/vendors/calendar-sources.md`): 배당 Tiingo, 실적 FMP Build 추천. 사용자 문의·구독 대기
 - [ ] 다음: #18·#21·#20(사람 몫), 커버 범위 확대(#20에서), 푸시 발송·즉시 생성(#15 후보) — 피봇 결정 후 다시 정리
 
 ## 피봇 인수인계 (2026-10-29)
@@ -45,7 +47,8 @@
 ## 사용자 할 일 (2026-10-29 기준)
 - Google 로그인 설정 3가지(Google Cloud OAuth 클라이언트, Supabase Auth Google 켜기·Email 끄기·URL, Vercel `SUPABASE_PUBLISHABLE_KEY`) → 운영 로그인·내 종목 확인
 - Discord 웹훅 → `gh secret set DISCORD_WEBHOOK_URL --env production`
-- Tiingo Commercial 구독 결정($50/월, 공개 시 Redistribution 필요) → 가격 줄
+- Tiingo Commercial 구독 결정($50/월, 공개 시 Redistribution 필요) → 가격 줄·어제 마감 줄·배당
+- FMP 문의(Build에 실적 일정 포함? 앱 표시 계약) → 구독 → 실적 일정(#21)
 - `brew install gitleaks` 후 `git config core.hooksPath .githooks`
 - GitHub dispatch 토큰 만료일(약 2027-10) 전에 갱신 → Vault `github_dispatch_token`
 - [ ] #16·#17 운영(달력·잠금·실행 기록·Discord·gitleaks) → #20 10거래일 실험
