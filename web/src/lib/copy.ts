@@ -29,6 +29,9 @@ export const SIGN_IN = "Sign in to pick your stocks"; // 로그인 전 /cards �
 export const SIGN_OUT = "Sign out"; // 로그인됨 /cards 버튼
 export const SIGN_IN_FAILED = "Sign-in could not be completed"; // 설정 없음·Google 꺼짐·취소·교환 실패·프로필 실패를 한 문구로(LOAD_FAILED와 같은 형식)
 
+// 시장 한눈에(#11, copy-reviewer 검수 대상). 줄 문구는 DB market_glance의 *_text 그대로
+export const MARKET_AT_A_GLANCE = "Market at a glance"; // 대시보드 거래일 제목 아래 블록 제목
+
 // 내 종목(#38). 화면 제목·라벨은 스펙 #36, 업셀·카드 없음은 HANDOFF 3-2 그대로. 나머지는 새 문구(copy-reviewer 검수 대상)
 export const MY_STOCKS = "My stocks";
 export const BROWSE = "Browse";

@@ -8,13 +8,26 @@ vi.mock("@supabase/supabase-js", () => ({ createClient: vi.fn() }));
 
 const KEY = "canary-read-test-key";
 
-/** 쿼리 빌더 흉내: 어떤 메서드를 불러도 자신을 돌려주고, await하면 다음 응답을 낸다 */
+/** 테이블마다 마지막 select 인자 */
+let selects: Record<string, string> = {};
+
+/** 쿼리 빌더 흉내: 어떤 메서드를 불러도 자신을 돌려주고, await하면 다음 응답을 낸다(await 순서대로) */
 function respond(...results: object[]) {
+  let table = "";
+  selects = {};
   const query: object = new Proxy(
     {},
-    { get: (_, prop) => (prop === "then" ? (resolve: (r: object) => void) => resolve(results.shift()!) : () => query) },
+    {
+      get: (_, prop) =>
+        prop === "then"
+          ? (resolve: (r: object) => void) => resolve(results.shift()!)
+          : (...args: unknown[]) => {
+              if (prop === "select") selects[table] = String(args[0]);
+              return query;
+            },
+    },
   );
-  vi.mocked(createClient).mockReturnValue({ from: () => query } as never);
+  vi.mocked(createClient).mockReturnValue({ from: (t: string) => ((table = t), query) } as never);
 }
 
 const row = (i: number) => ({
@@ -29,6 +42,9 @@ const row = (i: number) => ({
 });
 const latest = { data: { trading_day: "2026-10-16" }, error: null };
 const failure = { data: null, error: { message: "permission denied for table stock_card" } };
+const noCards = { data: [], error: null };
+const noGlance = { data: null, error: null }; // maybeSingle: 그날 행 없음
+const GLANCE_LINES = ["close_line", "indicator_line", "market_news_line"];
 
 beforeEach(() => {
   vi.stubEnv("SUPABASE_URL", "http://127.0.0.1:54321");
@@ -49,8 +65,42 @@ test("카드 읽기 실패도 에러", async () => {
 test("PostgREST max_rows(1000)에 닿으면 조용히 자르지 않고 에러", async () => {
   respond(latest, { data: Array.from({ length: 1000 }, (_, i) => row(i)), error: null });
   await expect(getDashboard()).rejects.toThrow("1000+ rows");
-  respond(latest, { data: Array.from({ length: 999 }, (_, i) => row(i)), error: null });
+  respond(latest, { data: Array.from({ length: 999 }, (_, i) => row(i)), error: null }, noGlance);
   expect((await getDashboard()).cards).toHaveLength(999);
+});
+
+test("카드가 없으면 시장 한눈에도 읽지 않는다(glance null, No cards yet만)", async () => {
+  respond({ data: null, error: null });
+  expect(await getDashboard()).toEqual({ tradingDay: null, glance: null, cards: [] });
+  expect(selects).not.toHaveProperty("market_glance");
+});
+
+test("시장 한눈에 읽기 실패도 에러(빈 블록·지연으로 보이지 않게)", async () => {
+  respond(latest, noCards, { data: null, error: { message: "permission denied for table market_glance" } });
+  await expect(getDashboard()).rejects.toThrow("market_glance read failed: permission denied");
+});
+
+test("그날 시장 한눈에 행이 없으면 Update delayed 세 줄, 하단 없음", async () => {
+  respond(latest, noCards, noGlance);
+  expect((await getDashboard()).glance).toEqual({ lines: Array(3).fill({ text: "Update delayed", status: "delayed" }), checked: null });
+});
+
+test("시장 한눈에는 줄 컬럼 12개만 select한다: 보류 기록(market_news_hold_*, 검수 안 된 문장)·updated_at·* 없음", async () => {
+  const stored = Object.fromEntries(
+    GLANCE_LINES.flatMap((l) => [
+      [`${l}_text`, `${l} text`],
+      [`${l}_status`, "checked_found"],
+      [`${l}_checked_at`, "2026-10-16T11:30:00Z"],
+      [`${l}_source_scope`, "Daily prices"],
+    ]),
+  );
+  respond(latest, noCards, { data: stored, error: null });
+  const { glance } = await getDashboard();
+  expect(selects.market_glance.split(",")).toEqual(
+    GLANCE_LINES.flatMap((l) => [`${l}_text`, `${l}_status`, `${l}_checked_at`, `${l}_source_scope`]),
+  );
+  expect(selects.market_glance).not.toMatch(/hold|updated_at|\*/);
+  expect(glance?.lines.map((l) => l.text)).toEqual(["close_line text", "indicator_line text", "market_news_line text"]);
 });
 
 test("환경 변수가 없으면 이름만 말하는 에러(값 없음)", async () => {

@@ -115,7 +115,7 @@ def test_RLS가_꺼진_테이블이_없다(admin):
         " where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity")]
     tables = {"coverage", "stock_card", "sec_filing", "indicator_release", "filing_classification", "hold_queue",
               "stock_card_revision", "user_profile", "my_stock", "my_stock_history", "default_ticker", "pipeline_run",
-              "fund_holdings", "morning_notice"}
+              "fund_holdings", "morning_notice", "market_glance", "market_news_item"}
     assert tables <= set(public_tables(admin))  # 검사 대상이 비어서 통과하는 것을 막는다
     assert rls_off == []
 
@@ -536,3 +536,77 @@ def test_Vault_토큰이_있으면_main으로_morning_workflow_dispatch_요청_�
         assert headers == {"Authorization": f"Bearer {TOKEN_CANARY}", "Accept": "application/vnd.github+json",
                            "Content-Type": "application/json", "User-Agent": "market_in_30sec-morning-dispatch"}
     assert queued_dispatches(admin) == 0
+
+
+# 시장 한눈에(#11): 거래일마다 한 행, 줄 모양은 카드와 같다
+GLANCE_COLUMNS = [
+    "trading_day",
+    "close_line_text", "close_line_status", "close_line_checked_at", "close_line_source_scope",
+    "indicator_line_text", "indicator_line_status", "indicator_line_checked_at", "indicator_line_source_scope",
+    "market_news_line_text", "market_news_line_status", "market_news_line_checked_at", "market_news_line_source_scope",
+    "market_news_hold_draft", "market_news_hold_rules", "updated_at",
+]
+GLANCE_SQL = (
+    "insert into public.market_glance (trading_day, close_line_text, close_line_status, close_line_checked_at,"
+    " close_line_source_scope, indicator_line_text, indicator_line_status, indicator_line_checked_at,"
+    " indicator_line_source_scope, market_news_line_text, market_news_line_status, market_news_line_checked_at,"
+    " market_news_line_source_scope, market_news_hold_draft, market_news_hold_rules)"
+    " values ('2026-10-16', 'Update delayed', 'delayed', now(), 'Daily prices',"
+    " 'Not covered yet', 'unsupported', now(), null, %(news_text)s, %(news_status)s, now(), %(news_scope)s, %(draft)s, %(rules)s)"
+)
+GLANCE_ROW = {"news_text": "Not covered yet", "news_status": "unsupported", "news_scope": None, "draft": None, "rules": None}
+
+
+def test_시장_한눈에_컬럼은_정해진_목록뿐이고_방향_의견_필드가_없다(admin):
+    columns = [r[0] for r in admin.execute(
+        "select column_name from information_schema.columns"
+        " where table_schema = 'public' and table_name = 'market_glance' order by ordinal_position")]
+    assert columns == GLANCE_COLUMNS  # 콜·토크·방향 컬럼은 없다 (ADR-0001)
+
+
+def test_시장_한눈에는_거래일마다_한_행이고_서버는_고칠_수만_있고_지울_수_없다(admin):
+    as_service_role(admin, GLANCE_SQL, GLANCE_ROW)
+    allowed = [p for p in ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE")
+               if admin.execute("select has_table_privilege('service_role', 'public.market_glance', %s)", (p,)).fetchone()[0]]
+
+    assert allowed == ["SELECT", "INSERT", "UPDATE"]  # 재실행 = upsert
+    with pytest.raises(errors.UniqueViolation):
+        admin.execute(GLANCE_SQL, GLANCE_ROW)
+    with pytest.raises(errors.InsufficientPrivilege):
+        as_service_role(admin, "delete from public.market_glance")
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"news_status": "checked_found", "news_text": "Contoso Labor Bureau reported jobs data"},  # 확인함인데 출처 범위 없음
+        {"news_status": "delayed", "news_text": "Update delayed", "news_scope": "Official releases",
+         "draft": "Contoso said stocks will rise"},  # 걸린 규칙 없이 초안만
+        {"news_status": "checked_found", "news_text": "Contoso Labor Bureau reported jobs data", "news_scope": "Official releases",
+         "rules": ["1 fact_check: forecast"]},  # 보류 기록이 있는데 통과한 줄
+        {"news_status": "delayed", "news_text": "Update delayed", "news_scope": "Official releases", "rules": []},  # 빈 규칙
+        {"news_status": "delayed", "news_text": "Update delayed", "news_scope": "Official releases", "draft": "",
+         "rules": ["1 draft: empty"]},  # 빈 초안
+    ],
+    ids=["출처_범위_없음", "초안만", "통과한_줄에_규칙", "빈_규칙", "빈_초안"],
+)
+def test_시장_한눈에_줄_범위와_보류_기록_규칙을_DB가_막는다(admin, changes):
+    with pytest.raises(errors.CheckViolation):
+        as_service_role(admin, GLANCE_SQL, GLANCE_ROW | changes)
+
+
+def test_시장_한눈에_보류_기록은_지연_줄에_규칙과_함께_남는다(admin):
+    as_service_role(admin, GLANCE_SQL, GLANCE_ROW | {"news_status": "delayed", "news_text": "Update delayed",
+                                                     "news_scope": "Official releases", "rules": ["1 draft: llm_failed"]})
+
+
+def test_시장_전체_소식_원본은_서버가_추가만_하고_고치거나_지울_수_없다(admin):
+    as_service_role(admin, "insert into public.market_news_item (source, key, published_at, trading_day, payload)"
+                           " values ('Contoso Labor Bureau', 'jobs-1', '2026-10-15 08:30-04', '2026-10-16', '{}')")
+    allowed = [p for p in ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE")
+               if admin.execute("select has_table_privilege('service_role', 'public.market_news_item', %s)", (p,)).fetchone()[0]]
+
+    assert allowed == ["SELECT", "INSERT"]
+    for sql in ("update public.market_news_item set payload = ''", "delete from public.market_news_item"):
+        with pytest.raises(errors.InsufficientPrivilege):
+            as_service_role(admin, sql)

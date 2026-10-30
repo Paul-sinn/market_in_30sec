@@ -13,6 +13,7 @@ from m30.adapters.events import Earnings, EarningsTiming, ExDividend
 from m30.adapters.filings import ACCESSION, Filing, FilingForm
 from m30.adapters.holdings import Holding, HoldingsReport
 from m30.adapters.indicators import IndicatorRelease
+from m30.adapters.market_news import MarketNewsItem
 from m30.adapters.prices import DailyBar
 from m30.config import ET
 from m30.llm import LLMCallLimitReached
@@ -23,6 +24,8 @@ RETRY_DELAYS = (1.0, 2.0, 4.0)  # U5 = A. 길이 = 재시도 횟수(3) → 최�
 CUTOFF = time(4, 0)  # 수집 시각(HANDOFF 3-6). 공시 기간의 경계
 ITEM = re.compile(r"[0-9]\.[0-9]{2}")
 CIK = re.compile(r"[0-9]{10}")
+INDICATOR_NAME_MAX = 60  # 지표 일정 줄에 두 이름 + 시각이 한 줄에 들어가게
+MARKET_NEWS_SOURCE_MAX = 60  # 소식 줄은 기관 이름으로 시작한다(LLM이 데이터 블록에서 옮긴다)
 
 
 def filing_window(trading_day: date) -> tuple[datetime, datetime]:
@@ -212,14 +215,34 @@ def valid_holdings(report: object, fund: str) -> bool:
 
 
 def valid_releases(releases: object) -> bool:
-    return isinstance(releases, list) and all(
+    return releases is None or (isinstance(releases, list) and all(
         isinstance(r, IndicatorRelease)
         and _is_text(r.name)
         and r.name != ""
+        and r.name.isprintable()  # 이름은 시장 한눈에 줄에 그대로 나간다(#11): 한 줄, 제어 문자 없음
+        and len(r.name) <= INDICATOR_NAME_MAX
         and _is_aware(r.released_at)
         and _is_text(r.raw)
         for r in releases
-    )
+    ))
+
+
+def valid_market_news(items: object) -> bool:
+    """None(미지원) 또는 MarketNewsItem 목록. 기관 이름은 줄 맨 앞에 나가므로 한 줄 출력 가능 글자, 60자까지."""
+    return items is None or (isinstance(items, list) and all(
+        isinstance(i, MarketNewsItem)
+        and _is_text(i.key)
+        and i.key != ""
+        and _is_text(i.source)
+        and i.source != ""
+        and i.source.isprintable()
+        and len(i.source) <= MARKET_NEWS_SOURCE_MAX
+        and _is_aware(i.published_at)
+        and _is_text(i.title)
+        and _is_text(i.text)
+        and _is_text(i.raw)
+        for i in items
+    ))
 
 
 def _is_text(value: object) -> bool:

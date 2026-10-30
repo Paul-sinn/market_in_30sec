@@ -44,6 +44,7 @@ from m30.adapters.fake import (
     FakeHoldingsSource,
     FakeIndicatorSource,
     FakeLLM,
+    FakeMarketNewsSource,
     FakePriceSource,
     Scenario,
 )
@@ -385,6 +386,7 @@ def run_edgar(store, get, day=FRI):
         filings=EdgarFilingSource(get),
         indicators=FakeIndicatorSource(scenario),
         holdings=FakeHoldingsSource(scenario),
+        market_news=FakeMarketNewsSource(scenario),
         llm=llm,
         store=store,
         sleep=sleeps.append,

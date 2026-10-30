@@ -25,12 +25,14 @@ from m30.adapters.fake import (
     FakeHoldingsSource,
     FakeIndicatorSource,
     FakeLLM,
+    FakeMarketNewsSource,
     FakePriceSource,
     Scenario,
     load_scenario,
 )
 from m30.adapters.filings import Filing, FilingForm
 from m30.adapters.indicators import IndicatorRelease
+from m30.adapters.market_news import MarketNewsItem
 from m30.adapters.prices import DailyBar
 from m30.config import ET
 from m30.db.store import CardStore, RunLocked, connect
@@ -60,7 +62,8 @@ MSFT = Coverage("MSFT", "Microsoft Corporation", cik=MSFT_CIK)
 
 
 def run(store, scenario, day=FRI, **replaced):
-    """scenario: 경로 또는 Scenario. 돌려주는 값: summary, sleeps(대기 시간 목록), 가짜 5개(prices·events·filings·indicators·llm).
+    """scenario: 경로 또는 Scenario. 돌려주는 값: summary, sleeps(대기 시간 목록), 가짜 출처 7개(prices·events·filings·indicators·
+    holdings·market_news·llm).
     replaced: 바꿔 넣을 출처(예: llm=FakeLLM(…)). 테스트가 들고 있으므로 run이 예외로 끝나도 호출 기록을 본다."""
     if not isinstance(scenario, Scenario):
         scenario = load_scenario(scenario)
@@ -72,6 +75,7 @@ def run(store, scenario, day=FRI, **replaced):
         "filings": FakeFilingSource(scenario),
         "indicators": FakeIndicatorSource(scenario),
         "holdings": FakeHoldingsSource(scenario),
+        "market_news": FakeMarketNewsSource(scenario),
         "llm": FakeLLM(scenario),
     } | replaced
     sleeps = []
@@ -539,9 +543,10 @@ DELAYED = {
     Source.EVENTS: LineStatus.DELAYED,
     Source.SEC_FILINGS: LineStatus.DELAYED,
 }
-FAKE = {Source.PRICES: "prices", Source.EVENTS: "events", Source.SEC_FILINGS: "filings", Source.INDICATORS: "indicators"}
+FAKE = {Source.PRICES: "prices", Source.EVENTS: "events", Source.SEC_FILINGS: "filings", Source.INDICATORS: "indicators",
+        Source.MARKET_NEWS: "market_news"}
 PLAN_SUBJECT = {Source.PRICES: "AAPL", Source.EVENTS: "AAPL", Source.SEC_FILINGS: AAPL_CIK, Source.INDICATORS: None,
-                Source.LLM: None}
+                Source.MARKET_NEWS: None, Source.LLM: None}
 FAILED_SUBJECT = {**PLAN_SUBJECT, Source.LLM: "1"}  # LLM 실패는 묶음 번호로 남는다
 NEXT_SUBJECT = {Source.PRICES: "MSFT", Source.EVENTS: "MSFT", Source.SEC_FILINGS: MSFT_CIK}  # 같은 출처의 뒤 대상
 ERRORS = {  # 실패 종류 → (가짜 호출 수, 대기, 실패 사유)
@@ -633,6 +638,12 @@ def aapl_events(*events):
     return {"events": {"AAPL": list(events), "MSFT": []}}
 
 
+def news(**changes):
+    item = MarketNewsItem("jobs-1", "Contoso Labor Bureau", datetime(2026, 10, 15, 8, 30, tzinfo=ET), "Jobs report",
+                          "Payrolls were little changed.", "{}")
+    return {"market_news": [dataclasses.replace(item, **changes)]}
+
+
 def aapl_filing(**changes):
     return {"filings": {MSFT_CIK: [MSFT_FILING], AAPL_CIK: [dataclasses.replace(AAPL_FILING, **changes)]}}
 
@@ -675,6 +686,21 @@ WEIRD = {  # 실제 어댑터가 돌려줄 수 있는 이상한 값(가짜 로�
         IndicatorRelease("CPI\x00", datetime(2026, 10, 16, 8, 30, tzinfo=ET), '{"name": "CPI"}')]}),
     "지표_이름_빈_문자열": (Source.INDICATORS, {"indicators": [
         IndicatorRelease("", datetime(2026, 10, 16, 8, 30, tzinfo=ET), '{"name": ""}')]}),
+    # #11: 지표 이름은 시장 한눈에 줄에 그대로 나간다(신뢰 경계). 한 줄 출력 가능 글자, 60자까지
+    "지표_이름_줄바꿈": (Source.INDICATORS, {"indicators": [
+        IndicatorRelease("CPI\nBuy now", datetime(2026, 10, 16, 8, 30, tzinfo=ET), '{"name": "CPI"}')]}),
+    "지표_이름_61자": (Source.INDICATORS, {"indicators": [
+        IndicatorRelease("C" * 61, datetime(2026, 10, 16, 8, 30, tzinfo=ET), '{"name": "CPI"}')]}),
+    # #11: 시장 전체 소식. 기관 이름은 소식 줄 맨 앞에 나간다(한 줄, 60자까지)
+    "소식_기관_줄바꿈": (Source.MARKET_NEWS, news(source="Contoso\nBuy now")),
+    "소식_기관_61자": (Source.MARKET_NEWS, news(source="C" * 61)),
+    "소식_기관_빈_문자열": (Source.MARKET_NEWS, news(source="")),
+    "소식_키_빈_문자열": (Source.MARKET_NEWS, news(key="")),
+    "시간대_없는_소식_시각": (Source.MARKET_NEWS, news(published_at=datetime(2026, 10, 15, 8, 30))),
+    "소식_본문_NUL": (Source.MARKET_NEWS, news(text="Prices\x00 rose.")),
+    "소식_제목이_bytes": (Source.MARKET_NEWS, news(title=b"Prices")),
+    "소식_원본_짝_없는_서로게이트": (Source.MARKET_NEWS, news(raw='{"text": "a\ud800b"}')),
+    "소식이_항목이_아님": (Source.MARKET_NEWS, {"market_news": [{"key": "jobs-1"}]}),
     "빈_원본": (Source.SEC_FILINGS, aapl_filing(raw="")),
     "항목_번호_형식": (Source.SEC_FILINGS, aapl_filing(items=("x",))),
     "항목이_리스트": (Source.SEC_FILINGS, aapl_filing(items=["8.01"])),

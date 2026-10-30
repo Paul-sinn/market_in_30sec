@@ -163,7 +163,7 @@ describe("발행 중단(#16 D7): 데이터는 두고 화면에서 뺀다", () =>
       { ticker: "AAPL", name: "Apple Inc." },
       { ticker: "MSFT", name: "Microsoft" },
     ];
-    const data = { tradingDay: "Fri, Oct 16, 2026", cards: exposeCards(cards, viewer) };
+    const data = { tradingDay: "Fri, Oct 16, 2026", glance: null, cards: exposeCards(cards, viewer) };
     const mine = myDashboardView(data.cards, coverage, viewer, undefined);
     expect(mine.mine).toEqual([{ ticker: "MSFT", name: "Microsoft", card: null }]);
     expect(mine.browse.map((c) => c.ticker)).toEqual(["AAPL"]);
@@ -181,7 +181,7 @@ describe("잠긴 줄의 원문은 화면 모델(RSC props)과 HTML에 없다", (
 
   const render = (viewer: MyStocks | null) => {
     const cards = exposeCards([card], viewer);
-    const data = { tradingDay: "Fri, Oct 16, 2026", cards };
+    const data = { tradingDay: "Fri, Oct 16, 2026", glance: null, cards };
     const mine = viewer ? myDashboardView(cards, coverage, viewer, undefined) : undefined;
     return { props: JSON.stringify({ data, mine }), html: renderToStaticMarkup(<Dashboard data={data} mine={mine} />) };
   };

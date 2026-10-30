@@ -9,11 +9,12 @@ import CardsLayout from "@/app/cards/layout";
 import RootLayout from "@/app/layout";
 import Landing from "@/app/page";
 import { AuthControl } from "@/components/auth-control";
-import { Dashboard } from "@/components/dashboard";
+import { Dashboard, DashboardSkeleton } from "@/components/dashboard";
+import { MarketGlance } from "@/components/market-glance";
 import { SiteFooter } from "@/components/site-footer";
 import { StockCard } from "@/components/stock-card";
 import { TimezoneField } from "@/components/timezone-field";
-import { myDashboardView, type CardView, type MyDashboardView } from "@/lib/card-view";
+import { myDashboardView, type CardView, type GlanceView, type MyDashboardView } from "@/lib/card-view";
 import { SIGN_IN, SIGN_IN_FAILED, SIGN_OUT } from "@/lib/copy";
 
 // next/font/google은 빌드 때 글꼴을 받는다. 레이아웃 렌더 테스트에서는 변수 이름만 준다(Inter 말고 다른 글꼴을 부르면 실패)
@@ -160,7 +161,7 @@ describe("StockCard", () => {
 describe("Dashboard", () => {
   test("거래일 날짜 + 카드를 받은 순서대로", () => {
     const html = renderToStaticMarkup(
-      <Dashboard data={{ tradingDay: "Fri, Oct 16, 2026", cards: [card(), card({ ticker: "MSFT", name: "Microsoft" })] }} />,
+      <Dashboard data={{ tradingDay: "Fri, Oct 16, 2026", glance: null, cards: [card(), card({ ticker: "MSFT", name: "Microsoft" })] }} />,
     );
     expect(html).toMatch(/<h1[^>]*>.*Fri, Oct 16, 2026.*<\/h1>/);
     expect(text(html).indexOf("AAPL")).toBeLessThan(text(html).indexOf("MSFT"));
@@ -168,8 +169,9 @@ describe("Dashboard", () => {
   });
 
   test("카드 없음은 고정 문구", () => {
-    const html = renderToStaticMarkup(<Dashboard data={{ tradingDay: null, cards: [] }} />);
+    const html = renderToStaticMarkup(<Dashboard data={{ tradingDay: null, glance: null, cards: [] }} />);
     expect(html).toMatch(/<h1[^>]*>No cards yet<\/h1>/);
+    expect(text(html)).not.toContain("Market at a glance"); // 카드가 없으면 시장 한눈에 블록도 없다(#11)
   });
 });
 
@@ -365,7 +367,11 @@ describe("내 종목·둘러보기(#38)", () => {
     { ticker: "NVDA", name: "NVIDIA" },
     { ticker: "TQQQ", name: "ProShares UltraPro QQQ" },
   ];
-  const data = { tradingDay: "Fri, Oct 16, 2026", cards: [card(), card({ ticker: "MSFT", name: "Microsoft" }), card({ ticker: "NVDA", name: "NVIDIA" })] };
+  const data = {
+    tradingDay: "Fri, Oct 16, 2026",
+    glance: null,
+    cards: [card(), card({ ticker: "MSFT", name: "Microsoft" }), card({ ticker: "NVDA", name: "NVIDIA" })],
+  };
   const view = (stocks: string[], swapsLeft: number | null, result?: string): MyDashboardView =>
     myDashboardView(
       data.cards,
@@ -437,5 +443,71 @@ describe("내 종목·둘러보기(#38)", () => {
     const all = [...targets(html), ...[...html.matchAll(/<summary\b[^>]*>/g)].map((m) => m[0])];
     expect(all.length).toBe(1 + 3 + 1); // 빼기 1 + 넣기 3 + 펼침 1
     for (const t of all) expect(t, t).toMatch(/class="[^"]*\b(min-)?h-1[12]\b/);
+  });
+});
+
+describe("시장 한눈에(#11)", () => {
+  const glance: GlanceView = {
+    lines: [
+      { text: "Thu 10/15 close: S&P 500 (SPY) +0.4%, Nasdaq (QQQ) \u22121.2%", status: "checked_found" },
+      { text: "No economic releases found", status: "checked_none" },
+      { text: "Not covered yet", status: "unsupported" },
+    ],
+    checked: "Checked 7:30 AM ET · Daily prices · Economic calendar",
+  };
+  const headings = (html: string) => [...html.matchAll(/<h([12])\b[^>]*>(.*?)<\/h\1>/g)].map((m) => `h${m[1]} ${text(m[2])}`);
+  const section = (html: string) => html.match(/<section[^>]*aria-labelledby="market-glance"[^>]*>.*?<\/section>/)?.[0];
+
+  test("제목 Market at a glance(h2, 섹션 이름) + DB 문구 세 줄을 순서대로 + 하단 확인 범위", () => {
+    const html = renderToStaticMarkup(<MarketGlance glance={glance} />);
+    expect(html).toMatch(/<section[^>]*aria-labelledby="market-glance"/);
+    expect(html).toMatch(/<h2 id="market-glance"[^>]*>Market at a glance<\/h2>/);
+    expect(lines(html)).toEqual([
+      ["checked_found", "Thu 10/15 close: S&amp;P 500 (SPY) +0.4%, Nasdaq (QQQ) \u22121.2%"],
+      ["checked_none", "No economic releases found"],
+      ["unsupported", "Not covered yet"],
+    ]);
+    expect(text(html)).toContain("Checked 7:30 AM ET · Daily prices · Economic calendar");
+  });
+
+  test("하단이 없으면(확인된 줄 없음·그날 행 없음) Checked를 그리지 않는다. 줄은 숨기지 않는다", () => {
+    const delayed: GlanceView = { lines: Array(3).fill({ text: "Update delayed", status: "delayed" }), checked: null };
+    const html = renderToStaticMarkup(<MarketGlance glance={delayed} />);
+    expect(lines(html)).toEqual(Array(3).fill(["delayed", "Update delayed"]));
+    expect(text(html)).not.toContain("Checked");
+  });
+
+  test("줄 색은 카드와 같은 규칙: 확인함·있음만 본문색, 나머지는 흐림", () => {
+    const html = renderToStaticMarkup(
+      <MarketGlance glance={{ ...glance, lines: [...glance.lines.slice(0, 2), { text: "Update delayed", status: "delayed" }] }} />,
+    );
+    expect(classOf(html, 'data-status="checked_found')).toContain("text-foreground");
+    expect(classOf(html, 'data-status="checked_none')).toContain("text-muted");
+    expect(classOf(html, 'data-status="delayed')).toContain("text-muted");
+    expect(classOf(renderToStaticMarkup(<MarketGlance glance={glance} />), 'data-status="unsupported')).toContain("text-muted");
+  });
+
+  test("거래일 제목 바로 아래, 카드 목록 위(로그인 전)", () => {
+    const html = renderToStaticMarkup(<Dashboard data={{ tradingDay: "Fri, Oct 16, 2026", glance, cards: [card()] }} />);
+    expect(headings(html)).toEqual(["h1 Fri, Oct 16, 2026", "h2 Market at a glance", "h2 AAPL"]);
+  });
+
+  test("로그인: 거래일 제목 → 시장 한눈에 → My stocks → Browse. 로그인 전·무료·Plus 모두 같은 블록", () => {
+    const data = { tradingDay: "Fri, Oct 16, 2026", glance, cards: [card(), card({ ticker: "MSFT", name: "Microsoft" })] };
+    const coverage = [
+      { ticker: "AAPL", name: "Apple Inc." },
+      { ticker: "MSFT", name: "Microsoft" },
+    ];
+    const mine = (swapsLeft: number | null) =>
+      myDashboardView(data.cards, coverage, { stocks: [{ ...coverage[1], locked: false }], swapsLeft }, undefined);
+    const [out, free, plus] = [undefined, mine(3), mine(null)].map((m) => renderToStaticMarkup(<Dashboard data={data} mine={m} />));
+    expect(headings(free)).toEqual(["h1 Fri, Oct 16, 2026", "h2 Market at a glance", "h2 My stocks", "h2 MSFT", "h2 Browse", "h2 AAPL"]);
+    expect(section(out)).toBeDefined();
+    expect(section(free)).toBe(section(out));
+    expect(section(plus)).toBe(section(out));
+  });
+
+  test("읽는 동안 스켈레톤에 시장 한눈에 자리(제목 1 + 시장 한눈에 1 + 카드 3)", () => {
+    expect(renderToStaticMarkup(<DashboardSkeleton />).match(/bg-surface/g)).toHaveLength(5);
   });
 });

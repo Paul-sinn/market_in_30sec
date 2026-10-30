@@ -6,6 +6,7 @@ import {
   formatCheckedAt,
   formatCloseDay,
   formatTradingDay,
+  glanceView,
   lineView,
   myDashboardView,
   type CardView,
@@ -112,6 +113,59 @@ describe("checkedFooter: 확인된 줄(확인함·있음/없음)만", () => {
       checkedFooter([at("2026-10-16T11:30:00Z", "delayed", "Daily prices"), at("2026-10-16T11:30:00Z", "unsupported", null)]),
     ).toBeNull();
     expect(checkedFooter([])).toBeNull();
+  });
+});
+
+describe("glanceView: 시장 한눈에(#11)", () => {
+  const stored = (text: string, status: LineStatus, checked_at: string, source_scope: string | null) => ({ text, status, checked_at, source_scope });
+
+  test("DB 문구·상태를 줄 순서 그대로, 하단은 확인된 줄의 가장 이른 시각 + 범위", () => {
+    expect(
+      glanceView([
+        stored("Thu 10/15 close: S&P 500 (SPY) +0.4%, Nasdaq (QQQ) \u22121.2%", "checked_found", "2026-10-16T11:31:00Z", "Daily prices"),
+        stored("No economic releases found", "checked_none", "2026-10-16T11:30:00Z", "Economic calendar"),
+        stored("Contoso Labor Bureau reported consumer prices rose 0.3%", "checked_found", "2026-10-16T11:32:00Z", "Official releases"),
+      ]),
+    ).toEqual({
+      lines: [
+        { text: "Thu 10/15 close: S&P 500 (SPY) +0.4%, Nasdaq (QQQ) \u22121.2%", status: "checked_found" },
+        { text: "No economic releases found", status: "checked_none" },
+        { text: "Contoso Labor Bureau reported consumer prices rose 0.3%", status: "checked_found" },
+      ],
+      checked: "Checked 7:30 AM ET · Daily prices · Economic calendar · Official releases",
+    });
+  });
+
+  test("운영 지금 값(지연·미지원·미지원): 문구는 그대로, 확인된 줄이 없으니 하단 없음", () => {
+    expect(
+      glanceView([
+        stored("Update delayed", "delayed", "2026-10-16T11:30:00Z", "Daily prices"),
+        stored("Not covered yet", "unsupported", "2026-10-16T11:30:00Z", null),
+        stored("Not covered yet", "unsupported", "2026-10-16T11:30:00Z", null),
+      ]),
+    ).toEqual({
+      lines: [
+        { text: "Update delayed", status: "delayed" },
+        { text: "Not covered yet", status: "unsupported" },
+        { text: "Not covered yet", status: "unsupported" },
+      ],
+      checked: null,
+    });
+  });
+
+  test("그날 행이 없으면(null) 줄을 숨기지 않고 Update delayed 세 줄, 하단 없음", () => {
+    expect(glanceView(null)).toEqual({
+      lines: Array(3).fill({ text: "Update delayed", status: "delayed" }),
+      checked: null,
+    });
+  });
+
+  test("허용한 키만 옮긴다: 줄에 다른 값(보류 초안 등)이 붙어 와도 화면 모델에 없다", () => {
+    const extra = { ...stored("a", "checked_found", "2026-10-16T11:30:00Z", "Daily prices"), hold_draft: "canary-hold" };
+    const view = glanceView([extra, extra, extra]);
+    expect(Object.keys(view).sort()).toEqual(["checked", "lines"]);
+    for (const l of view.lines) expect(Object.keys(l).sort()).toEqual(["status", "text"]);
+    expect(JSON.stringify(view)).not.toContain("canary-hold");
   });
 });
 

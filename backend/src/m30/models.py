@@ -130,6 +130,19 @@ class StockCard:
     publish_suspended: bool = False  # 발행 중단(사람이 대시보드에서 켠다). 저장소에서 읽은 카드에만 의미가 있고 upsert_card는 쓰지 않는다
 
 
+@dataclass(frozen=True)
+class MarketGlance:
+    """market_glance 한 행(GLOSSARY MarketGlance). 거래일마다 하나, 모든 유저 공용."""
+
+    trading_day: date
+    close_line: CardLine  # 어제 마감 (SPY·QQQ 카드 등락률, 코드)
+    indicator_line: CardLine  # 오늘 지표 일정 (코드)
+    market_news_line: CardLine  # 시장 전체 소식 (LLM + 검수)
+    market_news_hold_draft: str | None = None  # 마지막 LLM 문장(대체됐을 때만)
+    market_news_hold_rules: tuple[str, ...] = ()  # 걸린 규칙. () = 통과 또는 LLM 안 부름
+    updated_at: datetime | None = None  # DB가 채움. 저장소에서 읽은 행에만 있음 (ET)
+
+
 class HoldStage(StrEnum):
     """보류함 행이 걸린 단계. 바꾸면 마이그레이션 enum도 같이."""
 

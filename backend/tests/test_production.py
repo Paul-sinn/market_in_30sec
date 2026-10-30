@@ -84,6 +84,20 @@ def test_운영_실행은_실제_공시·편입_보고와_미연결_출처만_�
     ] + [SUBMISSIONS_URL.format(cik=cik) for cik in sorted(COMPANY_CIKS.values())]
 
 
+def test_운영_실행의_시장_한눈에는_시세_구독과_실제_지표·소식_출처_전까지_지연·미지원·미지원이다(store):
+    summary, _ = run_production(store, FRI, get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
+
+    glance = store.get_market_glance(FRI)
+    assert {name: (line.text, line.status, line.source_scope) for name, line in (
+        ("close", glance.close_line), ("indicator", glance.indicator_line), ("news", glance.market_news_line))} == {
+        "close": (UPDATE_DELAYED, LineStatus.DELAYED, PRICE_SCOPE),  # SPY·QQQ 등락률 없음(#18 전)
+        "indicator": (NOT_COVERED, LineStatus.UNSUPPORTED, None),  # 가짜 일정·거짓 "없음"을 내보내지 않는다
+        "news": (NOT_COVERED, LineStatus.UNSUPPORTED, None),
+    }
+    assert (summary.llm_calls, summary.glance_review) == (0, "-")  # 소식 출처가 없으면 LLM을 부르지 않는다
+    assert store.list_raw_market_news(FRI) == []
+
+
 def test_운영_실행은_그_분기_기본_종목으로_실험_15종목을_저장한다(store):
     assert {"SPY", "QQQ"} <= set(EXPERIMENT_DEFAULT_TICKERS)  # 지수 대신 SPY·QQQ(부모 스펙: 선정 시 보장)
     experiment = sorted(COMPANY_CIKS | dict.fromkeys(ETFS))
@@ -208,6 +222,7 @@ def webhook_message(out):
     "situation, exit_code, lines",
     [
         ("quiet", 0, ["2026-10-16 cards_saved=15 resumed=- ", "coverage: refreshed", "prices=none",
+                      "glance: close=delayed indicator=unsupported market_news=unsupported review=-",
                       "holdings: QQQ=checked_found(unmatched 4) SCHD=checked_found(unmatched 9)"
                       " SPY=checked_found(unmatched 3) TQQQ=checked_found(unmatched 4)"]),
         ("denied", 1, ["ACCESS DENIED (not retried): sec_filings", "cards_saved=15", "coverage: refreshed"]),

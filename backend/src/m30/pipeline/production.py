@@ -7,7 +7,7 @@ from m30.adapters import SourceError
 from m30.adapters.edgar import EdgarFilingSource, Get, ticker_ciks
 from m30.adapters.nport import EdgarHoldingsSource
 from m30.adapters.prices import PriceSource
-from m30.adapters.unavailable import NoEventSource, NoIndicatorSource
+from m30.adapters.unavailable import NoEventSource, NoIndicatorSource, NoMarketNewsSource
 from m30.db.store import CardStore
 from m30.experiment import EXPERIMENT_DEFAULT_TICKERS, experiment_coverage
 from m30.llm import LLM
@@ -33,6 +33,7 @@ def run_production(
         filings=EdgarFilingSource(get),
         indicators=NoIndicatorSource(),
         holdings=EdgarHoldingsSource(get),  # #10 B: live 게이트(test_holdings_live) 통과 뒤 연결
+        market_news=NoMarketNewsSource(),  # 공식 발표 실제 어댑터 전: 소식 줄 Not covered yet, LLM 0
         llm=llm,
         store=store,
     ).run(trading_day)

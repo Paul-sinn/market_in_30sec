@@ -9,7 +9,7 @@ const CHANGE_TONE: Record<ChangeView["tone"], string> = {
   delayed: "text-muted",
   unsupported: "text-muted",
 };
-const LINE_TONE: Record<LineView["status"], string> = {
+export const LINE_TONE: Record<LineView["status"], string> = {
   checked_found: "text-foreground",
   checked_none: "text-muted",
   delayed: "text-muted",

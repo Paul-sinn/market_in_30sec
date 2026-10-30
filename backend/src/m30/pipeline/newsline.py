@@ -134,12 +134,12 @@ class NewsDraft:
         return None if self.sentence is None else news_text(self.sentence, self.more)
 
 
-def draft_retry_reason(problem: DraftProblem, sentence: str | None) -> str:
+def draft_retry_reason(problem: DraftProblem, sentence: str | None, texts: Mapping[str, str] = RETRY_REASONS) -> str:
     """REVIEW_FAILURES 문제 하나의 재생성 이유. TOO_LONG만 정리한 문장의 단어 수를 넣는다(TOO_LONG이면 문장이 있다).
     다른 이유 문장에는 {"sentence": null} 같은 중괄호가 있어 format하지 않는다."""
     if problem is DraftProblem.TOO_LONG:
-        return RETRY_REASONS[problem].format(words=len(sentence.split()))
-    return RETRY_REASONS[problem]
+        return texts[problem].format(words=len(sentence.split()))
+    return texts[problem]
 
 
 def news_text(sentence: str, more: int) -> str:

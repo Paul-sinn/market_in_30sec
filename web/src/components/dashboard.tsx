@@ -1,6 +1,7 @@
 import type { CardView, DashboardView, MyDashboardView } from "@/lib/card-view";
 import { BROWSE, NO_CARDS } from "@/lib/copy";
 
+import { MarketGlance } from "./market-glance";
 import { MyStocksSection } from "./my-stocks";
 import { StockCard } from "./stock-card";
 
@@ -26,6 +27,7 @@ export function Dashboard({ data, mine }: { data: DashboardView; mine?: MyDashbo
   return (
     <>
       <h1 className={HEADING}>{data.tradingDay ?? NO_CARDS}</h1>
+      {data.glance && <MarketGlance glance={data.glance} />}
       {mine ? (
         <>
           <MyStocksSection view={mine} grid={GRID} />
@@ -50,6 +52,8 @@ export function DashboardSkeleton() {
   return (
     <div aria-busy="true">
       <div className={`${HEADING} h-11 w-64 max-w-full bg-surface motion-safe:animate-pulse`} />
+      {/* 시장 한눈에: 제목 + 세 줄 + 하단이 한 줄씩일 때 높이(232px) */}
+      <div className="mb-12 h-58 bg-surface motion-safe:animate-pulse" />
       <div className={GRID}>
         {[0, 1, 2].map((i) => (
           <div key={i} className="h-56 bg-surface motion-safe:animate-pulse" />

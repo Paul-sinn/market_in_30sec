@@ -45,6 +45,12 @@ description: "30초 종목 리포트 앱에 나가는 문장의 규칙. 첫 번�
 - 시가·고가·저가·종가로만 계산한 과거 사실 하나: `Up 5 days in a row`, `8.0% below 52-week high`, `At 52-week high`. 기준값·우선순위는 HANDOFF 3-3(연속 3일 이상, 52주 고점·저점 10% 이내). %는 소수 첫째 자리
 - 줄을 숨기지 않는다. 가격 데이터가 정상인데 표시 조건에 맞는 사실이 없으면 `No additional price highlights`(데이터 누락·오류는 `Update delayed`로 구분), 무료 유저에게는 `Price facts in Plus` 잠금 표시(서버가 결정)
 
+### 시장 한눈에 (MarketGlance, #11)
+- 어제 마감(코드): `Thu 10/15 close: S&P 500 (SPY) +0.4%, Nasdaq (QQQ) −1.2%`. 값 둘이 줄의 정의라 실행기의 `숫자 2개` 위반은 예상 결과(코드 템플릿만, LLM 줄엔 적용 안 함). 하나라도 없으면 `Update delayed`
+- 오늘 지표 일정(코드): `CPI 8:30 AM ET · Jobless claims 8:30 AM ET +1 more`, 없으면 `No economic releases found`
+- 시장 전체 소식(LLM, 첫 번째 줄과 같은 검수 `review_sentence`): 출처 꼬리표 없이 범위는 하단. 검수 실패는 `Update delayed`(초안은 보류 칸, 웹은 안 읽음)
+- 출처가 없으면 `Not covered yet`(운영: 지표·소식 실제 어댑터 전). 보류 3건(`No new official releases found` 범위, 지표 약어 허용 목록, `RETRY_COPY_COUNT`의 "usually revenue")은 실제 어댑터 티켓에서 정한다
+
 ### 금지어 (카드·시장 한눈에·아침 알림)
 buy, sell, should, bullish, bearish, likely to rise, upside, downside, opportunity, undervalued, overvalued, momentum, breakout, rally ahead. 감정 동사 soars, plunges, skyrockets, crashes, tanks, surges, plummets, rockets, tumbles, slumps, spikes, jumps, rallies, sinks, sank, dives, collapses, explodes, nosedives. 어디서든 차단(아래 2장과 같음): you should, you must, guaranteed, risk-free, can't lose, cant lose, cannot lose, sure thing, easy money, get rich, double your money, 한국어 권유(목록은 `arena.toml` `always_banned`에만 둔다). 검사 기준 목록은 `backend/src/m30/copy_rules/card.toml`·`arena.toml`이다. 목록을 바꾸면 이 문단도 같이 바꾼다.
 

@@ -15,7 +15,9 @@ export type CardView = {
   leverageTag: string | null;
   checked: string | null; // "Checked 7:30 AM ET · SEC filings"
 };
-export type DashboardView = { tradingDay: string | null; cards: CardView[] };
+/** 시장 한눈에(#11). lines는 항상 3개: 어제 마감, 오늘 지표 일정, 시장 전체 소식. 모든 플랜·로그인 전이 같다 */
+export type GlanceView = { lines: TextLine[]; checked: string | null };
+export type DashboardView = { tradingDay: string | null; glance: GlanceView | null; cards: CardView[] }; // glance null = 카드도 없음
 
 export type Stock = { ticker: string; name: string };
 /** 로그인한 대시보드(#38). 위 내 종목, 아래 둘러보기, 고르기 목록 */
@@ -60,6 +62,12 @@ export function changeView(pct: number | null, status: LineStatus, previousTradi
 /** 없는 줄(아직 안 만듦, 축소판의 첫 번째 줄)도 숨기지 않고 지연으로 그린다. */
 export function lineView(line: TextLine | null): TextLine {
   return line ?? { text: UPDATE_DELAYED, status: "delayed" };
+}
+
+/** 그날 행이 없으면(null: #11 전 날짜, 시장 한눈에 전에 끝난 실행) 지연 세 줄, 하단 없음. 허용한 키만 옮긴다(펼치기 금지) */
+export function glanceView(lines: { text: string; status: LineStatus; checked_at: string; source_scope: string | null }[] | null): GlanceView {
+  if (!lines) return { lines: Array.from({ length: 3 }, () => lineView(null)), checked: null };
+  return { lines: lines.map((l) => ({ text: l.text, status: l.status })), checked: checkedFooter(lines) };
 }
 
 const ET_TIME = new Intl.DateTimeFormat("en-US", {
