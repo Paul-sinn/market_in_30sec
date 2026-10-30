@@ -308,7 +308,7 @@ def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> in
     try:
         with connect(settings) as conn:
             store = CardStore(conn)
-            # GitHub 예약 실행은 늦게 오는 예비(#43): 정시 dispatch가 그 거래일을 끝냈으면 카드·LLM 없이 끝낸다. 수동·dispatch는 다시 만든다
+            # GitHub 예약 실행은 늦게 오는 예비(#43): 그 거래일을 실패 없이 끝낸 실행이 있으면 카드·LLM 없이 끝낸다. 수동·dispatch는 다시 만든다
             if os.environ.get("RUN_TRIGGER") == "schedule":
                 if store.has_finished_run(day):
                     say(f"ALREADY_DONE {day}")

@@ -272,7 +272,8 @@ class MorningPipeline:
         # 시장 한눈에(#11): 카드·알림 뒤. 여기서 예상 못 한 예외가 나도 카드·알림은 저장돼 있고 다음 실행이 이어 한다
         glance, glance_review = None, "-"
         if not glance_resumed:
-            fund_pcts = [saved[t].change_pct if t in saved else None for _, t in CLOSE_FUNDS]  # 같은 날 SPY·QQQ 카드와 같은 숫자
+            # 같은 날 SPY·QQQ 카드와 같은 숫자. 발행 중단 카드는 없는 것으로 본다(사람이 막은 숫자가 시장 한눈에로 나가지 않게)
+            fund_pcts = [c.change_pct if (c := saved.get(t)) and not c.publish_suspended else None for _, t in CLOSE_FUNDS]
             old = stored_glance and stored_glance.market_news_line
             if news_status is LineStatus.DELAYED and old and old.status in CHECKED:
                 # 소식 기간은 고정이고 수집 실패는 새 정보가 아니다: 앞 실행이 확인한 줄(확인 시각 포함)을 그대로 둔다(첫 번째 줄 D6과 같다)
@@ -281,6 +282,9 @@ class MorningPipeline:
                 news_line, hold_draft, hold_rules, glance_review = market_news_line(
                     news_status, news_items, trading_day, checked_at, send
                 )
+            old = stored_glance and stored_glance.indicator_line
+            if indicator.status is LineStatus.DELAYED and old and old.status in CHECKED:
+                indicator = old  # 지표 줄도 같은 규칙: 거래일 일정 수집 실패는 앞 실행이 확인한 줄을 덮지 않는다
             close = close_line(*fund_pcts, previous_trading_day(trading_day), checked_at)
             glance = MarketGlance(trading_day, close, indicator, news_line, hold_draft, hold_rules)
             self._store.upsert_market_glance(glance)
@@ -357,7 +361,7 @@ class MorningPipeline:
         return {cov.ticker: by_fund[cov.holdings_ticker] for cov in targets if cov.holdings_ticker is not None}
 
     def _read_fund(self, fund: str, coverage: dict[str, Coverage], trading_day: date, calls: SourceCalls) -> FundHoldings:
-        """스펙 #10 D4 표, 위에서부터."""
+        """스펙 #10 D4 표, 위에서부터. 단 출처 → None은 저장분이 없을 때만 미지원(있으면 출처 실패와 같이 저장분·나이 제한, 2026-10-30 리뷰)."""
         if fund not in coverage:  # 없는 티커를 가리킴(FK 없음): 출처를 부르지 않는다
             return FundHoldings(LineStatus.UNSUPPORTED)
         report = self._store.latest_holdings(fund)
@@ -369,10 +373,11 @@ class MorningPipeline:
             except SourceError:
                 pass  # 저장분을 쓴다(없으면 지연). 실패는 요약 failed:에 남았다
             else:
-                if fresh is None:
+                if fresh is not None:
+                    self._store.save_holdings(fresh)
+                    report = self._store.latest_holdings(fund)  # 저장분과 비교해 period_end가 늦은 쪽
+                elif report is None:  # 출처가 다루지 않고 저장분도 없을 때만 미지원. 저장분이 있으면 아래 나이 제한으로
                     return FundHoldings(LineStatus.UNSUPPORTED)
-                self._store.save_holdings(fresh)
-                report = self._store.latest_holdings(fund)  # 저장분과 비교해 period_end가 늦은 쪽
         if report is None or trading_day > report.period_end + HOLDINGS_MAX_AGE:
             return FundHoldings(LineStatus.DELAYED)
         return top_holdings(report, coverage.values())

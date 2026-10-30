@@ -58,6 +58,15 @@ def test_SPY·QQQ_중_하나라도_등락률이_없으면_어제_마감_줄_전�
     assert shown(store.get_market_glance(FRI).close_line) == ("Update delayed", LineStatus.DELAYED, "Daily prices")
 
 
+def test_발행_중단한_SPY_카드의_등락률은_어제_마감_줄에_쓰지_않고_지연이다(store, admin):
+    run(store, GLANCE)
+    admin.execute("update public.stock_card set publish_suspended = true where ticker = 'SPY'")  # 대시보드에서 켜는 것과 같은 SQL
+
+    run(store, GLANCE)
+
+    assert shown(store.get_market_glance(FRI).close_line) == ("Update delayed", LineStatus.DELAYED, "Daily prices")
+
+
 @pytest.mark.parametrize(
     "indicators, line",
     [
@@ -81,6 +90,19 @@ def test_지표_출처가_실패하면_지표_줄만_지연이고_요약_실패�
     glance = store.get_market_glance(FRI)
     assert shown(glance.indicator_line) == ("Update delayed", LineStatus.DELAYED, "BLS, BEA and Fed calendars")  # "없음"으로 쓰지 않는다
     assert glance.close_line.status is LineStatus.CHECKED_FOUND
+    assert ran.summary.failures == (SourceFailure(Source.INDICATORS, None, FailureReason.ERROR),)
+
+
+def test_재실행에서_지표_출처가_실패하면_앞_실행이_확인한_지표_줄을_그대로_둔다(store):
+    run(store, GLANCE)
+    first = store.get_market_glance(FRI)
+    ran = run(store, dataclasses.replace(load_scenario(GLANCE), failures={(Source.INDICATORS, None): FailurePlan("error")}))
+
+    again = store.get_market_glance(FRI)
+    assert shown(first.indicator_line) == (
+        "CPI 8:30 AM ET · Jobless claims 8:30 AM ET +1 more", LineStatus.CHECKED_FOUND, "BLS, BEA and Fed calendars")
+    assert again.indicator_line == first.indicator_line  # 확인 시각까지 앞 실행 그대로(소식 줄과 같은 규칙)
+    assert again.close_line.checked_at > first.close_line.checked_at  # 다른 줄은 이번 실행
     assert ran.summary.failures == (SourceFailure(Source.INDICATORS, None, FailureReason.ERROR),)
 
 
