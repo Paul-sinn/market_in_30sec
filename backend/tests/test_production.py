@@ -499,6 +499,32 @@ def test_예약_실행은_그_거래일에_완료된_실행이_없으면_건너�
     assert out.splitlines()[0] == webhook_message(out).splitlines()[2] == BACKUP_LINE
 
 
+def finished_run(admin, failed):
+    """2026-10-16에 끝난 실행 한 행. failed와 summary는 함께 값이 있다(스키마 제약)."""
+    admin.execute("insert into public.pipeline_run (trading_day, finished_at, failed, summary) values ('2026-10-16', now(), %s, '{}')",
+                  (failed,))
+
+
+def test_예약_실행은_그_거래일에_끝난_실행이_모두_실패했으면_BACKUP_RUN으로_카드를_다시_만든다(settings, admin):
+    finished_run(admin, True)
+
+    code, out = run_probe(settings, "quiet", trigger="schedule")
+
+    assert code == 0
+    assert out.splitlines()[0] == BACKUP_LINE
+    assert "2026-10-16 cards_saved=15 resumed=- " in out
+
+
+@pytest.mark.parametrize("failed", [[False], [True, False]], ids=["성공", "실패_뒤_성공"])
+def test_예약_실행은_그_거래일에_실패하지_않고_끝난_실행이_하나라도_있으면_ALREADY_DONE으로_끝난다(settings, admin, failed):
+    for f in failed:
+        finished_run(admin, f)
+
+    code, out = run_probe(settings, "quiet", trigger="schedule")
+
+    assert (code, out) == (0, "ALREADY_DONE 2026-10-16\nfake_modules=[]\n")
+
+
 def test_예약_실행은_같은_거래일_실행이_진행_중이면_ALREADY_DONE이_아니라_LOCKED로_끝난다(settings, admin):
     admin.execute("insert into public.pipeline_run (trading_day) values ('2026-10-16')")  # 진행 중: finished_at 없음 + 잠금
     with connect(settings) as conn, CardStore(conn).run_lock(FRI):

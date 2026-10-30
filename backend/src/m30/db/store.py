@@ -197,9 +197,11 @@ class CardStore:
         )
 
     def has_finished_run(self, trading_day: date) -> bool:
-        """이 거래일에 끝까지 간 실행(finished_at 있음)이 있는지. 진행 중·죽은 실행은 세지 않는다."""
+        """이 거래일에 끝까지 갔고 실패하지 않은 실행(finished_at 있음, failed가 true 아님 = false 또는 #17 전 행의 null)이 있는지.
+        진행 중·죽은 실행·실패한 실행은 세지 않는다."""
         return self._conn.execute(
-            "select exists (select from public.pipeline_run where trading_day = %s and finished_at is not null)", (trading_day,)
+            "select exists (select from public.pipeline_run where trading_day = %s and finished_at is not null"
+            " and failed is not true)", (trading_day,)
         ).fetchone()[0]
 
     def save_card(self, card: StockCard, holds: Sequence[HoldItem] | None) -> None:

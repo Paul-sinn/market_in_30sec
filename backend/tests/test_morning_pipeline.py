@@ -727,6 +727,23 @@ def test_편입_보고를_못_받아도_저장분이_있으면_저장분으로_E
     assert ran.summary.failures == (SourceFailure(Source.HOLDINGS, "SPY", FailureReason.ERROR),)
 
 
+@pytest.mark.parametrize(
+    "day, line",
+    [
+        (date(2026, 11, 17), ("No new SEC filings found", LineStatus.CHECKED_NONE, "SEC filings of 2 top holdings", None)),
+        (date(2027, 3, 29), HOLDINGS_DELAYED),  # 06-30 + 270일 = 2027-03-27
+    ],
+    ids=["저장분_270일_안", "저장분_270일_넘음"],
+)
+def test_갱신_때_출처가_다루지_않는다고_해도_저장분이_있으면_미지원이_아니라_저장분_규칙을_따른다(store, day, line):
+    run_etf(store, quiet_etf())  # FRI: 기준일 2026-06-30 보고 저장
+    ran = run_etf(store, quiet_etf(holdings={}), day)  # 갱신 시기: 출처 → None
+
+    assert ran.holdings.calls == ["QQQ", "SPY"]
+    assert news(ran.cards["SPY"]) == line
+    assert ran.summary.failures == ()
+
+
 @pytest.mark.parametrize("period_end, delayed", [("2026-01-19", False), ("2026-01-18", True)],
                          ids=["기준일_뒤_270일", "기준일_뒤_271일"])
 def test_쓸_편입_보고가_기준일에서_270일을_넘으면_ETF_첫_번째_줄은_지연이다(store, period_end, delayed):
