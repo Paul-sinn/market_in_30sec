@@ -94,7 +94,7 @@ describe("StockCard", () => {
   });
 
   test("등락률 색: 상승 초록(up)·하락 빨강(down)·보합 중립, 지연·미지원은 흐림", () => {
-    const tone = (c: CardView["change"]) => classOf(renderToStaticMarkup(<StockCard card={card({ change: c })} />), 'data-tone="' + c.tone);
+    const tone = (c: NonNullable<CardView["change"]>) => classOf(renderToStaticMarkup(<StockCard card={card({ change: c })} />), 'data-tone="' + c.tone);
     expect(tone({ text: "+1.3%", tone: "up", label: "Thu 10/15 close" })).toContain("text-up");
     expect(tone({ text: "\u22121.3%", tone: "down", label: "Thu 10/15 close" })).toContain("text-down");
     const flat = tone({ text: "0.0%", tone: "flat", label: "Thu 10/15 close" });
@@ -144,6 +144,20 @@ describe("StockCard", () => {
       expect(text(html)).toContain(`${c.text}${c.label}`); // 태그를 지우면 값 바로 뒤에 라벨
     }
     expect(text(renderToStaticMarkup(<StockCard card={card()} />))).not.toContain("prev close");
+  });
+
+  test("등락률 키가 없는 카드(가격 표시 off, #56)는 머리에 티커·종목명만, 등락률·라벨 없이 두 줄", () => {
+    const off = card({ lines: card().lines.slice(0, 2), checked: "Checked 7:30 AM ET · SEC filings" });
+    delete off.change;
+    const html = renderToStaticMarkup(<StockCard card={off} />);
+    expect(change(html)).toBeNull(); // data-tone 요소 없음
+    expect(text(html)).not.toMatch(/Thu 10\/15 close|prev close|%/);
+    expect(text(html)).toContain("AAPL");
+    expect(text(html)).toContain("Apple Inc.");
+    expect(lines(html)).toEqual([
+      ["checked_found", "Apple reported Q3 results (SEC filing)"],
+      ["checked_found", "Earnings Thu 10/29 after close (D-13)"],
+    ]);
   });
 
   test("레버리지 태그는 있을 때만", () => {

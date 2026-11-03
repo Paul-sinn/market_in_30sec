@@ -44,3 +44,4 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}  # 실행 요약 알림(#17). 없으면 빈 문자열 → 보내지 않는다
+          PRICE_DISPLAY: ${{ vars.PRICE_DISPLAY }}  # 가격 표시 플래그(#56). 비밀값 아님. 없으면 빈 문자열 → off

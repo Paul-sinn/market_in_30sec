@@ -3,6 +3,7 @@ import "server-only";
 import { changeView, formatTradingDay, glanceView, type ChangeView, type GlanceView, type LineStatus, type Stock } from "@/lib/card-view";
 
 import { db } from "./db";
+import { priceDisplayOn } from "./price-display";
 
 // DB는 이 모듈에서만 읽는다(ADR-0003). select만 한다: 카드는 파이프라인만 쓴다
 const LINES = ["news_line", "event_line", "price_fact_line"] as const;
@@ -17,9 +18,8 @@ const COLUMNS = [
   "leverage_tag",
   "coverage(name)",
 ].join(",");
-// 시장 한눈에(#11): 줄 컬럼 12개만. market_news_hold_*(검수에 걸린 문장)는 select하지 않는다(화면·props·HTML에 닿지 않게)
+// 시장 한눈에(#11): 줄 컬럼 12개만(가격 표시 off면 어제 마감 빼고 8개, #56). market_news_hold_*(검수에 걸린 문장)는 select하지 않는다(화면·props·HTML에 닿지 않게)
 const GLANCE_LINES = ["close_line", "indicator_line", "market_news_line"] as const;
-const GLANCE_COLUMNS = GLANCE_LINES.flatMap(lineColumns).join(",");
 const MAX_ROWS = 1000; // supabase/config.toml [api] max_rows. 넘으면 카드가 조용히 잘린다
 
 type Line = (typeof LINES)[number];
@@ -64,9 +64,11 @@ export async function getDashboard(): Promise<{ tradingDay: string | null; glanc
   if (!latest.data) return { tradingDay: null, glance: null, cards: [] };
 
   const day = latest.data.trading_day;
+  // 가격 표시 off(#56): 어제 마감 열은 읽지도 않는다(DB에 옛 값이 있어도 서버 메모리에 올라오지 않는다). 카드의 가격 키는 exposeCards가 뺀다
+  const glanceLines = priceDisplayOn() ? GLANCE_LINES : GLANCE_LINES.filter((l) => l !== "close_line");
   const [{ data, error }, glance] = await Promise.all([
     client.from("stock_card").select(COLUMNS).eq("trading_day", day).order("ticker").overrideTypes<Row[], { merge: false }>(),
-    client.from("market_glance").select(GLANCE_COLUMNS).eq("trading_day", day).maybeSingle<GlanceRow>(),
+    client.from("market_glance").select(glanceLines.flatMap(lineColumns).join(",")).eq("trading_day", day).maybeSingle<GlanceRow>(),
   ]);
   if (error) throw new Error(`stock_card read failed: ${error.message}`);
   if (data.length >= MAX_ROWS) throw new Error(`stock_card has ${MAX_ROWS}+ rows for ${day}; paginate the read`);
@@ -74,9 +76,10 @@ export async function getDashboard(): Promise<{ tradingDay: string | null; glanc
   const g = glance.data;
   return {
     tradingDay: formatTradingDay(day),
-    // 행 없음(null) = 지연 세 줄(glanceView)
+    // 행 없음(null) = 줄마다 지연(glanceView)
     glance: glanceView(
-      g && GLANCE_LINES.map((l) => ({ text: g[`${l}_text`], status: g[`${l}_status`], checked_at: g[`${l}_checked_at`], source_scope: g[`${l}_source_scope`] })),
+      g && glanceLines.map((l) => ({ text: g[`${l}_text`], status: g[`${l}_status`], checked_at: g[`${l}_checked_at`], source_scope: g[`${l}_source_scope`] })),
+      glanceLines.length,
     ),
     cards: data.map(toStoredCard),
   };

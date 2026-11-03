@@ -1,5 +1,6 @@
 """DB 픽스처. 로컬 Supabase만 쓴다. 테스트마다 public 테이블을 비운다."""
 
+import os
 from collections.abc import Callable
 from datetime import date, datetime
 from decimal import Decimal
@@ -13,6 +14,9 @@ from m30.db.store import CardStore, connect
 from m30.models import CardLine, CardStatus, LineStatus, StockCard
 
 SCENARIOS = Path(__file__).resolve().parent.parent / "scenarios"
+
+# 기존 테스트 = 가격 표시 on 동작(#56). 하위 프로세스 CLI 테스트도 이 환경을 물려받는다. off 테스트는 변수를 직접 지운다
+os.environ["PRICE_DISPLAY"] = "on"
 
 
 @pytest.fixture(scope="session")

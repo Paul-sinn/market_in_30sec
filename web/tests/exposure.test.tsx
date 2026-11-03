@@ -2,7 +2,7 @@
 import { randomUUID } from "node:crypto";
 
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, test } from "vitest";
+import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { Dashboard } from "@/components/dashboard";
 import { myDashboardView, type CardView } from "@/lib/card-view";
@@ -131,7 +131,7 @@ describe("exposeCards: 세 줄 전부는 Plus 유저의 내 종목 카드뿐", (
     for (const [who, viewer] of VIEWERS) {
       const [view] = exposeCards([extra], viewer);
       expect(Object.keys(view).sort(), who).toEqual(["change", "checked", "leverageTag", "lines", "name", "ticker"]);
-      expect(Object.keys(view.change).sort(), who).toEqual(["label", "text", "tone"]);
+      expect(Object.keys(view.change!).sort(), who).toEqual(["label", "text", "tone"]);
       for (const l of view.lines) expect(Object.keys(l).sort(), who).toEqual(l.status === "locked" ? ["status"] : ["status", "text"]);
       expect(JSON.stringify(view), who).not.toMatch(/bullish|buy/);
     }
@@ -196,4 +196,56 @@ describe("잠긴 줄의 원문은 화면 모델(RSC props)과 HTML에 없다", (
       expect(html.includes("Price facts in Plus")).toBe(!full);
     });
   }
+});
+
+describe("가격 표시 플래그 off(#56): 화면 모델에 가격 키가 없다", () => {
+  afterEach(() => vi.unstubAllEnvs()); // 설정 기본값 on으로 돌아간다(vitest.config.mts)
+
+  /** off 카드: 모든 viewer에게 두 줄, 세 번째 줄 잠금도 없다. 하단은 두 줄의 확인 시각·출처만 */
+  const OFF = {
+    ticker: "AAPL",
+    name: "Apple Inc.",
+    lines: [...FIRST_TWO],
+    leverageTag: null,
+    checked: "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar",
+  };
+
+  for (const [who, viewer] of VIEWERS) {
+    for (const [kind, third] of Object.entries(THIRD) as [keyof typeof THIRD, StoredLine][]) {
+      test(`${who} × 세 번째 줄 ${kind} → 등락률 키 없음, 두 줄, 잠금 없음`, () => {
+        vi.stubEnv("PRICE_DISPLAY", undefined);
+        const [view] = exposeCards([stored(third)], viewer);
+        expect(view).toStrictEqual(OFF); // toStrictEqual: change: undefined도 실패
+        expect(Object.keys(view).sort()).toEqual(["checked", "leverageTag", "lines", "name", "ticker"]);
+      });
+    }
+  }
+
+  test("플래그 값: on(대소문자·앞뒤 공백 무시)만 켜고 없음·빈 값·off·true·1은 끈다", () => {
+    const on = (value: string | undefined) => {
+      vi.stubEnv("PRICE_DISPLAY", value);
+      return "change" in exposeCards([stored(THIRD["사실 있음"])], my("plus", "AAPL"))[0];
+    };
+    for (const value of ["on", "ON", "On", " on\n"]) expect(on(value), JSON.stringify(value)).toBe(true);
+    for (const value of [undefined, "", " ", "off", "OFF", "true", "1", "yes", "onn", "o n"]) expect(on(value), JSON.stringify(value)).toBe(false);
+  });
+
+  test("DB 값(등락률·종가 날짜 라벨·가격 사실 문구·범위·시각)이 화면 모델(RSC props)과 HTML 어디에도 없다", () => {
+    vi.stubEnv("PRICE_DISPLAY", "off");
+    const [PCT, LABEL, FACT, SCOPE] = ["pct", "label", "fact", "scope"].map((k) => `canary-${k}-${randomUUID()}`);
+    const card = stored(line(FACT, "checked_found", SCOPE, PRICE_AT), { change: { text: PCT, tone: "up", label: LABEL } });
+    const coverage = [{ ticker: "AAPL", name: "Apple Inc." }];
+    for (const [who, viewer] of VIEWERS) {
+      const cards = exposeCards([card], viewer);
+      const data = { tradingDay: "Fri, Oct 16, 2026", glance: null, cards };
+      const mine = viewer ? myDashboardView(cards, coverage, viewer, undefined) : undefined;
+      const props = JSON.stringify({ data, mine });
+      const html = renderToStaticMarkup(<Dashboard data={data} mine={mine} />);
+      for (const secret of [PCT, LABEL, FACT, SCOPE, "7:10 AM", "Price facts in Plus", "data-tone"]) {
+        expect(props, `${who} ${secret}`).not.toContain(secret);
+        expect(html, `${who} ${secret}`).not.toContain(secret);
+      }
+      expect(html, who).toContain("Apple reported Q3 results (SEC filing)"); // 두 줄은 그대로
+    }
+  });
 });
