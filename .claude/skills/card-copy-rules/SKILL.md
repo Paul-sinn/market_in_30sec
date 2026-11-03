@@ -1,11 +1,13 @@
 ---
 name: card-copy-rules
-description: "30초 종목 리포트 앱에 나가는 문장의 규칙. 첫 번째 줄·두 번째 줄·세 번째 줄 템플릿, 시장 한눈에, 아침 알림, 아레나 토크를 쓰거나 LLM 프롬프트를 작성·검수할 때 반드시 사용한다. 금지어 검사 스크립트(scripts/check_copy.py) 포함. 앱 UI 레이아웃이나 코드 스타일 질문에는 쓰지 않는다(ios-conventions, backend-conventions 사용)."
+description: "30초 종목 리포트 앱에 나가는 문장의 규칙. 카드 헤더, 첫 번째 줄, 알아두기, 두 번째 줄(실적 추정일), 세 번째 줄(연관 소식), 잠긴 자리·잠금 문구, 시장 한눈에, 아침 알림, 아레나 토크를 쓰거나 LLM 프롬프트를 작성·검수할 때 반드시 사용한다. 금지어 검사 스크립트(scripts/check_copy.py) 포함. 앱 UI 레이아웃이나 코드 스타일 질문에는 쓰지 않는다(ios-conventions, backend-conventions 사용)."
 ---
 
 # 문구 규칙
 
 이 앱은 "투자 조언이 아니다"라는 전제 위에 있다. 문장 하나가 매수·매도 권유로 읽히면 법적 위험이 생기고, 감정 섞인 표현은 "30초 안에 읽히는 사실"이라는 제품 가치를 해친다. 그래서 규칙은 두 가지 목적을 가진다: **사실만 말한다**, **방향 의견은 아레나 안에서만 말한다**(ADR-0001).
+
+2026-11-03 피봇(`docs/pivot-2026-11.md`, ADR-0005)부터 카드는 가격 없이 나간다. 카드 문장은 인과("그래서 움직였다", `fell after …`, `due to …`)를 말하지 않고, 기사 내용(요약·제목·인용·숫자)을 쓰지 않는다. 시세가 꺼져 있어 움직였는지도 모르고, 원인을 단정하면 방향 판단을 대신하게 된다.
 
 용어는 `GLOSSARY.md`를 따른다.
 
@@ -19,17 +21,17 @@ description: "30초 종목 리포트 앱에 나가는 문장의 규칙. 첫 번�
    - 숫자 단어(`one`…`nineteen`, `twenty`…`ninety`, `hundred`, 목록은 `card.toml` `number_words`)도 같이 센다. `twenty-five`는 하나, `twelve-month`는 `twelve`만, `ten-for-one`은 둘이다. 서수(`second quarter`)·`a`·`single`·`double`·`billion`은 세지 않고 `one-time`·`one-off`는 빼고 센다(#14). 검사기는 종목명을 가리지 않으므로 이름에 숫자 단어가 든 종목(Five Below)은 수동 검사 때 이름을 가리고 돌린다
 5. 전문용어를 쓰지 않는다
 6. 중립 동사만 쓴다: rose, fell, announced, reported, filed. soars/plunges 같은 감정 동사는 쓰지 않는다
-7. 끝에 출처 꼬리표를 단다: `(Company)`, `(SEC filing)`만(2026-10-20 정해진 목록. 출처가 늘면 목록과 검사기에 같이 추가). `+N more`가 있으면 그 뒤에 단다(`… +2 more (SEC filing)`). 검사기는 목록에 있는 줄 끝 꼬리표만 단어 수에서 빼고, 그 외 괄호는 본문으로 센다
+7. 끝에 출처 꼬리표를 단다: `(Company)`, `(SEC filing)`만(2026-10-20 정해진 목록. 출처가 늘면 목록과 검사기에 같이 추가. 알아두기 전용 `(Annual report)`는 #66에서 추가, 줄에는 쓰지 않는다). `+N more`가 있으면 그 뒤에 단다(`… +2 more (SEC filing)`). 검사기는 목록에 있는 줄 끝 꼬리표만 단어 수에서 빼고, 그 외 괄호는 본문으로 센다
 8. 소식이 없으면 AI를 부르지 않고 데이터 상태 문구를 쓴다(아래 "데이터 상태 문구")
 
 ### 데이터 상태 문구
 "확인 못 함"을 "아무 일 없음"으로 쓰지 않는다. 사용자는 이 카드를 보고 뉴스를 따로 안 찾아보기 때문에, 확인 범위를 넘는 단정은 신뢰를 깬다.
 
-| 상태 | 첫 번째 줄 | 두 번째 줄 |
-| --- | --- | --- |
-| 확인함·없음 | `No new SEC filings found` | `No confirmed events found` |
-| 지연·실패 | `Update delayed` | `Update delayed` |
-| 미지원 | `Not covered yet` | `Not covered yet` |
+| 상태 | 첫 번째 줄 | 두 번째 줄 | 세 번째 줄(연관 소식) |
+| --- | --- | --- | --- |
+| 확인함·없음 | `No new SEC filings found` | `No confirmed events found` | `No related filings found` |
+| 지연·실패 | `Update delayed` | `Update delayed` | `Update delayed` |
+| 미지원 | `Not covered yet` | `Not covered yet` | `Not covered yet`(ETF) |
 
 - 카드 하단에 확인 시각·출처 범위: `Checked 7:30 AM ET · SEC filings`
 - 출처가 늘면 "없음" 문구를 그 범위에 맞게 바꾼다. 확인하지 않은 출처를 문구에 넣지 않는다
@@ -38,15 +40,36 @@ description: "30초 종목 리포트 앱에 나가는 문장의 규칙. 첫 번�
 ### 지수 표기
 지수 값 대신 ETF 가격을 쓰고 `S&P 500 (SPY)`, `Nasdaq (QQQ)`로 표기한다. 지수 데이터는 라이선스가 따로 필요할 수 있다.
 
+### 카드 헤더 (CardHeader, 코드 문구, 2026-11-03)
+AI 없이 첫 번째 줄 상태로 정한다: 확인함·있음 `N new filing(s)`(N = 1등 + `+N more`) / 확인함·없음 `Quiet day` / 지연 `Update delayed` / 미지원 `Not covered yet`. 가격 표시 플래그 on일 때만 옆에 등락률.
+
+### 알아두기 (QuietFact, AI가 분기 작업에서 미리 작성, #66)
+- 조용한 날에만 첫 번째 줄 아래 붙는 보조 문장: `Did you know: <사실> (Annual report)`
+- 그 종목 최신 10-K의 사실 하나: 뭘 파는지, 어디서 돈을 버는지, 어떤 시장에 있는지. 15단어 이내, 중립, 과거·현재형
+- 숫자·연도 금지(10-K 값은 길게는 1년 묵었다). 순위·비교 표현도 금지: `largest`, `second`, `top`, `leading`, `biggest`, `most`, `more than`, `fastest` 등. 순위도 숫자에서 나온 값이라 1년 뒤 틀릴 수 있다
+- 검수(금지어 + 사실/예측 판정)를 통과한 것만 저장한다. 통과 못 한 사실은 빼고 번호를 다시 매긴다(억지로 채우지 않음)
+
 ### 두 번째 줄 (EventLine, 코드 템플릿)
 `Earnings Thu 10/15 after close (D-2)` / 추정일이면 `(est.)` / `Ex-dividend 12/21 · $0.70/share` / 0보다 크고 $0.0001 미만이면 `<$0.0001/share`
+- 실적 추정일(2026-11-03, #57): EDGAR 과거 실적 공시로 추정한 날은 항상 `(est.)`. `before open`·`after close`는 지난 4개 분기가 모두 같은 쪽일 때만, 아니면 날짜만. 추정일이 지났는데 실적 공시가 없으면 `No confirmed events found`. 배당은 `Not covered yet`
 
-### 세 번째 줄 (PriceFactLine, 코드 템플릿)
+### 세 번째 줄 (RelatedLine, AI 작성, 2026-11-03, #67)
+- 연관 종목의 그날 공시 1등 하나 + `+N more`. 관계 단어로 시작한다: `Competitor` · `Customer` · `Supplier` · `Peer`. 예: `Competitor AMD reported Q3 revenue of $X.XB (SEC filing)`
+- 첫 번째 줄 규칙(1~8)과 검수를 그대로 따른다. 관계 단어와 회사 이름은 코드가 넘긴 값만 쓴다
+- **관계와 그 회사의 사실만** 쓴다. 내 종목에 대한 영향·방향·좋고 나쁨은 쓰지 않는다(ADR-0005). 금지 표현: `could affect`, `impact on`, `good for`, `bad for`, `pressure on`, `benefit from`, `threat to`(검사 목록은 #67에서 `card.toml`에 추가)
+- 무료 유저에게는 본문 없이 건수만: `2 related updates in Plus`, 0건이면 `Related news in Plus`(서버가 결정)
+
+### 가격 사실 (PriceFactLine, 코드 템플릿) — 가격 표시 플래그 on일 때만
+- 원래 세 번째 줄. 플래그 off(기본)면 만들지도 보여 주지도 않는다
 - 시가·고가·저가·종가로만 계산한 과거 사실 하나: `Up 5 days in a row`, `8.0% below 52-week high`, `At 52-week high`. 기준값·우선순위는 HANDOFF 3-3(연속 3일 이상, 52주 고점·저점 10% 이내). %는 소수 첫째 자리
-- 줄을 숨기지 않는다. 가격 데이터가 정상인데 표시 조건에 맞는 사실이 없으면 `No additional price highlights`(데이터 누락·오류는 `Update delayed`로 구분), 무료 유저에게는 `Price facts in Plus` 잠금 표시(서버가 결정)
+- 가격 데이터가 정상인데 표시 조건에 맞는 사실이 없으면 `No additional price highlights`(데이터 누락·오류는 `Update delayed`로 구분)
+
+### 잠긴 자리·잠금 문구 (#69)
+- 잠긴 자리 이름은 "실적 요약"·"큰손 움직임" 기능을 가리킨다. "Why it moved"처럼 기사 기반 이유나 원인을 약속하는 말은 쓰지 않는다(ADR-0005)
+- 잠금·업셀·`Notify me` 문구는 UI 라벨이라 2인칭이 허용되지만 금지어·방향 의견·수익 보장은 그대로 금지
 
 ### 시장 한눈에 (MarketGlance, #11)
-- 어제 마감(코드): `Thu 10/15 close: S&P 500 (SPY) +0.4%, Nasdaq (QQQ) −1.2%`. 값 둘이 줄의 정의라 실행기의 `숫자 2개` 위반은 예상 결과(코드 템플릿만, LLM 줄엔 적용 안 함). 하나라도 없으면 `Update delayed`
+- 어제 마감(코드, 가격 표시 플래그 on일 때만. off면 줄이 없다): `Thu 10/15 close: S&P 500 (SPY) +0.4%, Nasdaq (QQQ) −1.2%`. 값 둘이 줄의 정의라 실행기의 `숫자 2개` 위반은 예상 결과(코드 템플릿만, LLM 줄엔 적용 안 함). 하나라도 없으면 `Update delayed`
 - 오늘 지표 일정(코드): `CPI 8:30 AM ET · Fed decision 2:00 PM ET +1 more`. 이름은 닫힌 목록만(`Jobs report`, `CPI`, `Producer prices`, `Job openings`, `Labor costs`, `GDP`, `Income and spending`, `Trade balance`, `Fed decision`), 외부 제목은 화면에 안 나간다. 없으면 `No Fed decision or major BLS or BEA releases scheduled`(major = 위 목록, #50)
 - 시장 전체 소식(LLM, 첫 번째 줄과 같은 검수 `review_sentence`): 기관 정식 이름으로 시작, 출처 꼬리표 없이 범위는 하단. 본문이 제목뿐이면(연준 성명) 발표 사실만. `FOMC` 대신 `Fed`. 없으면 `No new major BLS, BEA, Census or Fed releases`. 검수 실패는 `Update delayed`(초안은 보류 칸, 웹은 안 읽음)
 - 허용 약어: `CPI`·`GDP`·`BLS`·`BEA`·`Fed`. 범위 문구: `BLS, BEA and Fed calendars`, `BLS, BEA, Census and Fed releases`
@@ -104,7 +127,10 @@ cd backend && uv run pytest -q tests/test_copy_rules.py   # 통과 예시는 위
 스크립트가 잡지 못하는 항목은 사람이나 copy-reviewer가 판정한다:
 - 사실인가, 예측인가 ("expected to rise"는 예측)
 - 숫자가 계산 원본과 같은가
-- 출처 꼬리표가 실제 출처와 맞는가, 목록(`(Company)`·`(SEC filing)`) 밖 꼬리표가 없는가
+- 출처 꼬리표가 실제 출처와 맞는가, 목록(`(Company)`·`(SEC filing)`, 알아두기는 `(Annual report)`) 밖 꼬리표가 없는가
+- 연관 소식이 관계와 사실만 말하는가: 내 종목에 대한 영향·좋고 나쁨이 문장 전체로 읽히지 않는가(ADR-0005). 관계 단어가 코드가 넘긴 관계와 같은가
+- 카드 문장이 인과를 말하지 않는가(`after`·`due to`·`as`로 원인을 붙이기), 기사 내용이 섞이지 않았는가
+- 알아두기에 숫자·연도·순위·비교가 없는가(`one of the largest`처럼 돌려 쓴 순위 포함)
 - 전문용어가 없는가(공시 서식 이름 8-K·10-Q·Item 2.02 포함 — 검사기는 값으로 세지 않을 뿐 통과시킨다)
 - 단어 하나는 괜찮아도 문장 전체가 권유로 읽히는가
 

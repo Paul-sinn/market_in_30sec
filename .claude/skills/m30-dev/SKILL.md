@@ -41,9 +41,9 @@ description: "30초 종목 리포트 앱(market_in_30sec) 개발 오케스트레
 ### 0단계: 티켓 확인
 1. 티켓 번호를 정한다
    - 사용자가 번호를 줬으면 그 티켓
-   - "다음 티켓"이면 #1의 열린 하위 이슈 중 열린 선행 티켓이 없는 것(frontier)에서 가장 작은 번호:
-     `gh api repos/Paul-sinn/market_in_30sec/issues/1/sub_issues --paginate --jq '.[] | select(.state=="open" and .issue_dependencies_summary.blocked_by==0) | .number' | sort -n`
-2. 티켓을 읽는다: `gh issue view <N> --json title,body,labels,comments,state`. 부모 스펙 #1의 "개정 사항"도 읽는다
+   - "다음 티켓"이면 현재 부모 스펙(지금 #55 피봇 1단계, 2026-11-03)의 열린 하위 이슈 중 열린 선행 티켓이 없는 것(frontier)에서 `ready-for-agent`인 가장 작은 번호:
+     `gh api repos/Paul-sinn/market_in_30sec/issues/55/sub_issues --paginate --jq '.[] | select(.state=="open" and .issue_dependencies_summary.blocked_by==0) | .number' | sort -n`
+2. 티켓을 읽는다: `gh issue view <N> --json title,body,labels,comments,state`. 티켓 본문 `## Parent`의 부모 스펙(없으면 #1)과 그 "개정 사항"도 읽는다
 3. 선행 티켓 확인: `gh api repos/Paul-sinn/market_in_30sec/issues/<N>/dependencies/blocked_by --jq '.[] | select(.state=="open") | .number'`. 열린 선행 티켓이 있으면 멈추고 사용자에게 알린다
 4. 라벨 확인: `ready-for-human`이면 사람이 해야 하는 부분(구독, 키 발급, 수동 기록)을 먼저 사용자에게 알리고, 에이전트가 할 수 있는 부분만 진행한다. `deferred`면 진행하지 않는다
 5. 작업 폴더: `_workspace/issue-{N}/`
@@ -112,7 +112,7 @@ CLAUDE.md의 "원격 Supabase 규칙"을 따른다. 에이전트는 원격에 �
 
 ## Vercel 배포
 
-배포·환경 변수 설정은 메인이 Vercel MCP로 한다(에이전트는 배포하지 않는다). 비밀값은 사용자가 Vercel에 직접 넣는다. 배포 보호 없이 공개 배포하지 않는다(1단계는 비공개 대시보드).
+배포·환경 변수 설정은 메인이 Vercel MCP로 한다(에이전트는 배포하지 않는다). 비밀값은 사용자가 Vercel에 직접 넣는다. 배포 보호 없이 공개 배포하지 않는다. 배포 보호 해제(공개)는 #70(P9b)에서만 한다(2026-11-03 피봇, 1단계 #56~#69가 끝난 뒤). 가격 표시 플래그 `PRICE_DISPLAY`는 Vercel·GitHub 양쪽에서 비워 두면 off다.
 
 ## 오류 처리
 
