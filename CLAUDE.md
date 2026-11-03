@@ -26,6 +26,7 @@
 | 2026-10-20 | web-dev 에이전트 + web-conventions 스킬 추가(Next.js App Router, 서버 전용 DB 읽기, 디자인은 ui-ux-pro-max), m30-dev에 웹 구현 단계·Vercel 배포(메인이 MCP로)·자율 모드, qa에 웹 빌드·번들 canary 확인, 변이 복사본은 card-copy-rules 폴더 복사(링크 금지) | web-dev, web-conventions, m30-dev, qa | 사용자 결정: 웹 SaaS MVP 먼저, 묻지 않고 추천안으로 진행. #22에서 `.claude` 링크면 실행기가 레포 코드를 검사함 |
 | 2026-10-21 | 프로세스 출력 입구에 CLI 출력 줄 추가(공개 레포 = Actions 로그 공개, 코드·건수·티커만), qa 프로세스 확인은 `lsof -ti tcp:<포트>`만, 에이전트별 scratchpad 폴더, 디자인 기준 = 사용자 시안 | backend-conventions, qa, m30-dev, web-conventions | #19 R3·#26 스펙(레포 public), #27 qa의 `pgrep -fl` 환경 노출 위험, #6 scratchpad 충돌, 사용자 시안 |
 | 2026-11-03 | 피봇 동기화: 카드 헤더·알아두기·실적 추정일·세 번째 줄 연관 소식(가격 사실은 플래그 on일 때만)·잠긴 자리 문구 규칙, ADR-0005(관계와 사실만, 인과·기사 내용 없음), 가격 표시 플래그 off 규칙, 테스트 입구에 분기 작업 실행 추가, 웹 쓰기 허용 모듈·공개는 #70에서만, 부모 스펙 #55(다음 티켓 frontier) | card-copy-rules, backend-conventions, web-conventions, ios-conventions, m30-dev, qa, copy-reviewer, architect, backend-dev | 피봇 결정(`docs/pivot-2026-11.md`, `docs/grill-decisions-2026-11.md`, 스펙 #55)이 하네스(10-29)보다 새로웠음 |
+| 2026-11-03 | 회고(harness:evolve): ① 비밀값 셸 로딩은 "빈 값이면 아무것도 안 함" 형태 한 벌(backend-conventions 4장, 웹·qa는 참조) ② 비밀값을 숨긴 오류도 정해진 이유 코드는 남긴다 ③ m30-dev 마무리: 행동 규칙이 되는 교훈은 스킬·정의에도 반영하고 실수 기록에 `(X에 규칙화)` ④ m30-dev 0단계 8: 티켓 브랜치는 최신 main에서, 다른 세션이 작업 중이면 브랜치를 바꾸지 않고 worktree | backend-conventions, web-conventions, qa, m30-dev, CLAUDE.md | ① 검사 중 비밀값 출력 3회(10-20·10-21·10-29) ② #26 교훈이 실수 기록·README에만 있었음 ③ ②가 생긴 원인 ④ 11-03 두 세션이 한 폴더를 같이 씀 |
 
 ## 원격 Supabase 규칙
 
@@ -44,9 +45,9 @@
 - 2026-10-20 — 변이가 적용 안 된 채 테스트 통과로 나옴 → 같은 크기 변이가 `.pyc` 캐시에 가려짐 → 변이 복사본은 `PYTHONDONTWRITEBYTECODE=1` + `__pycache__` 삭제(qa 정의에 규칙화)
 - 2026-10-20 — #24 커밋 전 비밀값 grep이 2건을 냈는데 커밋·push가 그대로 진행됨(둘 다 오탐: README의 `--override-name auth.service_role_key=…` 옵션, package-lock의 sha512 해시) → 검사와 커밋을 `;`로 이어 검사 결과가 커밋을 막지 못함 → 비밀값 검사는 `[ "$(… | grep -c …)" -eq 0 ] && git commit`처럼 0건일 때만 커밋이 실행되게 묶는다
 - 2026-10-20 — #6 backend-dev가 다른 에이전트의 변이 스크립트를 실행·삭제함(레포 파일 변경 없음) → 동시에 도는 에이전트가 scratchpad 한 폴더를 같이 씀 → 에이전트마다 scratchpad 하위 폴더 하나(m30-dev 데이터 전달에 규칙화)
-- 2026-10-27 — 첫 운영 실행이 DB 연결에서 4번 실패했는데 원인을 알 수 없었음(Direct connection URI, 특수문자 비밀번호) → 비밀값을 숨기려고 연결 실패 메시지에서 이유까지 지웠음 → 값 없는 오류도 고정 이유 코드(`reason=…`)는 남긴다(#26, PR #30)
+- 2026-10-27 — 첫 운영 실행이 DB 연결에서 4번 실패했는데 원인을 알 수 없었음(Direct connection URI, 특수문자 비밀번호) → 비밀값을 숨기려고 연결 실패 메시지에서 이유까지 지웠음 → 값 없는 오류도 고정 이유 코드(`reason=…`)는 남긴다(#26, PR #30. 2026-11-03 backend-conventions에 규칙화)
 - 2026-10-27 — #14 live 측정 중 backend-dev가 SEC User-Agent 값(연락 이메일)을 scratchpad 도우미 스크립트에 씀(바로 삭제, 커밋·실행 출력엔 없음) → "명령에만 넣는다"가 그 실행의 프롬프트에만 있었고 규칙 문서에 없었음 → 비밀값·사용자 식별값은 명령 줄 안에서만, 임시 파일 포함 어떤 파일에도 쓰지 않는다(backend-conventions에 규칙화)
-- 2026-10-29 — 로컬 Supabase가 안 뜬 상태에서 `eval "export $(supabase status … | grep DB_URL)"`가 맨 `export`로 실행돼 환경 변수 전체를 도구 출력에 찍음(로컬 세션 토큰 포함, DB·API 키는 없었음) → 빈 값일 때 `export`가 목록 출력이 됨 → `export`는 치환 결과 안에 넣는다(`sed 's/^/export /'`), backend README 수정
+- 2026-10-29 — 로컬 Supabase가 안 뜬 상태에서 `eval "export $(supabase status … | grep DB_URL)"`가 맨 `export`로 실행돼 환경 변수 전체를 도구 출력에 찍음(로컬 세션 토큰 포함, DB·API 키는 없었음) → 빈 값일 때 `export`가 목록 출력이 됨 → `export`는 치환 결과 안에 넣는다(`sed 's/^/export /'`), backend README 수정(2026-11-03 backend-conventions 4장에 규칙화)
 
 ## Agent skills
 

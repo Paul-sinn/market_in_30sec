@@ -59,7 +59,7 @@ cd web && npm run lint && npm test && npm run build
 
 ## 4. 로컬 개발
 
-supabase-js는 PostgREST·API 게이트웨이(kong)를 거치므로 backend README의 `-x` 목록에서 `postgrest,kong,gotrue`를 빼고 띄운다(gotrue가 꺼져 있으면 `supabase status`가 키를 아예 출력하지 않는다). backend pytest는 로컬 `public` 테이블을 전부 비우므로 웹 DB 테스트와 동시에 돌리지 않는다. `supabase start` 뒤 `eval "$(supabase status -o env ...)"`처럼 셸 안에서만 값을 넣는다. 키 값을 출력·파일·채팅에 남기지 않는다. 로컬 주소(`http://127.0.0.1:54321`)만 HTTP 예외다.
+supabase-js는 PostgREST·API 게이트웨이(kong)를 거치므로 backend README의 `-x` 목록에서 `postgrest,kong,gotrue`를 빼고 띄운다(gotrue가 꺼져 있으면 `supabase status`가 키를 아예 출력하지 않는다). backend pytest는 로컬 `public` 테이블을 전부 비우므로 웹 DB 테스트와 동시에 돌리지 않는다. `supabase start` 뒤 값은 셸 안에서만 넣는다: `web/README.md`의 `eval "$(… | grep … | sed 's/^/export /')"` 형태(빈 값이면 아무것도 안 함, 원칙은 backend-conventions 4장). 키 값을 출력·파일·채팅에 남기지 않는다. 로컬 주소(`http://127.0.0.1:54321`)만 HTTP 예외다.
 
 ## 5. 배포
 
