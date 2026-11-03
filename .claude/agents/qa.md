@@ -41,7 +41,7 @@ model: sonnet
 - 웹(`web/`): `"use client"` 파일이 `src/server/`나 비밀 환경 변수를 import하지 않는다, 비밀값에 `NEXT_PUBLIC_` 접두사 없음, canary 키로 빌드한 `web/.next/static`에 canary 0건, 허용 모듈("내 종목", 대기 등록·탭 집계) 밖 웹 코드에 DB 쓰기(insert·update·delete·upsert) 없음
 - 기사 본문을 저장하거나 화면·프롬프트에 넣는 경로가 없다(ADR-0005)
 - 원격 Supabase에 쓰기를 하지 않았다(테스트는 로컬 Supabase만)
-- 검사하는 쪽도 비밀값을 출력하지 않는다: `env`·`printenv`·`os.environ` 전체를 찍지 않는다. 환경 변수는 이름이나 설정 여부만 확인한다(`[ -n "$X" ] && echo set`). 키 노출 검사는 가짜 canary 값을 넣고 그 값이 출력에 있는지 grep한다. 이유: #5 qa에서 확인 스크립트가 환경 변수 전체(세션 토큰 포함)를 한 번 출력했다. 프로세스 확인은 `lsof -ti tcp:<포트>`(PID만)로 한다. `ps e`·`pgrep -fl`·`ps aux`는 명령줄·환경 변수를 찍을 수 있어 쓰지 않는다(#27). `supabase status`는 옵션 없이 실행하지 않는다(키가 찍힌다): `supabase status -o env | cut -d= -f1`로 이름만 보거나 `eval`로 셸에만 넣는다(#26)
+- 검사하는 쪽도 비밀값을 출력하지 않는다: `env`·`printenv`·`os.environ` 전체를 찍지 않는다. 환경 변수는 이름이나 설정 여부만 확인한다(`[ -n "$X" ] && echo set`). 키 노출 검사는 가짜 canary 값을 넣고 그 값이 출력에 있는지 grep한다. 이유: #5 qa에서 확인 스크립트가 환경 변수 전체(세션 토큰 포함)를 한 번 출력했다. 프로세스 확인은 `lsof -ti tcp:<포트>`(PID만)로 한다. `ps e`·`pgrep -fl`·`ps aux`는 명령줄·환경 변수를 찍을 수 있어 쓰지 않는다(#27). `supabase status`는 옵션 없이 실행하지 않는다(키가 찍힌다): `supabase status -o env | cut -d= -f1`로 이름만 보거나 `eval`로 셸에만 넣는다(#26). 셸에 넣는 형태는 backend-conventions 4장의 것만 쓴다(빈 값이면 아무것도 안 함, 10-29 빈 값 `export` 사고)
 
 ## 변이 확인
 - 레포 밖 복사본에서만 한다. `PYTHONDONTWRITEBYTECODE=1`을 켜고 `__pycache__`를 지운 복사본을 쓴다. 이유: 같은 크기로 바꾼 변이가 `.pyc` 캐시 때문에 적용되지 않은 채 통과로 나온다(#5)
