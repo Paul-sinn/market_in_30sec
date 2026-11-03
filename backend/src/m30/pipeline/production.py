@@ -17,12 +17,12 @@ from m30.pipeline.morning import MorningPipeline, RunSummary, run_failed  # noqa
 
 
 def run_production(
-    store: CardStore, trading_day: date, *, get: Get, gov_get: Get, llm: LLM, prices: PriceSource
+    store: CardStore, trading_day: date, *, get: Get, gov_get: Get, llm: LLM, prices: PriceSource | None
 ) -> tuple[RunSummary, bool]:
     """(실행 요약, CIK를 갱신했는지). CIK 갱신이 실패하면(SourceError) 다시 시도하지 않고 지난 행을 쓴다(#19 U2).
     ETF 편입 종목은 SEC N-PORT(#10). 편입 어댑터는 티커 목록을 자기 인스턴스에서 따로 받는다(갱신이 필요한 날만 요청 1회 더).
     커버 범위는 upsert만 한다(행을 지우지 않는다). 그 분기 기본 종목에 실험 15종목을 더한다(#8, 멱등).
-    prices: Tiingo, 키가 없으면(구독 전) NoPriceSource(#18). gov_get: 정부 기관 창구(GovClient.get, #50). SEC get과 따로 둔다."""
+    prices: None = 가격 표시 off(#56). on이면 Tiingo, 키가 없으면(구독 전) NoPriceSource(#18). gov_get: 정부 기관 창구(GovClient.get, #50). SEC get과 따로 둔다."""
     try:
         store.upsert_coverage(experiment_coverage(ticker_ciks(get)))
         refreshed = True

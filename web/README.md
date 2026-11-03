@@ -1,7 +1,7 @@
 # m30 웹 (랜딩 + 카드 대시보드)
 
 - `/` 랜딩(#27, 정적 페이지, DB를 읽지 않는다)
-- `/cards` 가장 최근 거래일의 카드 전부를 종목순으로 보여주는 비공개 대시보드(#24). 거래일 제목 바로 아래 `Market at a glance` 3줄(#11, 아래 "시장 한눈에" 절). 위에 Google 로그인·로그아웃 버튼(#37). 로그인하면 위 "My stocks", 아래 "Browse"(#38, 아래 "내 종목" 절)
+- `/cards` 가장 최근 거래일의 카드 전부를 종목순으로 보여주는 비공개 대시보드(#24). 거래일 제목 바로 아래 `Market at a glance` 3줄(가격 표시 off면 2줄, #11·#56, 아래 "시장 한눈에"·"가격 표시 플래그" 절). 위에 Google 로그인·로그아웃 버튼(#37). 로그인하면 위 "My stocks", 아래 "Browse"(#38, 아래 "내 종목" 절)
 - `/auth/sign-in`(POST)·`/auth/callback`(GET)·`/auth/sign-out`(POST) 로그인 라우트(#37, 아래 "로그인" 절)
 - `/my-stocks`(POST) 내 종목 넣기·빼기(#38)
 
@@ -40,6 +40,8 @@ npm install
 # 배포 보호(아래 "배포 보호" 절). 없으면 모든 요청이 401이다. 비밀번호는 화면에 안 보이게 입력받는다(셸 기록에도 안 남는다)
 export DASHBOARD_USER=owner
 printf 'Dashboard password: '; read -rs DASHBOARD_PASSWORD; echo; export DASHBOARD_PASSWORD
+# (선택) 가격 표시(아래 "가격 표시 플래그" 절). 없으면 off: 등락률·세 번째 줄·어제 마감 줄 없이 그린다
+export PRICE_DISPLAY=on
 npm run dev                               # http://localhost:3000(랜딩), /cards(카드) → 브라우저 로그인 창에 위 아이디·비밀번호 (운영 빌드 확인: npm run build && npm start)
 ```
 
@@ -109,12 +111,25 @@ Google 로그인(Supabase Auth)은 전부 웹 서버에서 돈다. 브라우저�
 - 웹은 AI를 부르지 않는다. 넣은 종목의 카드는 다음 아침 실행부터 생긴다(생성 대상, #8)
 - 원격에 `supabase/migrations/20261028043018_my_stock_readd_noop.sql`이 없으면 3개가 찬 무료 유저의 다시 넣기가 `free_my_stock_limit`로 거절된다(원격 적용은 사용자 확인 후)
 
+## 가격 표시 플래그 (`PRICE_DISPLAY`, #56)
+
+표시 라이선스 전이라 가격을 공개하지 않는다(2026-11-03 피봇). 아침 실행(GitHub Actions)과 같은 이름의 서버 환경 변수다. 비밀값은 아니다. Actions 쪽 설정·CLI `prices=` 뜻은 `backend/README.md` "가격 표시 플래그" 절.
+
+- **기본 off.** 켜는 값은 `on` 하나(대소문자·앞뒤 공백 무시). 없음·빈 값·그 밖의 값(`true`·`1` 포함)은 전부 off. 읽는 곳은 `src/server/price-display.ts`의 `priceDisplayOn()` 하나이고 요청 때마다 읽는다
+- off면 화면에서 숨기는 게 아니라 화면 모델(RSC props)에서 뺀다. DB에 옛 가격 값이 남아 있어도 같다
+  - 카드(`exposeCards`): `change` 키(등락률·종가 날짜 라벨)가 없다. 세 번째 줄(가격 사실)은 원문도 `Price facts in Plus` 잠금도 없이 모든 viewer(로그인 전·무료·Plus)에게 두 줄. 하단 `Checked …`는 두 줄로만(`Daily prices` 없음)
+  - 시장 한눈에(`getDashboard`): 어제 마감 줄 열을 select하지 않는다. 지표 일정·시장 소식 2줄, 그날 행이 없으면 `Update delayed` 2줄
+- **Vercel(메인 또는 사용자)**: 프로젝트 Settings → Environment Variables에 `PRICE_DISPLAY` = `on`(Production, 필요하면 Preview). `NEXT_PUBLIC_`을 붙이지 않는다. 값을 넣거나 바꾸거나 지운 뒤에는 **재배포해야** 적용된다. 끄려면 변수를 지우고 재배포
+- 로컬: 셸에서 `export PRICE_DISPLAY=on`(위 "로컬에서 띄우기"). `.env` 파일은 만들지 않는다
+- 켜고 끌 때는 Actions와 Vercel을 같이 바꾼다. 한쪽만 켜져도 가격 값은 새지 않는다(아침 실행 off + 웹 on: DB에 가격 값이 없다 / 아침 실행 on + 웹 off: 저장은 되지만 화면 모델에 없다)
+- 테스트: `vitest.config.mts`가 `PRICE_DISPLAY=on`을 기본으로 둔다(셸 값과 상관없이 기존 테스트 = on 동작). off 테스트는 `vi.stubEnv`로 바꾼다
+
 ## 시장 한눈에 (#11)
 
-- `/cards` 거래일 제목 바로 아래, 내 종목·카드 목록 위. 줄 순서: 어제 마감 → 오늘 지표 일정 → 시장 전체 소식. 하단 `Checked 7:30 AM ET · Daily prices · …`(확인된 줄만, 카드 하단과 같은 규칙)
-- `getDashboard`가 카드의 최신 거래일과 같은 날 `market_glance` 행을 줄 컬럼 12개만 읽는다. 보류 기록(`market_news_hold_*`, 검수에 걸린 문장)은 select하지 않는다(`tests/cards.read.test.ts`)
-- 로그인 전·무료·Plus 모두 같다(`exposeCards`를 거치지 않는 공용 데이터). 그날 행이 없으면 `Update delayed` 세 줄, 하단 없음. 카드가 없으면 블록도 없다(`No cards yet`). 읽기 실패는 카드와 같이 `Cards could not be loaded`
-- 운영 지금 값(소식·지표 출처 없음, 시세 구독 전): `Update delayed` / `Not covered yet` / `Not covered yet`, 하단 없음
+- `/cards` 거래일 제목 바로 아래, 내 종목·카드 목록 위. 줄 순서: 어제 마감 → 오늘 지표 일정 → 시장 전체 소식(가격 표시 off면 어제 마감 없이 2줄, 위 절). 하단 `Checked 7:30 AM ET · Daily prices · …`(확인된 줄만, 카드 하단과 같은 규칙)
+- `getDashboard`가 카드의 최신 거래일과 같은 날 `market_glance` 행을 줄 컬럼 12개만(가격 표시 off면 어제 마감을 뺀 8개) 읽는다. 보류 기록(`market_news_hold_*`, 검수에 걸린 문장)은 select하지 않는다(`tests/cards.read.test.ts`)
+- 로그인 전·무료·Plus 모두 같다(`exposeCards`를 거치지 않는 공용 데이터). 그날 행이 없으면 줄마다 `Update delayed`, 하단 없음. 카드가 없으면 블록도 없다(`No cards yet`). 읽기 실패는 카드와 같이 `Cards could not be loaded`
+- 운영 지금 값(소식·지표 출처 없음, 가격 표시 off): `Not covered yet` / `Not covered yet`, 하단 없음
 
 ## 줄 노출 (#9)
 

@@ -16,6 +16,8 @@ uv run python -m m30.pipeline 2026-10-13 --scenario scenarios/events_and_tags.js
 uv run python -m m30.pipeline 2026-10-16 --scenario scenarios/filings_day.json       # 공시 수집·분류 확인용
 ```
 
+- 가짜 시세도 가격 표시 플래그를 따른다. 셸에 `export PRICE_DISPLAY=on`이 없으면 등락률·어제 마감은 `unsupported`, 세 번째 줄은 저장하지 않는다(아래 "가격 표시 플래그"). pytest는 플래그와 상관없이 on으로 돈다(`tests/conftest.py`).
+
 - LLM은 시나리오의 `llm_replies`(가짜, 호출 순서대로: 분류 묶음 → 첫 번째 줄 초안 종목 순 → 공시마다 사실/예측 판정(걸리면 재생성 → 재판정))를 쓴다. `ANTHROPIC_API_KEY` 없이 돈다. 실제 Anthropic은 운영 모드(아래)와 품질 확인 모드(`--quality`, 맨 아래)만 쓴다. CLI는 문장을 찍지 않는다(`drafts:`·`review:` 줄은 결과 코드만. 예외는 `--quality`뿐).
 - 검수: 초안 → 숫자 대조(계산 원본 `numbers`) → 금지어(`m30.copy_rules`, 종목명을 가리고) → 사실/예측 판정(LLM) → 걸리면 이유를 넣어 1회 재생성. 그래도 걸리면 카드에 8-K 항목 대체 줄(`Apple reported quarterly results (SEC filing)` 등)을 쓰고 `hold_queue`(보류함)에 행을 남긴다. 문장 없이 대체 줄만 나간 경우(본문 없음·LLM 실패)도 행이 생긴다. 8-K/A가 앞선 카드가 쓴 공시(같은 CIK·같은 `report_date` = EDGAR reportDate. 가짜 시나리오는 공시의 선택 키 `"report_date": "YYYY-MM-DD"`)를 정정하면 그 카드는 그대로 두고 `amended_filing` 행(`정정 공시 있음`)을 남긴다.
 - 보류함 `rules` 읽는 법: 한 칸 = `{시도} {단계}: {이유}`.
@@ -53,10 +55,10 @@ uv run python -m m30.pipeline --production 2026-10-16   # 지난 거래일 다�
 ```
 
 - `.github/workflows/morning.yml`이 평일 09:17 UTC(05:17 EDT / 04:17 EST)에 이 명령을 돌린다. Actions → `morning-pipeline` → Run workflow로 수동 실행(거래일 입력은 비워도 된다). 실행은 한 번에 하나씩.
-- 출처: 공시 = SEC EDGAR, LLM = Anthropic, 시세 = Tiingo(`TIINGO_API_KEY`가 있을 때). 실제 출처가 아직 없는 자리는 가짜 데이터 없이 데이터 상태 문구만: 시세 키 없음 → 등락률 지연·세 번째 줄 `Update delayed`(실패로 치지 않는다), 일정(#21 전) → 두 번째 줄 `Not covered yet`, 지표 일정 → 저장 안 함. 마지막 줄 `prices=tiingo` / `prices=none`이 어느 쪽으로 돌았는지 알려 준다. 실행 전에 실험 종목 CIK를 SEC 티커 목록으로 갱신하고, 실패하면 저장된 행을 쓴다(`coverage: NOT REFRESHED …`).
+- 출처: 공시 = SEC EDGAR, LLM = Anthropic, 시세 = Tiingo(`TIINGO_API_KEY`가 있을 때). 실제 출처가 아직 없는 자리는 가짜 데이터 없이 데이터 상태 문구만: 시세 키 없음 → 등락률 지연·세 번째 줄 `Update delayed`(실패로 치지 않는다), 일정(#21 전) → 두 번째 줄 `Not covered yet`, 지표 일정 → 저장 안 함. 마지막 줄 `prices=off` / `prices=tiingo` / `prices=none`이 어느 쪽으로 돌았는지 알려 준다(아래 "가격 표시 플래그"). 실행 전에 실험 종목 CIK를 SEC 티커 목록으로 갱신하고, 실패하면 저장된 행을 쓴다(`coverage: NOT REFRESHED …`).
 - 필요한 환경 변수 셋: `SUPABASE_DB_URL`, `ANTHROPIC_API_KEY`, `SEC_USER_AGENT`. 하나라도 없으면 DB에 붙기 전에 이름만 알리고 exit 2.
 - 선택 환경 변수 `DISCORD_WEBHOOK_URL`(#17, 실패 알림): 있으면 운영 실행마다 터미널 요약 줄 그대로를 Discord로 한 번 보낸다(머리줄 `OK morning <거래일> exit=0` 또는 `**FAILED** morning <거래일> exit=<코드>` + 코드 블록). 보내지 않는 경우: 변수 없음·빈 값(아무것도 찍지 않는다), 주말·휴장일 exit 0, `ALREADY_DONE`, `--quality`. 끝에 `discord: sent` 또는 `discord: not sent (reason=bad_url|http_<상태>|timeout|connection|error)`가 찍힌다. 보내기 실패는 exit 코드를 바꾸지 않고 다시 시도하지 않는다. 주소는 `https://discord.com/api/webhooks/…` 한 줄이어야 한다(아니면 `bad_url`). 메시지에는 터미널과 같은 코드·건수·티커만 있다(카드 문장·가격·URL·키 없음). 메시지가 2000자를 넘으면 뒤 줄부터 빼고 `… N more lines (see Actions log)`.
-- 선택 환경 변수 `TIINGO_API_KEY`: Tiingo **유료(Commercial) 구독 전까지 비워 둔다**. 없거나 빈 값이면 시세 없이 돈다(`prices=none`). 값이 있는데 한 줄 ASCII가 아니면(공백·줄바꿈) DB에 붙기 전에 이름만 알리고 exit 2.
+- 선택 환경 변수 `TIINGO_API_KEY`: Tiingo **유료(Commercial) 구독 전까지 비워 둔다**. 가격 표시 플래그가 꺼져 있으면 읽지도 않는다(`prices=off`). 켜져 있을 때 없거나 빈 값이면 시세 없이 돈다(`prices=none`). 값이 있는데 한 줄 ASCII가 아니면(공백·줄바꿈) DB에 붙기 전에 이름만 알리고 exit 2.
 - **무료(Starter) 플랜 키는 GitHub(Actions secrets)·Vercel·원격 Supabase에 절대 넣지 않는다.** 무료 시세는 개인·비상업 전용이라 구독 전 성능 검사와 Paul의 Mac 로컬 미리보기에만 쓴다(HANDOFF 4장): 로컬 Supabase 주소로 `export SUPABASE_DB_URL`(위 `eval` 줄) + 셸에서 `export TIINGO_API_KEY` 뒤 `uv run python -m m30.pipeline --production <지난 거래일>`, 확인이 끝나면 레포 루트에서 `supabase db reset`. 유료 구독 뒤 Actions에 넣을 때는 `morning.yml`의 실행 단계 `env:`에 `TIINGO_API_KEY: ${{ secrets.TIINGO_API_KEY }}` 한 줄과 `tests/test_workflow.py`의 secrets 목록을 같이 고친다.
 - 원격 DB 주소는 Supabase **Session pooler**(포트 5432) URI만. Transaction pooler(6543)는 연결 전에 거부한다(`set role service_role`이 연결 내내 유지돼야 한다). Direct connection은 IPv6 전용이라 GitHub 러너에서 붙지 못한다. 비로컬 연결은 항상 `sslmode=require`.
 - DB 연결 실패 줄 끝의 `(reason=…)`(원래 메시지는 호스트·사용자가 들어 있어 찍지 않는다)와 확인할 것: `bad_url` URI 형식(앞뒤 공백·줄바꿈 없이 붙여 넣기, 비밀번호 특수문자는 퍼센트 인코딩) / `auth_failed` 비밀번호 / `auth_blocked` 비밀번호를 여러 번 틀려 풀러가 잠금 → 올바른 비밀번호로 고치고 잠시 뒤 다시 / `tenant_not_found` 사용자 이름 `postgres.<프로젝트 ref>`·풀러 호스트의 리전·프로젝트 일시정지 / `host_not_found` 호스트 이름 / `network_unreachable` Direct connection(IPv6 전용) → Session pooler URI로 / `refused` 호스트·포트(5432) / `timeout` 프로젝트 상태·네트워크 / `other` 그 밖(Supabase 대시보드 로그).
@@ -72,6 +74,20 @@ uv run python -m m30.pipeline --production 2026-10-16   # 지난 거래일 다�
 - 실행 기록(#17): 끝까지 간 실행은 `pipeline_run` 행에 `finished_at`과 함께 `failed`(exit 1이 되는 실행인지)와 `summary`(jsonb: `counts`·`lines`·`failures`·`access_denied`·`rate_limited`·`llm`, 코드·건수·티커만)를 남긴다. 죽은 실행은 셋 다 null(사후 기록 없음. 그 정보는 Actions 로그·Discord에 있다). 읽기 예: 최근 실패 `select trading_day, summary->'failures' from public.pipeline_run where failed order by id desc limit 10`, 이번 달 입력 토큰 `select sum((summary->'llm'->>'input_tokens')::bigint) from public.pipeline_run where started_at >= date_trunc('month', now())`.
 - **레포가 공개라 Actions 로그도 공개다.** CLI는 결과 코드·건수·티커만 찍는다(예외: 로컬 DB 전용 `--quality`, 맨 아래). 카드 문장·공시 본문·가격·URL·키·환경 변수 값을 출력에 더하지 않는다(#17·#18·#21도 같은 규칙).
 - 사용자 설정(값은 채팅·파일·커밋에 쓰지 않는다): ① Supabase Connect → Session pooler URI(비밀번호 칸 채움, 특수문자는 퍼센트 인코딩) ② GitHub Settings → Environments → `production`(배포 브랜치 `main`만) + environment secrets 셋(Tiingo 유료 구독 뒤에 `TIINGO_API_KEY` 추가) ③ 실패한 Actions 알림 켜기 ④ main 병합 뒤 첫 실행은 수동으로 ⑤ (선택) Discord 채널 설정 → 연동 → 웹후크 → 새 웹후크 → URL 복사 → `gh secret set DISCORD_WEBHOOK_URL --env production`(프롬프트에 붙여 넣는다. 셸 기록에 남기지 않는다).
+
+## 가격 표시 플래그 (`PRICE_DISPLAY`, #56)
+
+표시 라이선스 전이라 가격을 공개하지 않는다(2026-11-03 피봇). 아침 실행(GitHub Actions)과 웹(Vercel)이 같은 이름의 환경 변수를 읽는다. 비밀값이 아니다.
+
+- **기본 off.** 켜는 값은 `on` 하나다(대소문자·앞뒤 공백 무시). 없음·빈 값과 그 밖의 값(`true`·`1` 포함)은 전부 off(닫힌 쪽).
+- off일 때 아침 실행: 시세 어댑터를 만들지도 부르지도 않는다(`TIINGO_API_KEY`도 읽지 않는다). 카드 등락률은 `unsupported`, 세 번째 줄(가격 사실)은 저장하지 않는다(`price_fact_line_*` 열 null), 시장 한눈에 어제 마감 줄은 `Not covered yet`(`unsupported`). 첫·두 번째 줄, 지표 일정·소식 줄은 on과 같다. `change_delayed=`에 세지 않는다(지연이 아니다).
+- CLI 마지막 줄: `prices=off` 플래그 꺼짐 / `prices=tiingo` 켜짐 + Tiingo / `prices=none` 켜짐 + 키 없음 또는 `--quality`. 플래그 값 자체는 찍지 않는다.
+- GitHub Actions: secrets가 아니라 **Variables**. `gh variable set PRICE_DISPLAY --env production --body on`(켜기), `gh variable delete PRICE_DISPLAY --env production`(끄기). `morning.yml`이 `vars.PRICE_DISPLAY`를 실행 단계 `env:`로 넘긴다. 변수가 없으면 빈 문자열 → off.
+- Vercel: 프로젝트 환경 변수 `PRICE_DISPLAY`(Production, 필요하면 Preview). `NEXT_PUBLIC_`을 붙이지 않는다. 값을 바꾸면 재배포해야 적용된다(`web/README.md`).
+- 로컬: 셸에서 `export PRICE_DISPLAY=on`(시나리오 CLI, `--production`, `npm run dev`). `.env` 파일은 만들지 않는다.
+- 켜고 끌 때는 두 곳(Actions·Vercel)을 같이 바꾼다. 한쪽만 켜져도 가격 값은 새지 않는다: 아침 실행 off + 웹 on이면 DB에 가격 값이 없고, 아침 실행 on + 웹 off면 저장은 되지만 화면 모델에 없다.
+- 켜는 순서(라이선스를 산 뒤): Actions secrets에 `TIINGO_API_KEY`(위 운영 모드 절) → 두 곳에 `PRICE_DISPLAY=on`.
+- 계산 코드·열·Tiingo 어댑터는 그대로 있다. 지난 거래일 행의 가격 값도 지우지 않는다(웹이 off에서 옮기지 않는다).
 
 ## 커밋 전 비밀값 검사 (gitleaks, #17)
 
@@ -118,7 +134,7 @@ SEC_USER_AGENT="<app name> <contact email>" \
 
 | 줄 | 뜻 |
 | --- | --- |
-| `quality <거래일> classify=… newsline=… review=… prices=scenario\|none` | 블록 시작. 쓴 모델과 시세 출처 |
+| `quality <거래일> classify=… newsline=… review=… prices=scenario\|none\|off` | 블록 시작. 쓴 모델과 시세 출처(`off` = 가격 표시 플래그 꺼짐) |
 | `card <티커>` 아래 `  news`·`  event`·`  price <상태> "<카드 문구>"` | 저장된 카드의 세 줄(티커 순). 줄이 없으면 `- -` |
 | `  draft1 <ok\|문제 코드> "<문장>"` | 첫 시도 초안(검수 전, 꼬리표 없음). 소식 있는 종목만. 문장이 없으면 `-` |
 | `  draft2 "<문장>"` | 재생성한 경우의 마지막 LLM 문장 |

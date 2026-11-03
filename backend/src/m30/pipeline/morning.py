@@ -50,6 +50,7 @@ from m30.pipeline.lines import (
     HOLDINGS_SCOPE,
     INDICATOR_SCOPE,
     NEWS_SCOPE,
+    NOT_COVERED,
     PRICE_SCOPE,
     close_line,
     delayed_line,
@@ -86,7 +87,7 @@ class RunSummary:
     rate_limited: tuple[Source, ...]  # 429를 낸 출처(다시 시도로 성공했어도). access_denied 바로 아래 표시
     cards_saved: int
     resumed: tuple[str, ...]  # 죽은 앞 실행이 저장해서 이번에 건너뛴 카드의 티커 (오름차순)
-    change_delayed: tuple[str, ...]  # 등락률을 계산 못 해 delayed로 저장한 티커 (오름차순)
+    change_delayed: tuple[str, ...]  # 등락률을 계산 못 해 delayed로 저장한 티커 (오름차순). 가격 표시 off의 unsupported는 넣지 않는다
     failures: tuple[SourceFailure, ...]  # 재시도 뒤에도 실패한 출처·대상
     ticker_errors: tuple[TickerError, ...]  # 카드 만들기·저장의 예외(대상 순서). 그 카드는 전 줄 지연(#17 D5 층 2)
     filings_collected: int  # 이번 거래일 공시 수(중복 제거 후)
@@ -111,7 +112,7 @@ class MorningPipeline:
     def __init__(
         self,
         *,
-        prices: PriceSource,
+        prices: PriceSource | None,
         events: EventSource,
         filings: FilingSource,
         indicators: IndicatorSource,
@@ -121,7 +122,8 @@ class MorningPipeline:
         store: CardStore,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
-        # 출처는 기본값 없는 필수 키워드: 빠뜨리면 조용히 도는 대신 바로 실패한다
+        # 출처는 기본값 없는 필수 키워드: 빠뜨리면 조용히 도는 대신 바로 실패한다.
+        # prices None = 가격 표시 off(#56): 시세를 부르지 않는다. 등락률 미지원, 가격 사실 줄 None, 어제 마감 줄 미지원
         self._prices = prices
         self._events = events
         self._filings = filings
@@ -197,18 +199,23 @@ class MorningPipeline:
 
         def build(cov: Coverage) -> tuple[StockCard, list[HoldItem] | None]:
             """종목 하나의 카드와 보류함 행(None = 보류함 행을 건드리지 않는다)."""
-            try:
-                bars = calls.call(
-                    Source.PRICES,
-                    cov.ticker,
-                    lambda: self._prices.daily_bars(cov.ticker, trading_day - LOOKBACK, trading_day - timedelta(days=1)),
-                    valid_bars,
-                )
-            except SourceError:
-                bars = []  # 등락률·세 번째 줄 지연
-            usable = bars_usable(bars, trading_day)  # 지난 카드 값은 읽지 않는다. 그날 받은 봉으로만
-            pct = change_pct(bars) if usable else None
-            price_fact = price_fact_line(bars, checked_at) if usable else delayed_line(PRICE_SCOPE, checked_at)
+            if self._prices is None:  # 가격 표시 off(#56): 시세를 부르지 않는다
+                pct, change_status, price_fact = None, LineStatus.UNSUPPORTED, None
+            else:
+                prices = self._prices  # lambda 안에서도 None이 걸러진 값으로 보이게
+                try:
+                    bars = calls.call(
+                        Source.PRICES,
+                        cov.ticker,
+                        lambda: prices.daily_bars(cov.ticker, trading_day - LOOKBACK, trading_day - timedelta(days=1)),
+                        valid_bars,
+                    )
+                except SourceError:
+                    bars = []  # 등락률·세 번째 줄 지연
+                usable = bars_usable(bars, trading_day)  # 지난 카드 값은 읽지 않는다. 그날 받은 봉으로만
+                pct = change_pct(bars) if usable else None
+                change_status = LineStatus.DELAYED if pct is None else LineStatus.CHECKED_FOUND
+                price_fact = price_fact_line(bars, checked_at) if usable else delayed_line(PRICE_SCOPE, checked_at)
             # 첫 번째 줄의 출처는 넷뿐: 사람이 재발행한 줄, 앞 실행이 확인한 줄(CIK 실패), 검수 결과(통과한 줄·대체 줄), 데이터 상태 문구
             # holds: 이 카드의 보류함 행. None = 이번에 첫 번째 줄을 만들지 않았다 → 보류함 행을 건드리지 않는다
             old = stored.get(cov.ticker)
@@ -236,7 +243,7 @@ class MorningPipeline:
                 trading_day=trading_day,
                 status=CardStatus.FALLBACK if news_line is None else CardStatus.NORMAL,  # 축소판은 7:45 마감(미구현)용
                 change_pct=pct,
-                change_status=LineStatus.DELAYED if pct is None else LineStatus.CHECKED_FOUND,
+                change_status=change_status,
                 news_line=news_line,
                 event_line=self._event_line(cov.ticker, trading_day, checked_at, calls),
                 price_fact_line=price_fact,
@@ -258,7 +265,7 @@ class MorningPipeline:
                 error = error_name(e)
             if error is not None:  # except 밖: 새 예외가 나도 __context__에 원래 예외가 붙지 않는다
                 ticker_errors.append(TickerError(cov.ticker, error))
-                card = _error_card(cov, trading_day, checked_at)
+                card = _error_card(cov, trading_day, checked_at, price_display=self._prices is not None)
                 self._store.save_card(card, None)  # 이것마저 실패하면 DB 문제: 그대로 올라가 실행이 죽고 이어 하기가 받는다
             cards.append(card)
         # 아침 알림(#12): 이어 하기로 건너뛴 카드까지 그날 카드 전부로. 보류함 재발행은 이 단계를 거치지 않는다(다시 만들지 않음)
@@ -272,8 +279,6 @@ class MorningPipeline:
         # 시장 한눈에(#11): 카드·알림 뒤. 여기서 예상 못 한 예외가 나도 카드·알림은 저장돼 있고 다음 실행이 이어 한다
         glance, glance_review = None, "-"
         if not glance_resumed:
-            # 같은 날 SPY·QQQ 카드와 같은 숫자. 발행 중단 카드는 없는 것으로 본다(사람이 막은 숫자가 시장 한눈에로 나가지 않게)
-            fund_pcts = [c.change_pct if (c := saved.get(t)) and not c.publish_suspended else None for _, t in CLOSE_FUNDS]
             old = stored_glance and stored_glance.market_news_line
             if news_status is LineStatus.DELAYED and old and old.status in CHECKED:
                 # 소식 기간은 고정이고 수집 실패는 새 정보가 아니다: 앞 실행이 확인한 줄(확인 시각 포함)을 그대로 둔다(첫 번째 줄 D6과 같다)
@@ -285,7 +290,12 @@ class MorningPipeline:
             old = stored_glance and stored_glance.indicator_line
             if indicator.status is LineStatus.DELAYED and old and old.status in CHECKED:
                 indicator = old  # 지표 줄도 같은 규칙: 거래일 일정 수집 실패는 앞 실행이 확인한 줄을 덮지 않는다
-            close = close_line(*fund_pcts, previous_trading_day(trading_day), checked_at)
+            if self._prices is None:  # 가격 표시 off(#56): SPY·QQQ 카드 값을 읽지 않는다
+                close = CardLine(NOT_COVERED, LineStatus.UNSUPPORTED, checked_at, None)
+            else:
+                # 같은 날 SPY·QQQ 카드와 같은 숫자. 발행 중단 카드는 없는 것으로 본다(사람이 막은 숫자가 시장 한눈에로 나가지 않게)
+                fund_pcts = [c.change_pct if (c := saved.get(t)) and not c.publish_suspended else None for _, t in CLOSE_FUNDS]
+                close = close_line(*fund_pcts, previous_trading_day(trading_day), checked_at)
             glance = MarketGlance(trading_day, close, indicator, news_line, hold_draft, hold_rules)
             self._store.upsert_market_glance(glance)
         summary = RunSummary(
@@ -294,7 +304,7 @@ class MorningPipeline:
             rate_limited=calls.rate_limited,
             cards_saved=len(cards),
             resumed=resumed,
-            change_delayed=tuple(c.ticker for c in cards if c.change_pct is None),
+            change_delayed=tuple(c.ticker for c in cards if c.change_status is LineStatus.DELAYED),
             failures=calls.failures,
             ticker_errors=tuple(ticker_errors),
             filings_collected=len(items),
@@ -463,17 +473,18 @@ def run_record(summary: RunSummary) -> dict:
     }
 
 
-def _error_card(cov: Coverage, trading_day: date, checked_at: datetime) -> StockCard:
-    """종목 예외(층 2) 대체 카드: 등락률과 세 줄 모두 지연. 첫 번째 줄 범위는 ETF(편입 종목을 읽음)면 편입 고정 문구."""
+def _error_card(cov: Coverage, trading_day: date, checked_at: datetime, *, price_display: bool) -> StockCard:
+    """종목 예외(층 2) 대체 카드: 등락률과 세 줄 모두 지연. 첫 번째 줄 범위는 ETF(편입 종목을 읽음)면 편입 고정 문구.
+    가격 표시 off(#56)면 등락률 미지원, 가격 사실 줄 없음(정상 카드와 같다)."""
     return StockCard(
         ticker=cov.ticker,
         trading_day=trading_day,
         status=CardStatus.NORMAL,
         change_pct=None,
-        change_status=LineStatus.DELAYED,
+        change_status=LineStatus.DELAYED if price_display else LineStatus.UNSUPPORTED,
         news_line=delayed_line(NEWS_SCOPE if cov.holdings_ticker is None else HOLDINGS_SCOPE, checked_at),
         event_line=delayed_line(EVENT_SCOPE, checked_at),
-        price_fact_line=delayed_line(PRICE_SCOPE, checked_at),
+        price_fact_line=delayed_line(PRICE_SCOPE, checked_at) if price_display else None,
         leverage_tag=leverage_tag(cov.leverage),
         news_line_accession=None,
         previous_trading_day=previous_trading_day(trading_day),

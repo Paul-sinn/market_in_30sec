@@ -24,12 +24,15 @@ export function StockCard({ card }: { card: CardView }) {
       <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pb-2">
         <h2 className="text-lg font-bold">{card.ticker}</h2>
         <p className="min-w-0 grow wrap-break-word text-muted">{card.name}</p>
-        <p className="ml-auto flex items-baseline gap-3">
-          <span data-tone={card.change.tone} className={`tabular-nums ${CHANGE_TONE[card.change.tone]}`}>
-            {card.change.text}
-          </span>
-          <span className="text-xs whitespace-nowrap text-muted">{card.change.label}</span>
-        </p>
+        {/* 가격 표시 off(#56)면 change 키가 없다: 티커·종목명만 */}
+        {card.change && (
+          <p className="ml-auto flex items-baseline gap-3">
+            <span data-tone={card.change.tone} className={`tabular-nums ${CHANGE_TONE[card.change.tone]}`}>
+              {card.change.text}
+            </span>
+            <span className="text-xs whitespace-nowrap text-muted">{card.change.label}</span>
+          </p>
+        )}
       </header>
       {card.leverageTag && (
         <p className="mb-3 self-start rounded-full bg-background px-3 py-1 text-xs text-muted">{card.leverageTag}</p>

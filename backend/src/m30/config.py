@@ -19,6 +19,12 @@ GLANCE_MODEL = "claude-haiku-5-5"  # 시장 한눈에 소식 줄. 출시 전 cla
 LLM_KEY_VAR = "ANTHROPIC_API_KEY"  # Anthropic 키는 이 환경 변수에서만 읽는다
 SEC_UA_VAR = "SEC_USER_AGENT"  # SEC 공정 접근: 이름 + 연락 이메일. 값은 사용자가 셸·secrets에만 넣는다
 TIINGO_KEY_VAR = "TIINGO_API_KEY"  # 시세(#18). 유료 구독 전에는 비어 있다 → 운영 모드는 시세 없이 돈다
+PRICE_DISPLAY_VAR = "PRICE_DISPLAY"  # 가격 표시 플래그(GLOSSARY PriceDisplay, 2026-11-03 피봇). 비밀값 아님
+
+
+def price_display_on(env: Mapping[str, str] = os.environ) -> bool:
+    """값.strip().lower() == "on"일 때만 True. 없음·빈 값·그 밖의 값은 False(닫힌 쪽). 읽는 곳은 CLI(__main__) 하나."""
+    return env.get(PRICE_DISPLAY_VAR, "").strip().lower() == "on"
 
 
 class ConfigError(Exception):

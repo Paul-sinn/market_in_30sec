@@ -281,14 +281,16 @@ WEBHOOK_CANARY = "https://discord.com/api/webhooks/123456789012345678/WebhookCan
 BACKUP_LINE = "BACKUP RUN: no finished run when the GitHub schedule backup started (check pg_cron dispatch)"
 
 
-def run_probe(settings, situation, tiingo_key=None, extra=(), trigger=None, webhook=None, day="2026-10-16"):
+def run_probe(settings, situation, tiingo_key=None, extra=(), trigger=None, webhook=None, day="2026-10-16", price_display: str | None = "on"):
     """tiingo_key가 없으면 TIINGO_API_KEY를 뺀 환경(구독 전). 셸에 진짜 키가 있어도 하위 프로세스로 넘기지 않는다. extra = 덧붙일 CLI 인자.
     trigger = 워크플로가 넘기는 RUN_TRIGGER(github.event_name). 없으면 변수 없이(로컬 실행).
-    webhook = DISCORD_WEBHOOK_URL. 없으면 변수 없이(셸의 진짜 웹훅을 넘기지 않는다)."""
-    env = {k: v for k, v in os.environ.items() if k not in ("TIINGO_API_KEY", "RUN_TRIGGER", "DISCORD_WEBHOOK_URL")} | {
+    webhook = DISCORD_WEBHOOK_URL. 없으면 변수 없이(셸의 진짜 웹훅을 넘기지 않는다).
+    price_display = PRICE_DISPLAY(#56). None이면 변수 없이(기본 off)."""
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("TIINGO_API_KEY", "RUN_TRIGGER", "DISCORD_WEBHOOK_URL", "PRICE_DISPLAY")} | {
         "SUPABASE_DB_URL": settings.database_url, "ANTHROPIC_API_KEY": KEY_CANARY, "SEC_USER_AGENT": UA_CANARY
     } | ({"TIINGO_API_KEY": tiingo_key} if tiingo_key else {}) | ({"RUN_TRIGGER": trigger} if trigger else {}) | (
-        {"DISCORD_WEBHOOK_URL": webhook} if webhook else {})
+        {"DISCORD_WEBHOOK_URL": webhook} if webhook else {}) | ({"PRICE_DISPLAY": price_display} if price_display is not None else {})
     r = subprocess.run([sys.executable, "tests/production_probe.py", situation, "--production", day, *extra],
                        cwd=BACKEND, env=env, capture_output=True, text=True, timeout=60)
     out = r.stdout + r.stderr

@@ -9,7 +9,7 @@ import { randomUUID } from "node:crypto";
 
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterAll, beforeAll, expect, test } from "vitest";
+import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 
 import { Dashboard } from "@/components/dashboard";
 import { myDashboardView } from "@/lib/card-view";
@@ -155,6 +155,8 @@ afterAll(async () => {
   await cleanup();
 });
 
+afterEach(() => vi.unstubAllEnvs()); // 가격 표시 플래그는 설정 기본값 on(vitest.config.mts)
+
 /** 네 종목 전부가 잠기지 않은 내 종목인 Plus 유저(세 줄 전부) */
 const PLUS_ALL = { plan: "plus" as const, stocks: TICKERS.map((ticker) => ({ ticker, locked: false })) };
 
@@ -232,7 +234,7 @@ test("시장 한눈에(#11): 카드의 최신 거래일 행의 세 줄을 순서
 test("로그인 전 = 무료 범위: 세 번째 줄은 잠금만, 하단에서도 그 줄의 출처가 빠진다. 지연·미지원은 그대로", async () => {
   const cards = exposeCards((await getDashboard()).cards, null);
   // ZZWE(발행 중단)는 없다
-  expect(cards.map((c) => [c.ticker, c.change.text, c.lines, c.checked])).toEqual([
+  expect(cards.map((c) => [c.ticker, c.change!.text, c.lines, c.checked])).toEqual([
     [
       "ZZWA",
       "+1.3%",
@@ -315,4 +317,23 @@ test("같은 카드를 Plus 유저와 무료 유저가 볼 때 세 번째 줄이
   expect(section(f.html)).toBe(section(out));
   expect(section(p.html)).toBe(section(out));
   for (const html of [out, f.html, p.html]) expect(html).not.toContain(HOLD);
+});
+
+test("가격 표시 off(#56)면 DB에 등락률·가격 사실·어제 마감 값이 있어도 화면 모델·HTML에 없다(Plus 내 종목·로그인 전 모두)", async () => {
+  vi.stubEnv("PRICE_DISPLAY", undefined);
+  const { tradingDay, glance, cards } = await getDashboard();
+  expect(glance).toEqual({ lines: GLANCE.lines.slice(1), checked: "Checked 7:20 AM ET · Economic calendar" });
+  for (const viewer of [PLUS_ALL, null]) {
+    const data = { tradingDay, glance, cards: exposeCards(cards, viewer) };
+    expect(data.cards.map((c) => [c.ticker, Object.keys(c).sort(), c.lines.length])).toEqual(
+      ["ZZWA", "ZZWB", "ZZWC", "ZZWD"].map((t) => [t, ["checked", "leverageTag", "lines", "name", "ticker"], 2]),
+    );
+    const props = JSON.stringify(data);
+    const html = renderToStaticMarkup(createElement(Dashboard, { data }));
+    for (const price of ["+1.3%", "\u22122.0%", "Wed 12/30 close", "prev close", "Up 5 days in a row", "No additional price highlights", "Daily prices", CLOSE, "SPY", "Price facts in Plus"]) {
+      expect(props, price).not.toContain(price);
+      expect(html, price).not.toContain(price);
+    }
+    expect(html).toContain("Web Test A reported Q3 results (SEC filing)"); // 두 줄은 그대로
+  }
 });

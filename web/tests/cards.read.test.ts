@@ -103,6 +103,43 @@ test("시장 한눈에는 줄 컬럼 12개만 select한다: 보류 기록(market
   expect(glance?.lines.map((l) => l.text)).toEqual(["close_line text", "indicator_line text", "market_news_line text"]);
 });
 
+test("가격 표시 off면 시장 한눈에는 어제 마감 줄 컬럼을 select하지 않고 두 줄만(DB에 옛 값이 있어도)", async () => {
+  vi.stubEnv("PRICE_DISPLAY", undefined);
+  // 모의 응답은 select와 상관없이 어제 마감 값을 돌려준다(옛 값이 남은 행). 그래도 화면 모델에 닿으면 안 된다
+  const stored = {
+    close_line_text: "Wed 10/15 close: S&P 500 (SPY) +0.4%",
+    close_line_status: "checked_found",
+    close_line_checked_at: "2026-10-16T11:10:00Z", // 7:10 AM ET: 가장 이른 시각
+    close_line_source_scope: "Daily prices",
+    indicator_line_text: "CPI 8:30 AM ET",
+    indicator_line_status: "checked_found",
+    indicator_line_checked_at: "2026-10-16T11:30:00Z",
+    indicator_line_source_scope: "Economic calendar",
+    market_news_line_text: "No official releases found",
+    market_news_line_status: "checked_none",
+    market_news_line_checked_at: "2026-10-16T11:30:00Z",
+    market_news_line_source_scope: "Official releases",
+  };
+  respond(latest, noCards, { data: stored, error: null });
+  const { glance } = await getDashboard();
+  expect(selects.market_glance.split(",")).toEqual(
+    ["indicator_line", "market_news_line"].flatMap((l) => [`${l}_text`, `${l}_status`, `${l}_checked_at`, `${l}_source_scope`]),
+  );
+  expect(glance).toEqual({
+    lines: [
+      { text: "CPI 8:30 AM ET", status: "checked_found" },
+      { text: "No official releases found", status: "checked_none" },
+    ],
+    checked: "Checked 7:30 AM ET · Economic calendar · Official releases",
+  });
+});
+
+test("가격 표시 off에 그날 시장 한눈에 행이 없으면 Update delayed 두 줄, 하단 없음", async () => {
+  vi.stubEnv("PRICE_DISPLAY", "off");
+  respond(latest, noCards, noGlance);
+  expect((await getDashboard()).glance).toEqual({ lines: Array(2).fill({ text: "Update delayed", status: "delayed" }), checked: null });
+});
+
 test("환경 변수가 없으면 이름만 말하는 에러(값 없음)", async () => {
   vi.stubEnv("SUPABASE_SERVICE_ROLE_KEY", "");
   await expect(getDashboard()).rejects.toThrow("SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY must be set");

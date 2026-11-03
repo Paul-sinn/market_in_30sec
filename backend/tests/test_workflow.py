@@ -63,7 +63,8 @@ def test_실행_단계는_시작한_이벤트를_env로_넘겨_예약_실행만_
     lines = text().splitlines()
     (production,) = [i for i, line in enumerate(lines) if "--production" in line]
     assert [line.strip().split(":")[0] for line in lines[production + 1:]] == [
-        "env", "TRADING_DAY", "RUN_TRIGGER", "SUPABASE_DB_URL", "ANTHROPIC_API_KEY", "SEC_USER_AGENT", "DISCORD_WEBHOOK_URL"]
+        "env", "TRADING_DAY", "RUN_TRIGGER", "SUPABASE_DB_URL", "ANTHROPIC_API_KEY", "SEC_USER_AGENT", "DISCORD_WEBHOOK_URL",
+        "PRICE_DISPLAY"]  # #56 가격 표시 플래그(vars)
     assert re.findall(r"^\s*RUN_TRIGGER: (.*)$", text(), re.M) == ["${{ github.event_name }}"]
 
 
@@ -74,3 +75,13 @@ def test_실행은_운영_모드로_한_번에_하나씩_main_전용_environment
         assert needed in text(), needed
     uses = re.findall(r"uses: (\S+)", text())
     assert uses and all(re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", u) for u in uses), uses
+
+
+def test_가격_표시_플래그는_secrets가_아닌_저장소_변수로_실행_단계에만_넘긴다():
+    # #56: 비밀값 아님. 변수가 없으면 빈 문자열 → off(닫힌 쪽). 웹(Vercel)과 같은 이름
+    lines = text().splitlines()
+    (production,) = [i for i, line in enumerate(lines) if "--production" in line]
+    flag = [i for i, line in enumerate(lines) if "PRICE_DISPLAY" in line]
+    assert len(flag) == 1 and flag[0] > production
+    assert re.match(r"^\s*PRICE_DISPLAY: \$\{\{ vars\.PRICE_DISPLAY \}\}(  #.*)?$", lines[flag[0]])
+    assert "secrets.PRICE_DISPLAY" not in text()

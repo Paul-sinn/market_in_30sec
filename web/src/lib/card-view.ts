@@ -10,12 +10,12 @@ export type ChangeView = { text: string; tone: "up" | "down" | "flat" | "delayed
 export type CardView = {
   ticker: string;
   name: string;
-  change: ChangeView;
-  lines: LineView[]; // 항상 3개(첫 번째·두 번째·세 번째 줄)
+  change?: ChangeView; // 가격 표시 off면 키 자체가 없다(#56). 등락률·종가 날짜 라벨이 이 안에 있다
+  lines: LineView[]; // on: 3개(세 번째 = 가격 사실 또는 잠금), off: 2개(첫 번째·두 번째 줄)
   leverageTag: string | null;
   checked: string | null; // "Checked 7:30 AM ET · SEC filings"
 };
-/** 시장 한눈에(#11). lines는 항상 3개: 어제 마감, 오늘 지표 일정, 시장 전체 소식. 모든 플랜·로그인 전이 같다 */
+/** 시장 한눈에(#11). on: 3줄(어제 마감, 오늘 지표 일정, 시장 전체 소식), off: 2줄(어제 마감 없음, #56). 모든 플랜·로그인 전이 같다 */
 export type GlanceView = { lines: TextLine[]; checked: string | null };
 export type DashboardView = { tradingDay: string | null; glance: GlanceView | null; cards: CardView[] }; // glance null = 카드도 없음
 
@@ -64,9 +64,12 @@ export function lineView(line: TextLine | null): TextLine {
   return line ?? { text: UPDATE_DELAYED, status: "delayed" };
 }
 
-/** 그날 행이 없으면(null: #11 전 날짜, 시장 한눈에 전에 끝난 실행) 지연 세 줄, 하단 없음. 허용한 키만 옮긴다(펼치기 금지) */
-export function glanceView(lines: { text: string; status: LineStatus; checked_at: string; source_scope: string | null }[] | null): GlanceView {
-  if (!lines) return { lines: Array.from({ length: 3 }, () => lineView(null)), checked: null };
+/** 그날 행이 없으면(null: #11 전 날짜, 시장 한눈에 전에 끝난 실행) 지연 count줄, 하단 없음. 허용한 키만 옮긴다(펼치기 금지) */
+export function glanceView(
+  lines: { text: string; status: LineStatus; checked_at: string; source_scope: string | null }[] | null,
+  count = 3,
+): GlanceView {
+  if (!lines) return { lines: Array.from({ length: count }, () => lineView(null)), checked: null };
   return { lines: lines.map((l) => ({ text: l.text, status: l.status })), checked: checkedFooter(lines) };
 }
 

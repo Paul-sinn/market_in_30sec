@@ -30,6 +30,7 @@ from m30.config import (
     load_llm_settings,
     load_settings,
     load_tiingo_settings,
+    price_display_on,
 )
 from m30.db.store import CardStore, DBConnectError, RunLocked, connect
 from m30.llm.anthropic import AnthropicLLM
@@ -86,13 +87,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
 
     scenario = load_scenario(args.scenario)
+    prices_on = price_display_on()  # off(#56): 가짜 시세도 만들지 않는다
     try:
         with connect(settings) as conn:
             store = CardStore(conn)
             store.upsert_coverage(scenario.coverage)
             store.add_default_tickers(args.trading_day, [c.ticker for c in scenario.coverage])  # 유저 없음 → 시나리오 커버 범위 전체가 대상
             summary = MorningPipeline(
-                prices=FakePriceSource(scenario),
+                prices=FakePriceSource(scenario) if prices_on else None,
                 events=FakeEventSource(scenario),
                 filings=FakeFilingSource(scenario),
                 indicators=FakeIndicatorSource(scenario),
@@ -101,7 +103,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 llm=AnthropicLLM(llm_settings) if args.quality else FakeLLM(scenario),  # 품질 확인은 llm_replies를 쓰지 않는다
                 store=store,
             ).run(args.trading_day)
-            quality = _quality_lines(summary, store, "scenario") if args.quality else []
+            quality = _quality_lines(summary, store, "scenario" if prices_on else "off") if args.quality else []
     except RunLocked:
         print(LOCKED.format(args.trading_day), file=sys.stderr)
         return 1
@@ -187,7 +189,7 @@ QUALITY_LINES = (("news", "news_line"), ("event", "event_line"), ("price", "pric
 
 def _quality_lines(summary: RunSummary, store: CardStore, prices: str) -> list[str]:
     """--quality 품질 블록(#14 D5). DB 연결이 열린 동안 부른다(카드·보류함·분류를 읽는다). 로컬 DB 전용이라 카드 문장·검수 전 초안을
-    찍는 유일한 출력이다. 글자 필드는 json.dumps: 한 줄 유지, 제어 문자(터미널 이스케이프) 무력화. prices: "scenario" | "none"."""
+    찍는 유일한 출력이다. 글자 필드는 json.dumps: 한 줄 유지, 제어 문자(터미널 이스케이프) 무력화. prices: "scenario" | "none" | "off"(#56)."""
     def text(value: str | None) -> str:
         return "-" if value is None else json.dumps(value, ensure_ascii=False)
 
@@ -285,7 +287,8 @@ def _notify(day: date, code: int, lines: Sequence[str]) -> None:
 
 def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> int:
     """거래일·날짜 확인 → 설정 → DB 연결 → CIK 갱신·파이프라인(SEC·정부 기관·Anthropic·Tiingo) → 요약 → exit 코드. 외부 출처는 DB 연결 뒤에만 부른다.
-    시세: TIINGO_API_KEY가 있으면 Tiingo, 없으면(유료 구독 전) 시세 없이(등락률·세 번째 줄 지연).
+    시세: 가격 표시 플래그(PRICE_DISPLAY, #56)가 꺼져 있으면 시세 어댑터를 만들지 않고 TIINGO_API_KEY도 읽지 않는다(등락률·어제 마감 미지원).
+    켜져 있으면 TIINGO_API_KEY가 있으면 Tiingo, 없으면(유료 구독 전) 시세 없이(등락률·세 번째 줄 지연).
     quality(#14): 로컬 DB만, 시세는 항상 없이(무료 키 시간당 50회 보호. 품질 확인 대상은 첫 번째 줄), 끝에 품질 블록(say가 아니라 print:
     Discord 메시지에 넣지 않는다)."""
     if (code := _not_trading_day(day, say)) is not None:
@@ -296,7 +299,8 @@ def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> in
         return 2
     try:  # DB·외부 출처에 닿기 전에 모두 확인한다. 메시지에는 변수 이름만 있다
         settings, llm_settings, edgar_settings = load_settings(), load_llm_settings(), load_edgar_settings()
-        tiingo_settings = load_tiingo_settings()
+        prices_on = price_display_on()
+        tiingo_settings = load_tiingo_settings() if prices_on else None  # off: 키를 읽지 않는다(형식이 틀려도 막지 않음)
     except ConfigError as e:
         say(str(e), file=sys.stderr)
         return 2
@@ -304,6 +308,7 @@ def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> in
         say("--quality는 로컬 DB에서만 씁니다", file=sys.stderr)
         return 2
     tiingo = tiingo_settings is not None and not quality
+    price_code = "off" if not prices_on else "tiingo" if tiingo else "none"  # 출력 코드. --quality면 off|none
     error = None
     try:
         with connect(settings) as conn:
@@ -321,9 +326,9 @@ def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> in
                 get=EdgarClient(edgar_settings).get,
                 gov_get=GovClient(edgar_settings).get,  # 연락처는 BLS 요청에만(#50 U1)
                 llm=AnthropicLLM(llm_settings),
-                prices=TiingoPriceSource(tiingo_settings) if tiingo else NoPriceSource(),
+                prices=None if not prices_on else TiingoPriceSource(tiingo_settings) if tiingo else NoPriceSource(),
             )
-            lines = _quality_lines(summary, store, "none") + _glance_quality_lines(summary, store) if quality else []
+            lines = _quality_lines(summary, store, price_code) + _glance_quality_lines(summary, store) if quality else []
     except RunLocked:  # 카드 0장과 같은 실패(exit 1). except Exception보다 먼저
         say(LOCKED.format(day), file=sys.stderr)
         return 1
@@ -338,7 +343,7 @@ def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> in
         return 1
     _print_summary(summary, say)
     say("coverage: refreshed" if refreshed else "coverage: NOT REFRESHED (sec ticker list failed), stored rows used")
-    say("prices=tiingo" if tiingo else "prices=none")  # none = TIINGO_API_KEY 없음(구독 전) 또는 --quality
+    say(f"prices={price_code}")  # off = 가격 표시 꺼짐(#56), none = TIINGO_API_KEY 없음(구독 전) 또는 --quality
     for line in lines:
         print(line)
     return 1 if run_failed(summary) else 0
