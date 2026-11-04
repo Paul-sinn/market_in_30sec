@@ -89,6 +89,27 @@ def test_오늘_일정이_있으면_중요도가_높은_첫_번째_줄보다_먼
     assert store.list_notices(FRI) == {uid: notice}
 
 
+# MSFT 작년 10/17(금) 장 후 공시 + 364일 = 10/16(FRI). 지난 4개 분기 모두 16:05 → after close
+MSFT_EARNINGS_D0 = {accession: datetime.fromisoformat(at) for accession, at in {
+    "0000789019-25-000101": "2025-10-17T16:05:00-04:00",
+    "0000789019-26-000011": "2026-01-27T16:05:00-05:00",
+    "0000789019-26-000041": "2026-04-28T16:05:00-04:00",
+    "0000789019-26-000071": "2026-07-28T16:05:00-04:00",
+}.items()}
+
+
+def test_실적_추정일이_오늘이면_오늘_일정으로_먼저_쓰고_est를_떼지_않는다(store, admin, make_user):
+    day = dataclasses.replace(aapl_news_day(), earnings_filings={MSFT.cik: MSFT_EARNINGS_D0})  # MSFT는 일정 출처 없음 → 추정
+    uid = user_with(store, admin, make_user, day, ["AAPL", "MSFT"])
+
+    run(store, day)
+
+    msft = next(c for c in store.list_cards(FRI) if c.ticker == "MSFT")
+    assert msft.event_line.text == "Earnings Fri 10/16 after close (est.) (D-0)"
+    # 오늘 일정이 아니면 AAPL 공시(중요도 5)가 이긴다. 추정은 알림에서도 (est.)로 남아 확정처럼 읽히지 않는다
+    assert store.list_notices(FRI) == {uid: "MSFT: Earnings Fri 10/16 after close (est.) (D-0) +1 more"}
+
+
 UP_5 = closes(("10-08", 100), ("10-09", 101), ("10-12", 102), ("10-13", 103), ("10-14", 104), ("10-15", 105))  # Up 5 days in a row
 
 

@@ -93,7 +93,7 @@ def test_운영_실행은_실제_공시·편입_보고와_미연결_출처만_�
         MF_TICKERS_URL, SUBMISSIONS_URL.format(cik=QQQ_CIK), txt_url(QQQ_CIK, QQQ_8), TICKERS_URL,
         SUBMISSIONS_URL.format(cik=SCHWAB_CIK), txt_url(SCHWAB_CIK, OTHER_SERIES), txt_url(SCHWAB_CIK, SCHD_8),
         SUBMISSIONS_URL.format(cik=SPY_CIK), txt_url(SPY_CIK, SPY_8),
-    ] + [SUBMISSIONS_URL.format(cik=cik) for cik in sorted(COMPANY_CIKS.values())]
+    ] + [SUBMISSIONS_URL.format(cik=cik) for cik in sorted(COMPANY_CIKS.values())] * 2  # 8-K 수집, 실적 추정(#57, 빈 목록 → 헤더 없음)
 
 
 def test_운영_실행의_시장_한눈에는_발표가_없는_날_두_줄_모두_확인한_기관_범위로_없음이다(store):
@@ -266,10 +266,11 @@ def test_SEC가_403으로_막아도_카드는_나가지만_실패한_실행이�
 
     summary, _ = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=get, llm=NoCallLLM(), prices=NoPriceSource())
 
-    assert summary.access_denied == (Source.SEC_FILINGS,)
+    assert summary.access_denied == (Source.EARNINGS, Source.SEC_FILINGS)  # 실적 추정(#57)도 같은 submissions에서 403
     cards = {c.ticker: c for c in store.list_cards(FRI)}
     assert len(cards) == summary.cards_saved == 15  # 가용성은 열린 쪽
     assert cards["AAPL"].news_line.status is LineStatus.DELAYED  # 못 받은 것을 "없음"으로 두지 않는다
+    assert cards["AAPL"].event_line.status is LineStatus.DELAYED
     assert run_failed(summary) is True
 
 
@@ -313,7 +314,7 @@ def webhook_message(out):
                       "glance: close=delayed indicator=checked_none market_news=checked_none review=-",
                       "holdings: QQQ=checked_found(unmatched 4) SCHD=checked_found(unmatched 9)"
                       " SPY=checked_found(unmatched 3) TQQQ=checked_found(unmatched 4)"]),
-        ("denied", 1, ["ACCESS DENIED (not retried): sec_filings", "cards_saved=15", "coverage: refreshed"]),
+        ("denied", 1, ["ACCESS DENIED (not retried): earnings, sec_filings", "cards_saved=15", "coverage: refreshed"]),
         ("no_tickers", 1, ["cards_saved=0", "coverage: NOT REFRESHED (sec ticker list failed), stored rows used"]),
     ],
     ids=["정상", "SEC_403", "빈_DB에_티커_목록_실패"],
@@ -366,12 +367,13 @@ def test_실패한_운영_실행은_요약_맨_위에_실패_배너와_실패_�
     code, out = run_probe(settings, "denied")
 
     assert code == 1
-    # 403 뒤 이번 실행은 SEC를 더 부르지 않는다: AAPL과 CIK 순으로 그 뒤 6개(MSFT·AMZN·NVDA·TSLA·META·GOOGL)가 차단으로 남는다
+    # 403 뒤 이번 실행은 SEC를 더 부르지 않는다: AAPL과 CIK 순으로 그 뒤 6개(MSFT·AMZN·NVDA·TSLA·META·GOOGL)가 차단으로 남는다.
+    # 실적 추정(#57)도 CIK 순으로 같은 submissions를 받아 AAPL에서 403, 같은 7개가 차단으로 남는다
     denied = ["0000320193", "0000789019", "0001018724", "0001045810", "0001318605", "0001326801", "0001652044"]
     assert out.splitlines()[:3] == [
-        "!!! FAILED: failures=7 cards=15 !!!",
-        "failed: " + ", ".join(f"sec_filings/{cik}=access_denied" for cik in denied),
-        "ACCESS DENIED (not retried): sec_filings",
+        "!!! FAILED: failures=14 cards=15 !!!",
+        "failed: " + ", ".join(f"{source}/{cik}=access_denied" for source in ("earnings", "sec_filings") for cik in denied),
+        "ACCESS DENIED (not retried): earnings, sec_filings",
     ]
 
 
@@ -568,7 +570,7 @@ def test_실패한_운영_실행의_Discord_메시지는_머리줄과_첫_줄에
 
     assert code == 1
     assert webhook_message(out).splitlines()[:3] == ["**FAILED** morning 2026-10-16 exit=1", "```text",
-                                                    "!!! FAILED: failures=7 cards=15 !!!"]
+                                                    "!!! FAILED: failures=14 cards=15 !!!"]
     assert "discord: sent" in out.splitlines()
 
 
@@ -636,7 +638,7 @@ def test_종목_하나의_예상_못_한_예외는_그_종목만_지연이고_Di
 
     assert code == 1
     assert "2026-10-16 cards_saved=15 resumed=- " in out
-    failed = "failed: sec_filings/0000320193=unexpected:ValueError"
+    failed = "failed: earnings/0000320193=unexpected:ValueError, sec_filings/0000320193=unexpected:ValueError"  # 같은 submissions
     assert failed in out.splitlines()
     assert failed in webhook_message(out).splitlines()
 

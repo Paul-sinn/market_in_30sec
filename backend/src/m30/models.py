@@ -3,6 +3,8 @@ from datetime import date, datetime
 from decimal import Decimal
 from enum import StrEnum
 
+from m30.adapters.events import EarningsTiming
+
 
 class LineStatus(StrEnum):
     CHECKED_FOUND = "checked_found"  # 확인함·있음 (등락률: 계산함)
@@ -49,6 +51,15 @@ class NewsKind(StrEnum):
 
 
 IMPORTANCE_MAX = 5  # U2 = B. 내부 중요도 1~5, 클수록 중요. 바꾸면 마이그레이션 CHECK도 같이
+
+
+@dataclass(frozen=True)
+class EarningsEstimate:
+    """GLOSSARY EarningsEstimate. earnings_estimate 한 행의 값(#57)."""
+
+    day: date  # 추정일 = basis 접수일(동부) + 364일. 거래일보다 앞이면 "지남"
+    timing: EarningsTiming | None  # None = unknown(날짜만). DB 'unknown'
+    basis_accession: str  # 작년 같은 분기 실적 공시
 
 
 class UnclassifiedReason(StrEnum):

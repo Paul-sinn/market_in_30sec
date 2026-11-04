@@ -1,4 +1,4 @@
-"""가짜 시세·일정·공시·지표·편입 종목·시장 전체 소식·LLM 어댑터. 시나리오 JSON 파일에서 데이터를 읽는다."""
+"""가짜 시세·일정·공시·실적 공시·지표·편입 종목·시장 전체 소식·LLM 어댑터. 시나리오 JSON 파일에서 데이터를 읽는다."""
 
 import json
 from collections import Counter
@@ -18,7 +18,7 @@ from m30.llm import LLMReply, LLMRequest
 from m30.models import Coverage
 
 REQUIRED_KEYS = {"coverage", "prices"}
-OPTIONAL_KEYS = {"events", "filings", "indicators", "holdings", "market_news", "llm_replies", "failures"}  # 다음 티켓은 선택 키로 더한다
+OPTIONAL_KEYS = {"events", "filings", "earnings_filings", "indicators", "holdings", "market_news", "llm_replies", "failures"}  # 다음 티켓은 선택 키로 더한다
 BAR_KEYS = {f.name for f in fields(DailyBar)}
 PRICE_KEYS = {"open", "high", "low", "close"}
 EVENT_KEYS = {"earnings": {"kind", "day", "confirmed", "timing"}, "ex_dividend": {"kind", "day", "amount"}}
@@ -46,11 +46,14 @@ class Scenario:
     prices: dict[str, list[DailyBar]]  # 티커 → 날짜 오름차순
     events: dict[str, list[CorporateEvent]] = field(default_factory=dict)  # 키가 없는 티커 = 일정 미지원
     filings: dict[str, list[Filing]] = field(default_factory=dict)  # CIK → 공시. 키가 없는 CIK = []
+    # CIK → {접수번호: 헤더 접수 시각}(#57). 키가 없는 CIK = 실적 공시 없음
+    earnings_filings: dict[str, dict[str, datetime]] = field(default_factory=dict)
     indicators: list[IndicatorRelease] | None = None  # None = 키 없음 = 지표 일정 미지원
     holdings: dict[str, HoldingsReport] = field(default_factory=dict)  # 편입을 읽을 ETF → 최신 보고. 키가 없는 ETF = None(미지원)
     market_news: list[MarketNewsItem] | None = None  # None = 키 없음 = 시장 전체 소식 미지원
     llm_replies: list[str] = field(default_factory=list)  # 호출 순서대로
-    # (출처, 대상) → 실패 계획. 대상: 시세·일정은 티커, 공시는 CIK, 편입 종목은 ETF 티커, 지표·시장 전체 소식·LLM은 None
+    # (출처, 대상) → 실패 계획. 대상: 시세·일정은 티커, 공시는 CIK, 실적 공시는 CIK(목록)·접수번호(헤더), 편입 종목은 ETF 티커,
+    # 지표·시장 전체 소식·LLM은 None
     failures: dict[tuple[Source, str | None], FailurePlan] = field(default_factory=dict)
 
 
@@ -77,6 +80,10 @@ def load_scenario(path: Path) -> Scenario:
         prices=prices,
         events=events,
         filings={cik: [_filing(path, cik, row) for row in rows] for cik, rows in raw.get("filings", {}).items()},
+        earnings_filings={
+            cik: {accession: _aware(path, f"earnings filing {accession} of {cik}", at) for accession, at in rows.items()}
+            for cik, rows in raw.get("earnings_filings", {}).items()
+        },
         indicators=[_indicator(path, row) for row in raw["indicators"]] if "indicators" in raw else None,
         holdings={fund: _holdings(path, fund, row) for fund, row in raw.get("holdings", {}).items()},
         market_news=[_market_news(path, row) for row in raw["market_news"]] if "market_news" in raw else None,
@@ -285,6 +292,26 @@ class FakeFilingSource:
         self.calls.append(cik)
         self._failures.check(cik)
         return list(self._filings.get(cik, []))
+
+
+class FakeEarningsFilingSource:
+    """기간으로 거르지 않는다(FakeFilingSource와 같은 이유: 파이프라인의 헤더 시각 거르기를 시험). 실패 계획 대상: 목록 = CIK, 헤더 = 접수번호."""
+
+    def __init__(self, scenario: Scenario) -> None:
+        self._filings = scenario.earnings_filings
+        self._failures = _Failures(scenario, Source.EARNINGS)
+        self.calls: list[str] = []  # earnings_accessions의 cik
+        self.header_calls: list[str] = []  # accepted_at의 accession(접수번호별 한 번 확인용)
+
+    def earnings_accessions(self, cik: str, since: datetime, until: datetime) -> list[str]:
+        self.calls.append(cik)
+        self._failures.check(cik)
+        return list(self._filings.get(cik, {}))
+
+    def accepted_at(self, cik: str, accession: str) -> datetime:
+        self.header_calls.append(accession)
+        self._failures.check(accession)
+        return self._filings[cik][accession]
 
 
 class FakeIndicatorSource:

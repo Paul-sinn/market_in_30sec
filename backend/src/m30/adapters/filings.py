@@ -25,6 +25,19 @@ class Filing:
     report_date: date | None = None  # EDGAR reportDate(8-K "Date of Report"). 8-K/A와 원래 공시를 잇는다. None = 출처가 주지 않음
 
 
+class EarningsFilingSource(Protocol):
+    """실적 공시(8-K 중 Item 2.02, 정정 8-K/A 제외) 출처(#57). 실적 추정일 계산 전용. 실패는 SourceError, None은 돌려주지 않는다."""
+
+    def earnings_accessions(self, cik: str, since: datetime, until: datetime) -> list[str]:
+        """cik의 실적 공시 접수번호. 출처의 대략 시각으로 [since, until)을 넓게 고른 후보라(EDGAR: 앞뒤 CANDIDATE_MARGIN) 범위 밖이
+        섞일 수 있다. 정확한 거르기는 호출부가 accepted_at으로 한다. 순서 보장 없음. [] = 확인했지만 없음."""
+        ...
+
+    def accepted_at(self, cik: str, accession: str) -> datetime:
+        """그 공시의 실제 접수 시각(tz-aware). EDGAR = 전체 제출 파일 SEC-HEADER의 ACCEPTANCE-DATETIME(동부 벽시계)."""
+        ...
+
+
 class FilingSource(Protocol):
     def filings(self, cik: str, since: datetime, until: datetime) -> list[Filing]:
         """cik가 since 이상 until 미만에 접수한 8-K·8-K/A. 순서 보장 없음. [] = 확인했지만 없음.

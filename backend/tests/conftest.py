@@ -103,6 +103,13 @@ def etf_lite():
 
 
 @pytest.fixture
+def earnings_estimate():
+    """거래일 FRI 2026-10-16 실적 추정일(#57). 일정 출처 없음(events 키 없음) → 일반 종목은 EDGAR 과거 실적 공시로 추정한다.
+    AAPL 장 후 4건, JPM 장 전 4건, MSFT 섞임, KO 3건(4월 없음), NVDA 1년 미만, PFE 추정일 10/6 지남, XOM 지난 뒤 10/9 공시, SPY ETF."""
+    return SCENARIOS / "earnings_estimate.json"
+
+
+@pytest.fixture
 def full_card():
     """세 줄을 다 채운 정상 카드. 커버 범위에 AAPL이 있어야 저장된다."""
     checked = datetime(2026, 10, 16, 7, 30, tzinfo=ET)

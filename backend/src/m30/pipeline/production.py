@@ -4,7 +4,7 @@
 from datetime import date
 
 from m30.adapters import SourceError
-from m30.adapters.edgar import EdgarFilingSource, Get, ticker_ciks
+from m30.adapters.edgar import EdgarEarningsFilingSource, EdgarFilingSource, Get, ticker_ciks
 from m30.adapters.gov import GovIndicatorSource
 from m30.adapters.gov_news import GovNewsSource
 from m30.adapters.nport import EdgarHoldingsSource
@@ -32,6 +32,7 @@ def run_production(
     summary = MorningPipeline(
         prices=prices,
         events=NoEventSource(),
+        earnings=EdgarEarningsFilingSource(get),  # #57: 과거 실적 공시로 실적 추정일. 같은 SEC get·간격 조절
         filings=EdgarFilingSource(get),
         indicators=GovIndicatorSource(gov_get),  # #50: BLS·BEA 일정 + FOMC 표
         holdings=EdgarHoldingsSource(get),  # #10 B: live 게이트(test_holdings_live) 통과 뒤 연결

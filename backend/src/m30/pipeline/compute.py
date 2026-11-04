@@ -1,14 +1,16 @@
 """숫자 계산·표기. 프로젝트의 %·금액 반올림은 여기 한 곳뿐이다."""
 
 import re
-from collections.abc import Iterable, Sequence
-from datetime import date, timedelta
+from collections.abc import Iterable, Mapping, Sequence
+from datetime import date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from itertools import pairwise
 
+from m30.adapters.events import EarningsTiming
 from m30.adapters.holdings import HoldingsReport
 from m30.adapters.prices import DailyBar
-from m30.models import Coverage, FundHoldings, LineStatus
+from m30.config import ET
+from m30.models import Coverage, EarningsEstimate, FundHoldings, LineStatus
 from m30.trading_day import previous_trading_day
 
 
@@ -91,6 +93,42 @@ def top_holdings(report: HoldingsReport, coverage: Iterable[Coverage]) -> FundHo
     if not found:
         return FundHoldings(LineStatus.UNSUPPORTED, unmatched=len(top))
     return FundHoldings(LineStatus.CHECKED_FOUND, tuple(sorted(t for ts in found for t in ts)), len(found), len(top) - len(found))
+
+
+# 실적 추정일(#57, 스펙 D2·D3)
+YEAR_SAME_WEEKDAY = timedelta(days=364)
+NEXT_MIN = timedelta(days=45)  # 최근 실적 공시 뒤 이만큼 안의 추정은 그 공시 자신의 작년 짝이다
+NEXT_MAX = timedelta(days=150)  # 이보다 먼 추정은 작년 같은 분기 공시가 빠져 한 분기를 건너뛴 것이다
+TIMING_MIN_FILINGS = 4  # "지난 4개 분기"
+MARKET_OPEN, MARKET_CLOSE = time(9, 30), time(16, 0)  # 동부. 전 = < MARKET_OPEN, 후 = >= MARKET_CLOSE(조기 마감일도 16:00)
+
+
+def earnings_estimate(accepted: Mapping[str, datetime]) -> EarningsEstimate | None:
+    """accepted = 접수번호 → 헤더 접수 시각(tz-aware). 호출부가 earnings_window로 거른 실적 공시. 날짜는 전부 동부 날짜.
+    r = (접수 시각, 접수번호)가 가장 늦은 공시. b(작년 같은 분기) = 날짜 + 364일 > r 날짜 + NEXT_MIN인 가장 이른 공시.
+    b 날짜 + 364일 > r 날짜 + NEXT_MAX면 None(작년 같은 분기 공시가 없다: 이력 1년 미만이거나 한 분기가 빠짐). 비어도 None.
+    day = b 날짜 + 364일(같은 요일). 거래일과 비교하지 않는다(지났는지는 줄이 정한다).
+    timing: [b, r] 공시가 TIMING_MIN_FILINGS건 이상이고 전부 MARKET_OPEN 전이면 BEFORE_OPEN, 전부 MARKET_CLOSE 이후면 AFTER_CLOSE, 아니면 None.
+    shortcut: 분기를 공시 1건으로 센다(한 분기에 실적 공시가 둘이면 더 센다), 기록(#57)에서 어긋남이 보이면 분기 묶기를 더한다"""
+    if not accepted:
+        return None
+    order = sorted(accepted, key=lambda a: (accepted[a], a))
+    et = {a: accepted[a].astimezone(ET) for a in order}
+    recent = et[order[-1]].date()
+    # r 자신은 항상 조건을 만족한다. 날짜는 시각 순이라 조건을 만족하는 공시는 order의 뒤쪽 한 덩어리 = [b, r]
+    start = next(i for i, a in enumerate(order) if et[a].date() + YEAR_SAME_WEEKDAY > recent + NEXT_MIN)
+    basis = order[start]
+    day = et[basis].date() + YEAR_SAME_WEEKDAY
+    if day > recent + NEXT_MAX:
+        return None
+    times = [et[a].time() for a in order[start:]]
+    timing = None
+    if len(times) >= TIMING_MIN_FILINGS:
+        if all(t < MARKET_OPEN for t in times):
+            timing = EarningsTiming.BEFORE_OPEN
+        elif all(t >= MARKET_CLOSE for t in times):
+            timing = EarningsTiming.AFTER_CLOSE
+    return EarningsEstimate(day, timing, basis)
 
 
 USD_UNITS = (("", 1, "1"), ("K", 10**3, "0.1"), ("M", 10**6, "0.1"), ("B", 10**9, "0.1"), ("T", 10**12, "0.1"))
