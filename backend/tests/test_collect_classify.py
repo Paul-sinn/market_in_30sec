@@ -20,6 +20,7 @@ from m30.adapters import Source
 from m30.adapters.events import Earnings, ExDividend
 from m30.adapters.fake import (
     FailurePlan,
+    FakeEarningsFilingSource,
     FakeEventSource,
     FakeFilingSource,
     FakeHoldingsSource,
@@ -62,8 +63,8 @@ MSFT = Coverage("MSFT", "Microsoft Corporation", cik=MSFT_CIK)
 
 
 def run(store, scenario, day=FRI, **replaced):
-    """scenario: 경로 또는 Scenario. 돌려주는 값: summary, sleeps(대기 시간 목록), 가짜 출처 7개(prices·events·filings·indicators·
-    holdings·market_news·llm).
+    """scenario: 경로 또는 Scenario. 돌려주는 값: summary, sleeps(대기 시간 목록), 가짜 출처 8개(prices·events·earnings·filings·
+    indicators·holdings·market_news·llm).
     replaced: 바꿔 넣을 출처(예: llm=FakeLLM(…)). 테스트가 들고 있으므로 run이 예외로 끝나도 호출 기록을 본다."""
     if not isinstance(scenario, Scenario):
         scenario = load_scenario(scenario)
@@ -72,6 +73,7 @@ def run(store, scenario, day=FRI, **replaced):
     fakes = {
         "prices": FakePriceSource(scenario),
         "events": FakeEventSource(scenario),
+        "earnings": FakeEarningsFilingSource(scenario),
         "filings": FakeFilingSource(scenario),
         "indicators": FakeIndicatorSource(scenario),
         "holdings": FakeHoldingsSource(scenario),
@@ -555,8 +557,9 @@ ERRORS = {  # 실패 종류 → (가짜 호출 수, 대기, 실패 사유)
     "access_denied": (1, [], FailureReason.ACCESS_DENIED),
     "rate_limited": (4, [1.0, 2.0, 4.0], FailureReason.RETRIES_EXHAUSTED),  # 429: 일시 실패처럼 다시 시도
 }
-# 편입 종목(ETF)은 종목 둘 시나리오에 없다: 실패 종류별 재시도·지연은 test_morning_pipeline의 ETF 시나리오가 본다
-FAILURE_CASES = [(source, error) for source in Source if source is not Source.HOLDINGS for error in ERRORS]
+# 편입 종목(ETF)은 종목 둘 시나리오에 없다: 실패 종류별 재시도·지연은 test_morning_pipeline의 ETF 시나리오가 본다.
+# 실적 추정(#57)은 종목 둘 시나리오의 일정 출처가 값을 줘서 줄에 쓰이지 않는다: 실패 종류는 test_earnings가 본다
+FAILURE_CASES = [(source, error) for source in Source if source not in (Source.HOLDINGS, Source.EARNINGS) for error in ERRORS]
 
 
 @pytest.mark.parametrize("source, error", FAILURE_CASES, ids=[f"{s}_{e}" for s, e in FAILURE_CASES])

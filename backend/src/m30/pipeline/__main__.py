@@ -76,6 +76,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     # 운영 프로세스가 가짜 출처를 불러오지 않게 시나리오 모드에서만 import한다
     from m30.adapters.fake import (
+        FakeEarningsFilingSource,
         FakeEventSource,
         FakeFilingSource,
         FakeHoldingsSource,
@@ -96,6 +97,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             summary = MorningPipeline(
                 prices=FakePriceSource(scenario) if prices_on else None,
                 events=FakeEventSource(scenario),
+                earnings=FakeEarningsFilingSource(scenario),
                 filings=FakeFilingSource(scenario),
                 indicators=FakeIndicatorSource(scenario),
                 holdings=FakeHoldingsSource(scenario),

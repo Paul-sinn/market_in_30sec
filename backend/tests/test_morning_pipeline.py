@@ -15,6 +15,7 @@ from m30.adapters.events import Earnings, EarningsTiming
 from m30.adapters.holdings import Holding
 from m30.adapters.fake import (
     FailurePlan,
+    FakeEarningsFilingSource,
     FakeEventSource,
     FakeFilingSource,
     FakeHoldingsSource,
@@ -55,6 +56,7 @@ def run(store, scenario, day=FRI):
     return MorningPipeline(
         prices=FakePriceSource(scenario),
         events=FakeEventSource(scenario),
+        earnings=FakeEarningsFilingSource(scenario),
         filings=FakeFilingSource(scenario),
         indicators=FakeIndicatorSource(scenario),
         holdings=FakeHoldingsSource(scenario),
@@ -469,6 +471,7 @@ def test_생성_대상은_활성_종목과_기본_종목의_합집합이다(stor
     summary = MorningPipeline(
         prices=FakePriceSource(scenario),
         events=FakeEventSource(scenario),
+        earnings=FakeEarningsFilingSource(scenario),
         filings=filings,
         indicators=FakeIndicatorSource(scenario),
         holdings=FakeHoldingsSource(scenario),
@@ -497,6 +500,7 @@ def run_etf(store, scenario, day=FRI, defaults=ETF_DEFAULTS, **replaced):
     fakes = {
         "prices": FakePriceSource(scenario),
         "events": FakeEventSource(scenario),
+        "earnings": FakeEarningsFilingSource(scenario),
         "filings": FakeFilingSource(scenario),
         "indicators": FakeIndicatorSource(scenario),
         "holdings": FakeHoldingsSource(scenario),

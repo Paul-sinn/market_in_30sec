@@ -3,7 +3,7 @@
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import date, datetime, time
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal
 from enum import StrEnum
 from itertools import pairwise
@@ -26,12 +26,18 @@ ITEM = re.compile(r"[0-9]\.[0-9]{2}")
 CIK = re.compile(r"[0-9]{10}")
 INDICATOR_NAME_MAX = 60  # 지표 일정 줄에 두 이름 + 시각이 한 줄에 들어가게
 MARKET_NEWS_SOURCE_MAX = 60  # 소식 줄은 기관 이름으로 시작한다(LLM이 데이터 블록에서 옮긴다)
+EARNINGS_HISTORY = timedelta(days=455)  # 1년 + 1분기(#57): 추정일이 한 분기쯤 밀려도 작년 같은 분기 공시가 범위 안에 남는다
 
 
 def filing_window(trading_day: date) -> tuple[datetime, datetime]:
     """[직전 거래일 04:00 ET, 거래일 04:00 ET). 실행 시각 대신 고정 시각: 재실행해도 같은 공시가 같은 카드로 간다.
     주말·휴장일 공시는 다음 거래일 카드로 모인다(직전 거래일이 NYSE 달력을 따른다)."""
     return datetime.combine(previous_trading_day(trading_day), CUTOFF, ET), datetime.combine(trading_day, CUTOFF, ET)
+
+
+def earnings_window(trading_day: date) -> tuple[datetime, datetime]:
+    """[거래일 − EARNINGS_HISTORY의 04:00 ET, 거래일 04:00 ET). 끝은 filing_window와 같다: 실행 시각·재실행과 무관하게 같은 공시 집합."""
+    return datetime.combine(trading_day - EARNINGS_HISTORY, CUTOFF, ET), datetime.combine(trading_day, CUTOFF, ET)
 
 
 class FailureReason(StrEnum):
@@ -190,6 +196,16 @@ def valid_filings(filings: object, cik: str) -> bool:
         and (f.report_date is None or _is_day(f.report_date))
         for f in filings
     )
+
+
+def valid_earnings_accessions(value: object) -> bool:
+    """실적 공시 목록(#57): 접수번호 형식 문자열의 list. 접수번호는 EDGAR 주소와 DB 키에 들어간다."""
+    return isinstance(value, list) and all(isinstance(a, str) and ACCESSION.fullmatch(a) is not None for a in value)
+
+
+def valid_accepted_at(value: object) -> bool:
+    """실적 공시 헤더 접수 시각(#57): tz-aware datetime."""
+    return _is_aware(value)
 
 
 def valid_holdings(report: object, fund: str) -> bool:

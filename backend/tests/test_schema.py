@@ -115,7 +115,7 @@ def test_RLS가_꺼진_테이블이_없다(admin):
         " where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity")]
     tables = {"coverage", "stock_card", "sec_filing", "indicator_release", "filing_classification", "hold_queue",
               "stock_card_revision", "user_profile", "my_stock", "my_stock_history", "default_ticker", "pipeline_run",
-              "fund_holdings", "morning_notice", "market_glance", "market_news_item"}
+              "fund_holdings", "morning_notice", "market_glance", "market_news_item", "earnings_filing", "earnings_estimate"}
     assert tables <= set(public_tables(admin))  # 검사 대상이 비어서 통과하는 것을 막는다
     assert rls_off == []
 
@@ -610,3 +610,72 @@ def test_시장_전체_소식_원본은_서버가_추가만_하고_고치거나_
     for sql in ("update public.market_news_item set payload = ''", "delete from public.market_news_item"):
         with pytest.raises(errors.InsufficientPrivilege):
             as_service_role(admin, sql)
+
+
+# 실적 추정일(#57): 실적 공시 시각과 거래일별 추정. 둘 다 추가만 하는 새 표
+EARNINGS_FILING_SQL = "insert into public.earnings_filing (accession, cik, accepted_at) values (%s, %s, '2025-10-30 16:30-04')"
+ESTIMATE_SQL = (
+    "insert into public.earnings_estimate (ticker, trading_day, estimate_day, timing, basis_accession)"
+    " values ('AAPL', '2026-10-16', '2026-10-29', %s, %s)"
+)
+BASIS = "0000320193-25-000101"
+
+
+def service_role_privileges(conn, table):
+    return [p for p in ("SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE")
+            if conn.execute("select has_table_privilege('service_role', %s, %s)", (f"public.{table}", p)).fetchone()[0]]
+
+
+def test_실적_공시_시각은_서버가_추가만_하고_고치거나_지울_수_없다(admin):
+    as_service_role(admin, EARNINGS_FILING_SQL, (BASIS, "0000320193"))
+
+    assert service_role_privileges(admin, "earnings_filing") == ["SELECT", "INSERT"]  # 처음 읽은 시각을 그대로 둔다
+    with pytest.raises(errors.UniqueViolation):
+        admin.execute(EARNINGS_FILING_SQL, (BASIS, "0000320193"))
+    for sql in ("update public.earnings_filing set accepted_at = now()", "delete from public.earnings_filing"):
+        with pytest.raises(errors.InsufficientPrivilege):
+            as_service_role(admin, sql)
+
+
+@pytest.fixture
+def aapl_basis(aapl):
+    aapl.execute(EARNINGS_FILING_SQL, (BASIS, "0000320193"))
+    return aapl
+
+
+def test_실적_추정_행은_종목·거래일마다_하나이고_서버는_고칠_수만_있고_지울_수_없다(aapl_basis):
+    as_service_role(aapl_basis, ESTIMATE_SQL, ("after_close", BASIS))
+
+    assert service_role_privileges(aapl_basis, "earnings_estimate") == ["SELECT", "INSERT", "UPDATE"]  # 재실행 = upsert
+    with pytest.raises(errors.UniqueViolation):
+        aapl_basis.execute(ESTIMATE_SQL, ("after_close", BASIS))
+    as_service_role(aapl_basis, "update public.earnings_estimate set timing = 'unknown'")
+    with pytest.raises(errors.InsufficientPrivilege):
+        as_service_role(aapl_basis, "delete from public.earnings_estimate")
+
+
+@pytest.mark.parametrize("timing, ok", [("before_open", True), ("after_close", True), ("unknown", True),
+                                        ("during_market", False), ("", False), (None, False)])
+def test_실적_추정_시점은_before_open·after_close·unknown만_받는다(aapl_basis, timing, ok):
+    if ok:
+        aapl_basis.execute(ESTIMATE_SQL, (timing, BASIS))
+    else:
+        with pytest.raises((errors.CheckViolation, errors.NotNullViolation)):
+            aapl_basis.execute(ESTIMATE_SQL, (timing, BASIS))
+
+
+@pytest.mark.parametrize(
+    "sql, params, error",
+    [
+        (ESTIMATE_SQL, ("unknown", "0000320193-25-000999"), errors.ForeignKeyViolation),  # 저장되지 않은 실적 공시
+        (EARNINGS_FILING_SQL, ("0000320193-25-101", "0000320193"), errors.CheckViolation),
+        (EARNINGS_FILING_SQL, ("", "0000320193"), errors.CheckViolation),
+        (EARNINGS_FILING_SQL, (BASIS, "320193"), errors.CheckViolation),
+        ("insert into public.earnings_estimate (ticker, trading_day, estimate_day, timing, basis_accession)"
+         " values ('MSFT', '2026-10-16', '2026-10-27', 'unknown', %s)", (BASIS,), errors.ForeignKeyViolation),  # 커버 범위 밖 종목
+    ],
+    ids=["근거_공시_없음", "접수번호_자릿수", "빈_접수번호", "CIK_0_채움_없음", "커버_범위_밖_종목"],
+)
+def test_실적_추정의_근거_접수번호는_저장된_실적_공시여야_하고_접수번호·CIK_형식이_아니면_거부한다(aapl_basis, sql, params, error):
+    with pytest.raises(error):
+        aapl_basis.execute(sql, params)

@@ -14,7 +14,8 @@ class NoPriceSource:  # 운영 모드에서 TIINGO_API_KEY가 없을 때(유료 
 
 class NoEventSource:  # #21이 실제 일정 어댑터로 바꾼다
     def upcoming_events(self, ticker: str, start: date, end: date) -> None:
-        """항상 None(미지원) → 두 번째 줄 Not covered yet."""
+        """항상 None(미지원). 일반 종목의 실적은 #57 실적 추정일(EDGAR 과거 실적 공시)이 채우고, 배당·확정 일정은 출처가 없어
+        Not covered yet(ETF·CIK 없는 종목도)."""
         return None
 
 

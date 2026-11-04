@@ -10,6 +10,7 @@ class Source(StrEnum):
     INDICATORS = "indicators"
     HOLDINGS = "holdings"  # ETF 편입 종목 보고(N-PORT). 대상 = 편입을 읽을 ETF 티커
     MARKET_NEWS = "market_news"  # 시장 전체 소식(공식 발표, #11). 대상 없음
+    EARNINGS = "earnings"  # EDGAR 과거 실적 공시(8-K Item 2.02, #57). 대상 = 목록은 CIK, 헤더 시각은 접수번호
     LLM = "llm"
 
 

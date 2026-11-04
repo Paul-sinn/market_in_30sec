@@ -40,6 +40,7 @@ from m30.adapters import (
 from m30.adapters.edgar import SUBMISSIONS_URL, TICKERS_URL, EdgarClient, EdgarFilingSource, Throttle, ticker_ciks
 from m30.adapters.fake import (
     FailurePlan,
+    FakeEarningsFilingSource,
     FakeEventSource,
     FakeHoldingsSource,
     FakeIndicatorSource,
@@ -383,6 +384,7 @@ def run_edgar(store, get, day=FRI):
     summary = MorningPipeline(
         prices=FakePriceSource(scenario),
         events=FakeEventSource(scenario),
+        earnings=FakeEarningsFilingSource(scenario),
         filings=EdgarFilingSource(get),
         indicators=FakeIndicatorSource(scenario),
         holdings=FakeHoldingsSource(scenario),

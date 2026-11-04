@@ -1,13 +1,13 @@
 """아침 파이프라인. 바깥 인터페이스는 run 하나."""
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
 from m30.adapters import Source, SourceError
-from m30.adapters.events import EventSource
-from m30.adapters.filings import FilingForm, FilingSource
+from m30.adapters.events import Earnings, EventSource
+from m30.adapters.filings import EarningsFilingSource, FilingForm, FilingSource
 from m30.adapters.holdings import HoldingsSource
 from m30.adapters.indicators import IndicatorSource
 from m30.adapters.market_news import MarketNewsItem, MarketNewsSource
@@ -20,6 +20,7 @@ from m30.models import (
     CardStatus,
     Classification,
     Coverage,
+    EarningsEstimate,
     FundHoldings,
     HoldItem,
     LineStatus,
@@ -33,18 +34,22 @@ from m30.pipeline.collect import (
     FailureReason,
     SourceCalls,
     SourceFailure,
+    earnings_window,
     error_name,
     filing_window,
+    valid_accepted_at,
     valid_bars,
+    valid_earnings_accessions,
     valid_events,
     valid_filings,
     valid_holdings,
     valid_market_news,
     valid_releases,
 )
-from m30.pipeline.compute import bars_usable, change_pct, top_holdings
+from m30.pipeline.compute import bars_usable, change_pct, earnings_estimate, top_holdings
 from m30.pipeline.lines import (
     CLOSE_FUNDS,
+    ESTIMATE_SCOPE,
     EVENT_SCOPE,
     EVENT_WINDOW,
     HOLDINGS_SCOPE,
@@ -114,6 +119,7 @@ class MorningPipeline:
         *,
         prices: PriceSource | None,
         events: EventSource,
+        earnings: EarningsFilingSource,
         filings: FilingSource,
         indicators: IndicatorSource,
         holdings: HoldingsSource,
@@ -126,6 +132,7 @@ class MorningPipeline:
         # prices None = 가격 표시 off(#56): 시세를 부르지 않는다. 등락률 미지원, 가격 사실 줄 None, 어제 마감 줄 미지원
         self._prices = prices
         self._events = events
+        self._earnings = earnings
         self._filings = filings
         self._indicators = indicators
         self._holdings = holdings
@@ -173,6 +180,7 @@ class MorningPipeline:
         items, failed_ciks = self._collect_filings(collected, trading_day, calls)
         # 카드 루프 전: 카드가 하나라도 저장됐으면 정정 공시 행은 이미 있다(이어 하기가 그 CIK를 다시 받지 않아도)
         self._store.flag_amended_cards(trading_day, [i.filing for i in items if i.filing.form is FilingForm.EIGHT_K_A])
+        estimates = self._earnings_estimates(targets, trading_day, calls)
         indicator = self._collect_indicators(trading_day, checked_at, calls)
         news_status, news_items = (None, ()) if glance_resumed else self._collect_market_news(trading_day, calls)
         # 시장 한눈에 소식 줄은 LLM을 부를 때만 생성 대상 하나 몫(#11 D6): 소식 없음·미지원이면 상한은 그대로
@@ -245,7 +253,7 @@ class MorningPipeline:
                 change_pct=pct,
                 change_status=change_status,
                 news_line=news_line,
-                event_line=self._event_line(cov.ticker, trading_day, checked_at, calls),
+                event_line=self._event_line(cov, trading_day, checked_at, calls, estimates),
                 price_fact_line=price_fact,
                 leverage_tag=leverage_tag(cov.leverage),
                 news_line_accession=accession,
@@ -419,7 +427,44 @@ class MorningPipeline:
         self._store.save_market_news(trading_day, kept)
         return (LineStatus.CHECKED_FOUND if kept else LineStatus.CHECKED_NONE), kept
 
-    def _event_line(self, ticker: str, trading_day: date, checked_at: datetime, calls: SourceCalls) -> CardLine:
+    def _earnings_estimates(
+        self, targets: list[Coverage], trading_day: date, calls: SourceCalls
+    ) -> dict[str, EarningsEstimate | None]:
+        """실적 추정일(#57). 대상 = _earnings_target인 생성 대상, CIK마다 한 번(GOOGL·GOOG는 목록 1회, 행 2개).
+        값 = 추정 또는 None(추정 못 함 → 미지원). 키 없음 = 그 CIK의 목록·헤더 읽기 실패(→ 지연, 요약 failed:에 남는다).
+        저장소에 없는 접수번호만 정렬 순으로 헤더를 읽고 읽은 즉시 저장한다(중간에 실패해도 앞 시각은 남는다).
+        계산은 저장된 시각을 earnings_window로 정확히 거른 것으로. 끝에 추정이 있는 티커만 저장한다. LLM 상한과 무관."""
+        since, until = earnings_window(trading_day)
+        tickers_by_cik: dict[str, list[str]] = {}
+        for cov in targets:
+            if _earnings_target(cov):
+                tickers_by_cik.setdefault(cov.cik, []).append(cov.ticker)
+        estimates: dict[str, EarningsEstimate | None] = {}
+        for cik in sorted(tickers_by_cik):
+            try:
+                accessions = calls.call(
+                    Source.EARNINGS, cik, lambda: self._earnings.earnings_accessions(cik, since, until), valid_earnings_accessions
+                )
+                for accession in sorted(set(accessions) - self._store.earnings_filing_times(accessions).keys()):
+                    at = calls.call(
+                        Source.EARNINGS, accession, lambda: self._earnings.accepted_at(cik, accession), valid_accepted_at
+                    )
+                    self._store.save_earnings_filing(accession, cik, at)
+            except SourceError:
+                continue  # 그 CIK의 종목만 지연
+            times = self._store.earnings_filing_times(accessions)
+            estimate = earnings_estimate({a: at for a, at in times.items() if since <= at < until})
+            estimates |= dict.fromkeys(tickers_by_cik[cik], estimate)
+        self._store.save_earnings_estimates(trading_day, {t: e for t, e in estimates.items() if e is not None})
+        return estimates
+
+    def _event_line(
+        self, cov: Coverage, trading_day: date, checked_at: datetime, calls: SourceCalls,
+        estimates: Mapping[str, EarningsEstimate | None],
+    ) -> CardLine:
+        """일정 출처가 값을 주거나 실적 추정 대상이 아니면 그 값으로(지금 그대로). 일정 출처가 None인 실적 추정 대상은 실적 추정일(#57):
+        추정 출처 실패 → 지연, 추정 없음 → 미지원, 있으면 (est.) 템플릿(지났으면 확인함·없음). 출처 범위 ESTIMATE_SCOPE."""
+        ticker = cov.ticker
         try:
             events = calls.call(
                 Source.EVENTS,
@@ -429,7 +474,19 @@ class MorningPipeline:
             )
         except SourceError:  # 다른 예외는 버그라 그대로 올린다
             return delayed_line(EVENT_SCOPE, checked_at)
-        return event_line(events, trading_day, checked_at)
+        if events is not None or not _earnings_target(cov):
+            return event_line(events, trading_day, checked_at)
+        if ticker not in estimates:
+            return delayed_line(ESTIMATE_SCOPE, checked_at)
+        estimate = estimates[ticker]
+        if estimate is None:
+            return event_line(None, trading_day, checked_at)
+        return event_line([Earnings(estimate.day, False, estimate.timing)], trading_day, checked_at, ESTIMATE_SCOPE)
+
+
+def _earnings_target(cov: Coverage) -> bool:
+    """실적 추정 대상 = CIK가 있고 편입 종목을 읽는 ETF가 아님(#57)."""
+    return cov.cik is not None and cov.holdings_ticker is None
 
 
 def run_failed(summary: RunSummary) -> bool:

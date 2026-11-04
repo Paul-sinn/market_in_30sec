@@ -25,6 +25,7 @@ NOT_COVERED = "Not covered yet"
 NEWS_SCOPE = "SEC filings"
 HOLDINGS_SCOPE = "SEC filings of top holdings"  # ETF 편입 보고를 못 읽은 지연 줄 전용(웹 하단은 확인된 줄만 범위를 보여 준다)
 EVENT_SCOPE = "Earnings and dividend calendar"
+ESTIMATE_SCOPE = NEWS_SCOPE  # 실적 추정일 줄(#57): SEC 실적 공시로만 만든다. 웹 하단에서 첫 번째 줄 범위와 하나로 합쳐진다
 PRICE_SCOPE = "Daily prices"
 INDICATOR_SCOPE = "BLS, BEA and Fed calendars"  # Census 일정은 HTML뿐이라 확인하지 않는다(#50)
 MARKET_NEWS_SCOPE = "BLS, BEA, Census and Fed releases"
@@ -94,16 +95,19 @@ def replacement_sentence(company: str, items: Sequence[str], amended: bool) -> s
     return f"{company_short_name(company)} {phrase}"
 
 
-def event_line(events: Sequence[CorporateEvent] | None, trading_day: date, checked_at: datetime) -> CardLine:
+def event_line(
+    events: Sequence[CorporateEvent] | None, trading_day: date, checked_at: datetime, scope: str = EVENT_SCOPE
+) -> CardLine:
     """None → 미지원. 아니면 [trading_day, trading_day + EVENT_WINDOW] 안에서 가장 가까운 일정 하나
-    (같은 날이면 실적, 같은 실적이면 확정 먼저)를 템플릿으로, 없으면 확인함·없음. D-N은 달력일(U2 = A)."""
+    (같은 날이면 실적, 같은 실적이면 확정 먼저)를 템플릿으로, 없으면 확인함·없음. D-N은 달력일(U2 = A).
+    scope = 확인함 줄의 출처 범위. 실적 추정일은 ESTIMATE_SCOPE(#57)."""
     if events is None:
         return CardLine(NOT_COVERED, LineStatus.UNSUPPORTED, checked_at, None)
     upcoming = [e for e in events if trading_day <= e.day <= trading_day + EVENT_WINDOW]  # 어댑터가 범위를 어겨도
     if not upcoming:
-        return CardLine(NO_EVENTS, LineStatus.CHECKED_NONE, checked_at, EVENT_SCOPE)
+        return CardLine(NO_EVENTS, LineStatus.CHECKED_NONE, checked_at, scope)
     event = min(upcoming, key=lambda e: (e.day, 0, not e.confirmed) if isinstance(e, Earnings) else (e.day, 1, False))
-    return CardLine(_event_text(event, trading_day), LineStatus.CHECKED_FOUND, checked_at, EVENT_SCOPE)
+    return CardLine(_event_text(event, trading_day), LineStatus.CHECKED_FOUND, checked_at, scope)
 
 
 def _event_text(event: CorporateEvent, trading_day: date) -> str:

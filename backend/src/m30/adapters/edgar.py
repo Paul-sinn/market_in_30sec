@@ -28,6 +28,7 @@ SUBMISSION_TEXT_URL = "https://www.sec.gov/Archives/edgar/data/{cik_number}/{acc
 SEC_HOSTS = frozenset({"www.sec.gov", "data.sec.gov"})  # netloc 그대로 비교: 포트·사용자 정보가 붙으면 다르다
 MIN_INTERVAL = 0.125  # 요청 시작 간격(초) = 초당 최대 8회. SEC 상한 10회 미만
 FORMS = frozenset(FilingForm)  # 정확히 "8-K"·"8-K/A". 8-K12B 등은 다른 서식
+EARNINGS_ITEM = "2.02"  # 8-K Item 2.02 Results of Operations and Financial Condition(#57 실적 공시)
 RECENT_COLUMNS = ("accessionNumber", "form", "acceptanceDateTime", "items", "reportDate")  # submissions filings.recent의 쓰는 열
 TEXT_EXTENSIONS = frozenset({".htm", ".html", ".txt"})  # 읽는 문서. PDF·그림(jpg·gif)·XBRL(xml·xsd)은 읽지도 저장하지도 않는다
 HEADER = re.compile(r"<SEC-HEADER>.*?</SEC-HEADER>", re.DOTALL)  # 접수 시각·항목 원본. 몇 KB라 남긴다(사람 대조)
@@ -166,6 +167,25 @@ class EdgarFilingSource:
             exhibit99 = "\n\n".join(text for kind, text in texts if kind != form and text)
             filings.append(Filing(accession, cik, form, accepted_at, items, body or None, exhibit99 or None, raw, report_date))
         return filings
+
+
+class EdgarEarningsFilingSource:
+    """EarningsFilingSource 구현(#57). earnings_accessions = submissions 1회, accepted_at = 전체 제출 파일 1회.
+    받기 오류는 잡지 않는다(SourceCalls가 다시 시도·차단·기록). 접수번호별 한 번만 부르는 것은 호출부(저장소 캐시)가 지킨다."""
+
+    def __init__(self, get: Get) -> None:
+        self._get = get
+
+    def earnings_accessions(self, cik: str, since: datetime, until: datetime) -> list[str]:
+        """submissions 시각이 기간 앞뒤 CANDIDATE_MARGIN 안인 8-K(정정 8-K/A 제외) 중 항목에 EARNINGS_ITEM이 있는 것의 접수번호.
+        모양 오류는 SourceError("sec submissions shape")."""
+        rows = _recent(self._get(SUBMISSIONS_URL.format(cik=cik)), cik, since - CANDIDATE_MARGIN, until + CANDIDATE_MARGIN)
+        return [accession for accession, form, items, _ in rows if form is FilingForm.EIGHT_K and EARNINGS_ITEM in items]
+
+    def accepted_at(self, cik: str, accession: str) -> datetime:
+        """전체 제출 파일의 SEC-HEADER 접수 시각(tz=ET). 헤더·시각이 없으면 SourceError("sec submission header")."""
+        url = SUBMISSION_TEXT_URL.format(cik_number=int(cik), accession_digits=accession.replace("-", ""), accession=accession)
+        return _header(self._get(url).decode("utf-8", "replace"))[1]
 
 
 def _recent(

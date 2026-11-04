@@ -11,6 +11,7 @@ from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from m30.adapters.events import EarningsTiming
 from m30.adapters.filings import Filing
 from m30.adapters.holdings import Holding, HoldingsReport
 from m30.adapters.indicators import IndicatorRelease
@@ -22,6 +23,7 @@ from m30.models import (
     CardStatus,
     Classification,
     Coverage,
+    EarningsEstimate,
     HoldItem,
     HoldStage,
     HoldState,
@@ -282,6 +284,43 @@ class CardStore:
                 ([r[0] for r in rows], trading_day),
             ).fetchall()
         return frozenset(r[0] for r in found)
+
+    def earnings_filing_times(self, accessions: Iterable[str]) -> dict[str, datetime]:
+        """넘긴 접수번호 중 earnings_filing에 있는 것 → 헤더 접수 시각(ET)(#57)."""
+        rows = self._conn.execute(
+            "select accession, accepted_at from public.earnings_filing where accession = any(%s)", (list(accessions),)
+        )
+        return {accession: at.astimezone(ET) for accession, at in rows}
+
+    def save_earnings_filing(self, accession: str, cik: str, accepted_at: datetime) -> None:
+        """한 행. 이미 있으면 건드리지 않는다(on conflict (accession) do nothing): 처음 읽은 시각 유지."""
+        self._conn.execute(
+            "insert into public.earnings_filing (accession, cik, accepted_at) values (%s, %s, %s) on conflict (accession) do nothing",
+            (accession, cik, accepted_at),
+        )
+
+    def save_earnings_estimates(self, trading_day: date, estimates: Mapping[str, EarningsEstimate]) -> None:
+        """티커마다 (ticker, trading_day) upsert: estimate_day·timing(None → 'unknown')·basis_accession·updated_at = now()."""
+        with self._conn.cursor() as cur:
+            cur.executemany(
+                "insert into public.earnings_estimate (ticker, trading_day, estimate_day, timing, basis_accession)"
+                " values (%s, %s, %s, %s, %s) on conflict (ticker, trading_day) do update set"
+                " estimate_day = excluded.estimate_day, timing = excluded.timing, basis_accession = excluded.basis_accession,"
+                " updated_at = now()",
+                [(t, trading_day, e.day, e.timing.value if e.timing else "unknown", e.basis_accession) for t, e in estimates.items()],
+            )
+
+    def list_earnings_estimates(self, trading_day: date) -> dict[str, EarningsEstimate]:
+        """그 거래일 행 전부, 티커 → 값('unknown' → None). 테스트·확인용."""
+        rows = self._conn.execute(
+            "select ticker, estimate_day, timing, basis_accession from public.earnings_estimate where trading_day = %s"
+            " order by ticker",
+            (trading_day,),
+        )
+        return {
+            ticker: EarningsEstimate(day, None if timing == "unknown" else EarningsTiming(timing), basis)
+            for ticker, day, timing, basis in rows
+        }
 
     def save_indicator_releases(self, trading_day: date, releases: Iterable[IndicatorRelease]) -> None:
         """(이름, 발표 시각)으로 중복 제거. 이미 있는 원본은 건드리지 않는다."""
