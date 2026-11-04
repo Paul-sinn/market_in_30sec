@@ -11,7 +11,7 @@ import pytest
 
 from m30.adapters.edgar import EdgarClient, EdgarFilingSource, ticker_ciks
 from m30.config import ET, SEC_UA_VAR, load_edgar_settings
-from m30.experiment import EXPERIMENT_ETFS, experiment_coverage
+from m30.coverage import DEFAULT_TICKERS, load_etfs
 from m30.pipeline.collect import valid_filings
 
 pytestmark = [pytest.mark.live, pytest.mark.skipif(not os.environ.get(SEC_UA_VAR), reason=f"{SEC_UA_VAR} is not set")]
@@ -35,18 +35,19 @@ class Counted:
         return self._get(url)
 
 
-def test_실제_EDGAR에서_실험_종목_CIK와_Apple_실적_8_K를_가정대로_읽는다():
+def test_실제_EDGAR에서_기본_종목_CIK와_Apple_실적_8_K를_가정대로_읽는다():
     get = Counted(EdgarClient(load_edgar_settings()).get)
     until = datetime.now(ET)
     since = until - timedelta(days=120)  # 분기 실적 8-K가 적어도 하나 들어가는 기간
 
-    coverage = {c.ticker: c.cik for c in experiment_coverage(ticker_ciks(get))}
+    ciks = ticker_ciks(get)
     filings = EdgarFilingSource(get).filings(AAPL_CIK, since, until)
     earnings = [f for f in filings if "2.02" in f.items]
 
     # 단언 전에 참/거짓으로 만든다: pytest가 실패 설명에 Filing repr(본문)을 찍지 않게
-    googl_aapl = coverage["GOOGL"] == "0001652044" and coverage["AAPL"] == AAPL_CIK
-    etfs_empty = all(coverage[t] is None for t in EXPERIMENT_ETFS)
+    googl_aapl = ciks.get("GOOGL") == "0001652044" and ciks.get("AAPL") == AAPL_CIK
+    etfs = {e.ticker for e in load_etfs()}
+    stocks_listed = all(t in ciks for t in DEFAULT_TICKERS if t not in etfs)  # 기본 종목 주식은 SEC 티커 목록에 있다
     valid = valid_filings(filings, AAPL_CIK)
     in_window = all(since <= f.accepted_at < until for f in filings)
     headers_kept = all(f.raw.startswith("<SEC-HEADER>") for f in filings)
@@ -55,7 +56,7 @@ def test_실제_EDGAR에서_실험_종목_CIK와_Apple_실적_8_K를_가정대�
         header_accepted_at(f.raw) is not None and header_accepted_at(f.raw) == f.accepted_at for f in filings
     )
     assert googl_aapl, "A3: ticker list shape"
-    assert etfs_empty, "U3: ETF CIK"
+    assert stocks_listed, "A3: default stock missing from ticker list"
     assert valid, "A2: submissions shape"
     assert in_window, "A2: window"
     assert headers_kept, "A4: raw does not start with SEC-HEADER"

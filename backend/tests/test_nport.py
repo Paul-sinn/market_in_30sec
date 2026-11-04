@@ -154,6 +154,8 @@ def test_펀드_목록에서_같은_심볼이_다른_CIK나_시리즈를_가리�
         ("Home Depot Inc/The", "HOME DEPOT, INC."),
         ("Berkshire Hathaway Inc Class B", "BERKSHIRE HATHAWAY INC"),
         ("News Corp", "NEWS CORP /NEW/"),
+        ("Charles Schwab Corp/The", "SCHWAB CHARLES CORP"),  # SEC 정형명은 성·이름 순서가 뒤집힌 회사가 있다(#58)
+        ("T Rowe Price Group Inc", "PRICE T ROWE GROUP INC"),
     ],
 )
 def test_N_PORT_이름과_SEC_회사_이름은_법인_꼬리·주식_종류를_빼고_같으면_같은_회사다(nport_name, sec_title):

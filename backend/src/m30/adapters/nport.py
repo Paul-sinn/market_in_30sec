@@ -47,12 +47,13 @@ def fund_series(get: Get) -> dict[str, tuple[str, str]]:
 
 
 def issuer_key(name: str) -> str:
-    """발행 회사 이름 → 비교 키. casefold → '/the'·'class x' 제거 → 영숫자 토큰 → 끝의 법인 꼬리 토큰 제거.
-    'Coca-Cola Co/The' = 'COCA COLA CO' = 'coca cola', 'Alphabet Inc Class C' = 'Alphabet Inc.' = 'alphabet'."""
+    """발행 회사 이름 → 비교 키. casefold → '/the'·'class x' 제거 → 영숫자 토큰 → 끝의 법인 꼬리 토큰 제거 → 토큰 정렬(#58).
+    'Coca-Cola Co/The' = 'COCA COLA CO' = 'coca cola', 'Alphabet Inc Class C' = 'Alphabet Inc.' = 'alphabet',
+    'Charles Schwab Corp/The' = 'SCHWAB CHARLES CORP' = 'charles schwab'(SEC 정형명은 성·이름 순서가 뒤집힌 회사가 있다)."""
     tokens = _TOKEN.findall(_CLASS.sub(" ", _THE.sub(" ", name.casefold())))
-    while tokens and tokens[-1] in LEGAL_TAIL:
+    while tokens and tokens[-1] in LEGAL_TAIL:  # 꼬리는 끝 토큰으로 판단하므로 정렬보다 먼저
         tokens.pop()
-    return " ".join(tokens)
+    return " ".join(sorted(tokens))
 
 
 def issuer_ciks(get: Get) -> dict[str, str]:

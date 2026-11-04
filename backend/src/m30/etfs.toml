@@ -1,0 +1,31 @@
+# 커버 범위 ETF 목록(HANDOFF 3-1, #58). 확정은 사람 티켓 #59 — 이 파일만 고친다(코드 변경 없음).
+# 줄을 지워도 DB 행은 남는다(커버 범위는 추가만). 이름·배율·편입 출처를 고치면 다음 아침 실행에 반영된다.
+# ticker   : 대문자 티커(SEC 표기, 예 BRK-B 형식)
+# name     : 카드 머리글 이름. 법인 꼬리 없이
+# holdings : 상위 편입 종목을 읽을 ETF. 일반 ETF = 자기 자신, 레버리지·인버스 = 같은 지수의 일반 ETF(TQQQ → QQQ). 이 목록 안 티커
+#            레버리지·인버스 ETF 자기 N-PORT는 대부분 스왑이라 쓰지 않는다
+# leverage : 레버리지·인버스만. 배율 문자열, 부호 = 방향("3", "-3", "1.5"). 일반 ETF는 적지 않는다
+# SPY는 지우지 않는다: 커버 범위 주식의 출처다(m30.coverage.SP500_FUND)
+# N-PORT가 없는 상품(1940년법 펀드가 아닌 금·비트코인 신탁)과 보통주가 없는 채권 ETF는 첫 번째 줄이 늘 Not covered yet이다
+# 고친 뒤: cd backend && uv run pytest -q tests/test_coverage.py
+
+[[etf]]
+ticker = "SPY"
+name = "SPDR S&P 500 ETF"
+holdings = "SPY"
+
+[[etf]]
+ticker = "QQQ"
+name = "Invesco QQQ"
+holdings = "QQQ"
+
+[[etf]]
+ticker = "TQQQ"
+name = "ProShares UltraPro QQQ"
+holdings = "QQQ"
+leverage = "3"
+
+[[etf]]
+ticker = "SCHD"
+name = "Schwab U.S. Dividend Equity ETF"
+holdings = "SCHD"

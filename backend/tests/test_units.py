@@ -19,12 +19,13 @@ from m30.adapters.gov import BEA_MAJOR, BLS_MAJOR, FOMC_NAME
 from m30.adapters.gov_news import AGENCY_NAMES
 from m30.adapters.holdings import Holding, HoldingsReport
 from m30.adapters.indicators import IndicatorRelease
+from m30.adapters.nport import EdgarHoldingsSource
 from m30.adapters.prices import DailyBar
 from m30.config import ET, ConfigError, is_local_db, load_discord_settings, load_llm_settings, load_settings
 from m30.copy_rules import ALWAYS_BANNED, CARD_BANNED, EMOTION_VERBS, SOURCE_TAG, check_card
 from m30.db.store import connect_failure_reason
 from m30 import notify
-from m30.experiment import EXPERIMENT_COVERAGE
+from m30.coverage import coverage_name, load_etfs
 from m30.llm import LLMReply, LLMRequest
 from m30.llm.anthropic import AnthropicLLM
 from m30.models import CardLine, Coverage, FundHoldings, LineStatus
@@ -69,6 +70,8 @@ from m30.pipeline.newsline import (
 )
 from m30.pipeline.review import FACTCHECK_SYSTEM, FactLabel, mask_names, name_terms, numbers_from_source, parse_factcheck_reply
 from m30.trading_day import CALENDAR_YEARS, CalendarError, is_trading_day, previous_trading_day
+from production_probe import REMOTE_START
+from test_nport import sec
 
 CHECKED = datetime(2026, 10, 16, 7, 30, tzinfo=ET)
 
@@ -605,7 +608,8 @@ def test_대체_줄은_8_K_항목으로_소식_종류만_밝힌다(items, amende
     [("Apple Inc.", "Apple"), ("Best Buy Co., Inc.", "Best Buy"), ("3M Company", "3M"),
      ("The Coca-Cola Company", "Coca-Cola"), ("Microsoft Corporation", "Microsoft"), ("Alphabet Inc.", "Alphabet"),
      ("JPMorgan Chase & Co.", "JPMorgan Chase"), ("Inc.", "Inc."), ("Eli Lilly and Company", "Eli Lilly"),
-     ("Johnson & Johnson", "Johnson & Johnson"), ("Merck & Co., Inc.", "Merck")],
+     ("Johnson & Johnson", "Johnson & Johnson"), ("Merck & Co., Inc.", "Merck"),
+     ("The Estee Lauder Companies Inc.", "Estee Lauder"), ("News Corp", "News Corp")],  # 대체 줄 주어가 'News'가 되지 않게
 )
 def test_짧은_회사_이름은_앞_The와_끝_법인_꼬리를_뗀다(name, short):
     assert company_short_name(name) == short
@@ -696,14 +700,16 @@ def test_판정_지시문은_회사가_잡은_일정과_합의를_예측으로_�
 
 
 def test_첫_번째_줄_지시문의_예시_줄은_가상_회사이고_문구_검사와_형식_규칙을_통과하며_12단어_이하다():
-    names = {term for c in EXPERIMENT_COVERAGE for term in (c.ticker, c.name)}
+    # 커버 범위 이름 표본: #58 전 실험 15행 + ETF 목록 + 녹화 SPY 보고로 만든 이름(실제 커버 범위 주식은 SPY 보유 약 500개)
+    names = {term for c in (*REMOTE_START, *load_etfs()) for term in (c.ticker, c.name)} | {
+        coverage_name(h.name) for h in EdgarHoldingsSource(sec()).latest_report("SPY").holdings}
     assert NEWSLINE_EXAMPLES
     for example in NEWSLINE_EXAMPLES:
         assert f"\n- {example}\n" in NEWSLINE_SYSTEM
         assert check_card(news_text(example, 0)) == [], example  # 카드에 붙는 꼬리표까지 붙여 검사
         assert parse_news_reply(json.dumps({"sentence": example})) == (example, None), example
         assert len(example.split()) <= 12, example  # 지시문이 주는 목표 길이
-        assert [n for n in names if n in example] == [], example  # 실험 종목 이름이 예시로 새지 않게
+        assert [n for n in names if n in example] == [], example  # 커버 범위 종목 이름이 예시로 새지 않게
 
 
 def test_시장_한눈에_지시문의_예시_줄은_가상_기관이고_문구_검사와_형식_규칙을_통과하며_12단어_이하다():

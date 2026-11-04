@@ -24,7 +24,9 @@ export type Stock = { ticker: string; name: string };
 export type MyDashboardView = {
   mine: (Stock & { card: CardView | null })[]; // 잠기지 않은 내 종목, 넣은 순서. card null = 그날 카드 없음
   browse: CardView[]; // 나머지 카드(잠긴 내 종목 포함)
-  pickable: Stock[]; // 커버 범위 중 내 종목(잠긴 것 포함)이 아닌 것
+  pickable: Stock[]; // 커버 범위 중 내 종목(잠긴 것 포함)이 아닌 것의 검색 결과(최대 SEARCH_MAX, #58). 검색어가 없으면 []
+  query: string; // 정리한 검색어. 입력칸에 다시 채운다
+  more: boolean; // 결과가 SEARCH_MAX에서 잘렸다
   swapsLeft: number | null; // null = Plus(그리지 않음)
   notice: string | null; // /cards?my_stock=… 결과 문구
 };
@@ -35,17 +37,40 @@ export function myDashboardView(
   coverage: Stock[],
   my: { stocks: (Stock & { locked: boolean })[]; swapsLeft: number | null },
   result: unknown,
+  q?: unknown, // /cards?q=… 고르기 검색어(#58)
 ): MyDashboardView {
   const mine = my.stocks.filter((s) => !s.locked).map(({ ticker, name }) => ({ ticker, name, card: cards.find((c) => c.ticker === ticker) ?? null }));
   const held = new Set(my.stocks.map((s) => s.ticker));
+  const query = cleanQuery(q);
+  const { results, more } = searchStocks(coverage.filter((c) => !held.has(c.ticker)), query);
   return {
     mine,
     browse: cards.filter((c) => !mine.some((m) => m.ticker === c.ticker)),
-    pickable: coverage.filter((c) => !held.has(c.ticker)),
+    pickable: results,
+    query,
+    more,
     swapsLeft: my.swapsLeft,
     // 쿼리 값은 그리지 않는다: 문구표에 있는 코드만(Object.hasOwn: constructor 같은 프로토타입 이름 제외)
     notice: typeof result === "string" && Object.hasOwn(MY_STOCK_NOTICE, result) ? MY_STOCK_NOTICE[result as keyof typeof MY_STOCK_NOTICE] : null,
   };
+}
+
+export const SEARCH_MAX = 20; // 고르기 검색 결과 최대(#58). 넘으면 more
+export const QUERY_MAX = 40; // 검색어 앞 글자 수
+
+const cleanQuery = (q: unknown) => (typeof q === "string" ? q.trim().slice(0, QUERY_MAX) : "");
+const nameKey = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim(); // "Coca-Cola" = "coca cola", "AT&T" = "at t"
+
+/** 고르기 검색(#58 D10). stocks = 커버 범위에서 내 종목을 뺀 것(티커순). 순서: 티커 같음 → 티커로 시작 → 이름에 포함, 같은 묶음은 받은 순서.
+ * 검색어는 여기서 글자로만 비교한다: SQL·PostgREST 필터에 넣지 않는다(주입·이스케이프 문제 없음) */
+export function searchStocks(stocks: Stock[], q: unknown): { results: Stock[]; more: boolean } {
+  const query = cleanQuery(q);
+  if (!query) return { results: [], more: false };
+  const ticker = query.toUpperCase().replaceAll(".", "-"); // BRK.B = BRK-B
+  const name = nameKey(query); // 영숫자가 없는 검색어("%", "&")는 "": 이름으로는 아무것도 맞지 않는다
+  const rank = (s: Stock) => (s.ticker === ticker ? 0 : s.ticker.startsWith(ticker) ? 1 : name && nameKey(s.name).includes(name) ? 2 : 3);
+  const hits = stocks.map((s) => ({ s, r: rank(s) })).filter((h) => h.r < 3).sort((a, b) => a.r - b.r); // sort는 안정 정렬: 묶음 안은 티커순 그대로
+  return { results: hits.slice(0, SEARCH_MAX).map((h) => h.s), more: hits.length > SEARCH_MAX };
 }
 
 /** DB 등락률(소수 첫째 자리)에 부호·%만 붙인다. 값은 계산함(checked_found)일 때만 있다(DB 제약).

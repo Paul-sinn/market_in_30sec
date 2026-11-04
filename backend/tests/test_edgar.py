@@ -21,7 +21,6 @@ import urllib.error
 import urllib.request
 import urllib.response
 from datetime import date, datetime
-from decimal import Decimal
 from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
@@ -50,7 +49,6 @@ from m30.adapters.fake import (
     Scenario,
 )
 from m30.config import ET, ConfigError, load_edgar_settings
-from m30.experiment import experiment_coverage
 from m30.models import Coverage, LineStatus
 from m30.pipeline.collect import FailureReason, SourceFailure
 from m30.pipeline.morning import MorningPipeline
@@ -189,7 +187,6 @@ def test_SEC_리다이렉트는_따라가지_않는다():
     assert any(isinstance(h, edgar._NoRedirect) for h in edgar._OPENER.handlers)  # 실제로 쓰는 opener에 끼워져 있다
 
 
-
 def http_error(status):
     return urllib.error.HTTPError(AAPL_SUBMISSIONS, status, "x", Message(), io.BytesIO(b"body"))
 
@@ -281,7 +278,6 @@ def test_SEC_클라이언트는_기본으로_프로세스에_하나인_간격_�
     assert edgar.SEC_THROTTLE._interval == 0.125
 
 
-
 def test_CIK_티커_매핑은_SEC_공식_티커_목록에서_10자리_CIK로_만든다():
     get = RecordedGet({TICKERS_URL: recorded("company_tickers.json")})
 
@@ -308,34 +304,6 @@ def test_티커_목록_모양이_다르면_재시도하지_않는_출처_실패�
         ticker_ciks(RecordedGet({TICKERS_URL: body}))
     assert type(raised.value) is SourceError
     assert str(raised.value) == "sec tickers shape"
-
-
-
-def test_실험_종목_15개는_회사_11개에_공식_목록의_CIK를_채우고_ETF_4개는_CIK_없이_둔다():
-    rows = experiment_coverage(ticker_ciks(RecordedGet({TICKERS_URL: recorded("company_tickers.json")})))
-
-    assert [(r.ticker, r.cik) for r in rows] == [
-        ("AAPL", "0000320193"), ("MSFT", "0000789019"), ("NVDA", "0001045810"), ("AMZN", "0001018724"),
-        ("GOOGL", "0001652044"), ("META", "0001326801"), ("TSLA", "0001318605"), ("JPM", "0000019617"),
-        ("XOM", "0000034088"), ("KO", "0000021344"), ("PFE", "0000078003"),
-        ("SPY", None), ("QQQ", None), ("TQQQ", None), ("SCHD", None),  # 목록에 SPY가 있어도 비운다 → Not covered yet
-    ]
-    assert {r.ticker: r.leverage for r in rows if r.leverage is not None} == {"TQQQ": Decimal("3")}
-    # 카드 머리글 이름 = 법인 꼬리를 뗀 흔한 이름(copy-reviewer 교체 목록). SEC 대문자 정형명(MICROSOFT CORP)은 쓰지 않는다
-    assert [r.name for r in rows] == [
-        "Apple", "Microsoft", "NVIDIA", "Amazon", "Alphabet", "Meta", "Tesla", "JPMorgan Chase", "Exxon Mobil", "Coca-Cola",
-        "Pfizer", "SPDR S&P 500 ETF", "Invesco QQQ", "ProShares UltraPro QQQ", "Schwab U.S. Dividend Equity ETF",
-    ]
-
-
-def test_실험_회사가_티커_목록에_없으면_지난_CIK를_덮지_않게_출처_실패다():
-    ciks = ticker_ciks(RecordedGet({TICKERS_URL: recorded("company_tickers.json")}))
-    del ciks["GOOGL"], ciks["KO"]
-
-    with pytest.raises(SourceError) as raised:
-        experiment_coverage(ciks)
-    assert str(raised.value) == "sec ticker list has no GOOGL, KO"
-
 
 
 # 입구 1: 아침 파이프라인 + EdgarFilingSource(기록용 get). 거래일 FRI, 공시 기간 [10-15 04:00, 10-16 04:00) ET
@@ -582,7 +550,6 @@ def test_iXBRL_숨은_값은_글자로_넘기지_않고_블록_태그만_띄운�
     html = ('<div style="display:none"><ix:header><ix:hidden>0000320193<ix:header>false</ix:header>--09-27</ix:hidden>'
             '</ix:header></div><p>A</p><p>B<span>C</span></p>')
     assert edgar._html_text(html) == "A BC"  # 겹친 ix:header도 깊이로 센다
-
 
 
 def test_SEC가_403으로_막으면_다시_시도하지_않고_이번_실행에서_SEC를_더_부르지_않으며_요약_맨_위에_남긴다(store):

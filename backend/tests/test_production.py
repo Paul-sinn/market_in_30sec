@@ -18,24 +18,43 @@ from m30.adapters import AccessDeniedError, Source, SourceError, TransientSource
 from m30.adapters.edgar import SUBMISSIONS_URL, TICKERS_URL
 from m30.adapters.unavailable import NoPriceSource
 from m30.db.store import CardStore, connect
-from m30.experiment import EXPERIMENT_DEFAULT_TICKERS
+from m30.coverage import DEFAULT_TICKERS
 from m30.models import FundHoldings, LineStatus
-from m30.adapters.nport import MF_TICKERS_URL
+from m30.adapters.nport import MF_TICKERS_URL, EdgarHoldingsSource
 from m30.pipeline.lines import NEWS_SCOPE, NO_FILINGS, NOT_COVERED, PRICE_SCOPE, UPDATE_DELAYED
-from m30.pipeline.production import run_failed, run_production
+from m30.pipeline.production import CoverageRefresh, run_failed, run_production
 from m30.adapters.gov import BEA_ICS_URL, BLS_ICS_URL
 from m30.adapters.gov_news import FED_RSS_URL
 from m30.pipeline import collect
 from m30.pipeline.collect import FailureReason, SourceFailure
 from m30.pipeline.glance import GLANCE_SYSTEM
 from m30.pipeline.review import FACTCHECK_SYSTEM
-from production_probe import COMPANY_CIKS, DRAFT_CANARY, ETFS, GOV_CANARY, GlanceLLM, NoCallLLM, gov_day, quiet_day, quiet_gov
+from production_probe import (
+    COMPANY_CIKS,
+    DRAFT_CANARY,
+    ETFS,
+    GOV_CANARY,
+    REMOTE_START,
+    GlanceLLM,
+    NoCallLLM,
+    gov_day,
+    quiet_day,
+    quiet_gov,
+)
 from test_gov import BEA, BEA_GDP, BEA_INCOME, FEED_URLS
 from test_edgar import RecordedGet
 from test_nport import OTHER_SERIES, QQQ_8, QQQ_CIK, SCHD_8, SCHWAB_CIK, SPY_8, SPY_CIK, txt_url
 from test_tiingo import body, row, source
 
 FRI = date(2026, 10, 16)
+
+
+@pytest.fixture
+def store(store):
+    """원격 DB와 같은 시작 상태(#58 전 실험 15행)를 심은 저장소. 기대값(카드 15장, SEC 요청 순서)이 이 상태 기준이다.
+    빈 DB 첫 실행은 테스트가 커버 범위를 지운다."""
+    store.upsert_coverage(REMOTE_START)
+    return store
 
 
 def glance_lines(glance):
@@ -65,9 +84,10 @@ ETF_SCOPES = {"QQQ": "SEC filings of 6 top holdings", "SCHD": "SEC filings of 1 
 def test_운영_실행은_실제_공시·편입_보고와_미연결_출처만_써서_가짜_데이터_없이_카드를_만든다(store):
     get = RecordedGet(quiet_day())
 
-    summary, refreshed = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=get, llm=NoCallLLM(), prices=NoPriceSource())
+    summary, refresh = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=get, llm=NoCallLLM(), prices=NoPriceSource())
 
-    assert refreshed is True
+    # 저장된 SPY 보고가 아직 없다(이 실행의 편입 단계가 저장한다): ETF 행만 갱신하고 주식 행은 그대로
+    assert refresh == CoverageRefresh(None, etfs=4, sp500_period_end=None)
     assert {c.ticker: c.cik for c in store.list_coverage()} == COMPANY_CIKS | dict.fromkeys(ETFS)
     # 편입 종목을 읽을 ETF(#10 D2). TQQQ는 QQQ의 편입 종목을 쓴다
     assert {c.ticker: c.holdings_ticker for c in store.list_coverage() if c.holdings_ticker} == {
@@ -184,8 +204,8 @@ def test_BLS_일정이_503을_계속_내면_지표_일정_줄만_지연이고_�
     assert store.list_raw_indicators(FRI) == []
 
 
-def test_운영_실행은_그_분기_기본_종목으로_실험_15종목을_저장한다(store):
-    assert {"SPY", "QQQ"} <= set(EXPERIMENT_DEFAULT_TICKERS)  # 지수 대신 SPY·QQQ(부모 스펙: 선정 시 보장)
+def test_운영_실행은_그_분기_기본_종목으로_15종목을_저장한다(store):
+    assert {"SPY", "QQQ"} <= set(DEFAULT_TICKERS)  # 지수 대신 SPY·QQQ(부모 스펙: 선정 시 보장)
     experiment = sorted(COMPANY_CIKS | dict.fromkeys(ETFS))
 
     for _ in range(2):  # 재실행해도 그대로
@@ -218,23 +238,26 @@ def content(card):
 
 
 def test_같은_거래일을_다시_운영_실행해도_커버_범위와_카드가_중복_없이_그대로다(store):
-    run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
+    for _ in range(2):  # 첫 실행의 편입 단계가 SPY 보고를 저장하고, 둘째 실행이 그 보고로 커버 범위 주식을 더한다(#58)
+        run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
     coverage, cards = store.list_coverage(), [content(c) for c in store.list_cards(FRI)]
 
     summary, _ = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
 
     assert store.list_coverage() == coverage
-    assert len(coverage) == 15
+    assert len(coverage) == 16  # 실험 15행 + GOOG(SPY가 Alphabet 두 종류를 가진다. 13행 티커 목록이라 AMD 등은 못 찾음)
     assert [content(c) for c in store.list_cards(FRI)] == cards
     assert summary.cards_saved == 15
 
 
-def test_첫_실행에서_SEC_티커_목록을_못_받으면_카드_0장이라_실패한_실행이다(store):
+def test_첫_실행에서_SEC_티커_목록을_못_받으면_카드_0장이라_실패한_실행이다(store, admin):
+    admin.execute("delete from public.coverage")  # 빈 DB 첫 실행
     get = RecordedGet({TICKERS_URL: SourceError("sec tickers shape")})
 
-    summary, refreshed = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=get, llm=NoCallLLM(), prices=NoPriceSource())
+    summary, refresh = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=get, llm=NoCallLLM(), prices=NoPriceSource())
 
-    assert refreshed is False
+    assert refresh == CoverageRefresh("sec_tickers_failed")
+    assert store.list_coverage() == []  # ETF 행도 쓰지 않는다
     assert summary.cards_saved == 0
     assert run_failed(summary) is True
     assert get.urls == [TICKERS_URL]  # 다시 시도하지 않는다
@@ -247,15 +270,16 @@ def test_죽은_앞_실행이_카드를_모두_저장했으면_이어_한_실행
     assert run_failed(dataclasses.replace(summary, cards_saved=0, resumed=())) is True
 
 
-def test_SEC_티커_목록을_못_받으면_지난_CIK로_카드를_만들고_실패로_치지_않는다(store):
+def test_SEC_티커_목록을_못_받으면_커버_범위를_건드리지_않고_이유_코드를_남긴다(store):
     run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
 
-    summary, refreshed = run_production(
+    summary, refresh = run_production(
         store, FRI, gov_get=RecordedGet(quiet_gov()), get=RecordedGet(quiet_day(**{TICKERS_URL: TransientSourceError("sec timeout")})), llm=NoCallLLM(),
         prices=NoPriceSource(),
     )
 
-    assert refreshed is False
+    assert refresh == CoverageRefresh("sec_tickers_failed")
+    # 첫 실행이 저장한 SPY 보고로 GOOG를 더할 차례였지만 아무 행도 쓰지 않았다. 카드는 지난 행으로
     assert {c.ticker: c.cik for c in store.list_coverage()} == COMPANY_CIKS | dict.fromkeys(ETFS)
     assert summary.cards_saved == 15
     assert run_failed(summary) is False
@@ -282,11 +306,18 @@ WEBHOOK_CANARY = "https://discord.com/api/webhooks/123456789012345678/WebhookCan
 BACKUP_LINE = "BACKUP RUN: no finished run when the GitHub schedule backup started (check pg_cron dispatch)"
 
 
-def run_probe(settings, situation, tiingo_key=None, extra=(), trigger=None, webhook=None, day="2026-10-16", price_display: str | None = "on"):
+def run_probe(settings, situation, tiingo_key=None, extra=(), trigger=None, webhook=None, day="2026-10-16", price_display: str | None = "on",
+              seed=True, reports=()):
     """tiingo_key가 없으면 TIINGO_API_KEY를 뺀 환경(구독 전). 셸에 진짜 키가 있어도 하위 프로세스로 넘기지 않는다. extra = 덧붙일 CLI 인자.
     trigger = 워크플로가 넘기는 RUN_TRIGGER(github.event_name). 없으면 변수 없이(로컬 실행).
     webhook = DISCORD_WEBHOOK_URL. 없으면 변수 없이(셸의 진짜 웹훅을 넘기지 않는다).
-    price_display = PRICE_DISPLAY(#56). None이면 변수 없이(기본 off)."""
+    price_display = PRICE_DISPLAY(#56). None이면 변수 없이(기본 off).
+    seed = 실행 전에 원격과 같은 시작 상태(#58 전 실험 15행)를 심는다. False = 빈 DB. reports = 그 뒤 저장해 둘 편입 보고."""
+    if seed:
+        with connect(settings) as conn:
+            CardStore(conn).upsert_coverage(REMOTE_START)
+            for report in reports:
+                CardStore(conn).save_holdings(report)
     env = {k: v for k, v in os.environ.items()
            if k not in ("TIINGO_API_KEY", "RUN_TRIGGER", "DISCORD_WEBHOOK_URL", "PRICE_DISPLAY")} | {
         "SUPABASE_DB_URL": settings.database_url, "ANTHROPIC_API_KEY": KEY_CANARY, "SEC_USER_AGENT": UA_CANARY
@@ -307,24 +338,38 @@ def webhook_message(out):
     return content
 
 
+# 녹화 SPY 보고를 운영 실행처럼 13행 티커 목록으로 받은 것(앞 실행의 편입 단계가 저장했을 보고). AMD·Broadcom·Lilly·Micron은 cik 없음
+SPY_REPORT = EdgarHoldingsSource(RecordedGet(quiet_day())).latest_report("SPY")
+COVERAGE_LINE = re.compile(r"coverage: (refreshed etfs=\d+ stocks=\d+ added=\d+ unmatched=\d+ sp500=(\d{4}-\d{2}-\d{2}|none)"
+                           r"|NOT REFRESHED reason=[a-z_]+, stored rows used)")
+COMPANY_NAMES = ("Advanced Micro Devices", "Alphabet", "Broadcom", "Lilly", "Micron", "Microsoft", "Apple", "Amazon", "Tesla")
+
+
 @pytest.mark.parametrize(
-    "situation, exit_code, lines",
+    "situation, reports, exit_code, lines",
     [
-        ("quiet", 0, ["2026-10-16 cards_saved=15 resumed=- ", "coverage: refreshed", "prices=none",
-                      "glance: close=delayed indicator=checked_none market_news=checked_none review=-",
-                      "holdings: QQQ=checked_found(unmatched 4) SCHD=checked_found(unmatched 9)"
-                      " SPY=checked_found(unmatched 3) TQQQ=checked_found(unmatched 4)"]),
-        ("denied", 1, ["ACCESS DENIED (not retried): earnings, sec_filings", "cards_saved=15", "coverage: refreshed"]),
-        ("no_tickers", 1, ["cards_saved=0", "coverage: NOT REFRESHED (sec ticker list failed), stored rows used"]),
+        ("quiet", (), 0, ["2026-10-16 cards_saved=15 resumed=- ", "prices=none",
+                          "coverage: refreshed etfs=4 stocks=0 added=0 unmatched=0 sp500=none",  # 저장된 SPY 보고 없음
+                          "glance: close=delayed indicator=checked_none market_news=checked_none review=-",
+                          "holdings: QQQ=checked_found(unmatched 4) SCHD=checked_found(unmatched 9)"
+                          " SPY=checked_found(unmatched 3) TQQQ=checked_found(unmatched 4)"]),
+        # SPY 보통주 회사 11개 중 8개 티커(Alphabet 둘), 새로 넣은 건 GOOG 하나. 못 찾은 회사 4개는 수만
+        ("quiet", (SPY_REPORT,), 0, ["coverage: refreshed etfs=4 stocks=8 added=1 unmatched=4 sp500=2026-06-30"]),
+        ("denied", (), 1, ["ACCESS DENIED (not retried): earnings, sec_filings", "cards_saved=15",
+                           "coverage: refreshed etfs=4 stocks=0 added=0 unmatched=0 sp500=none"]),
+        ("no_tickers", (), 1, ["cards_saved=0", "coverage: NOT REFRESHED reason=sec_tickers_failed, stored rows used"]),
     ],
-    ids=["정상", "SEC_403", "빈_DB에_티커_목록_실패"],
+    ids=["정상", "SPY_보고_있음", "SEC_403", "빈_DB에_티커_목록_실패"],
 )
-def test_운영_CLI는_실행_요약과_CIK_갱신_여부를_찍고_실패한_실행이면_1로_끝난다(settings, admin, situation, exit_code, lines):
-    code, out = run_probe(settings, situation)
+def test_운영_CLI는_실행_요약과_커버_범위_갱신_결과를_코드·건수로_찍고_실패한_실행이면_1로_끝난다(
+        settings, admin, situation, reports, exit_code, lines):
+    code, out = run_probe(settings, situation, seed=situation != "no_tickers", reports=reports)  # 빈 DB 상황만 심지 않는다
 
     assert code == exit_code
     for line in lines:
         assert line in out, line
+    assert [line for line in out.splitlines() if line.startswith("coverage:") and not COVERAGE_LINE.fullmatch(line)] == []
+    assert [name for name in COMPANY_NAMES if name in out] == []  # 공개 로그: 코드·건수·날짜만
 
 
 GOV_HOSTS_SHOWN = ("bls.gov", "bea.gov", "census.gov", "federalreserve.gov")  # 기관 주소 일부

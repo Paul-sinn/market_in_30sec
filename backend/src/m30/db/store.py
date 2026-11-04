@@ -223,6 +223,16 @@ class CardStore:
                 [(r.ticker, r.name, r.leverage, r.cik, r.holdings_ticker) for r in rows],
             )
 
+    def add_coverage(self, rows: Iterable[Coverage]) -> int:
+        """커버 범위에 없는 티커만 넣는다(on conflict (ticker) do nothing). 있는 행은 아무것도 바꾸지 않고 지우지 않는다(#58 D7).
+        돌려주는 값 = 이번에 새로 넣은 행 수. 한 문장(unnest 배열)이라 행 수와 무관하게 왕복 1회."""
+        columns = list(zip(*((r.ticker, r.name, r.leverage, r.cik, r.holdings_ticker) for r in rows))) or [()] * 5
+        return self._conn.execute(
+            "insert into public.coverage (ticker, name, leverage, cik, holdings_ticker)"
+            " select * from unnest(%s::text[], %s::text[], %s::numeric[], %s::text[], %s::text[]) on conflict (ticker) do nothing",
+            [list(c) for c in columns],
+        ).rowcount
+
     def upsert_card(self, card: StockCard) -> None:
         """(종목, 거래일) 카드를 통째로 덮어쓴다. 한 문장 upsert라 동시 실행에도 카드는 하나다. card.updated_at은 무시."""
         values = (
