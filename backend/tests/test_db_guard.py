@@ -116,7 +116,7 @@ def test_모드를_고르지_않으면_실행하지_않는다():
     code, out = run_cli(["2026-10-16"])
 
     assert code == 2
-    assert "one of the arguments --scenario --production is required" in out
+    assert "one of the arguments --scenario --production --quarterly is required" in out
 
 
 def test_시나리오_모드는_거래일이_있어야_한다():

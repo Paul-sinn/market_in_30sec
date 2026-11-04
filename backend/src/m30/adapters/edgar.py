@@ -6,6 +6,7 @@ User-Agent(사용자 연락처) 노출 방지는 anthropic.py와 같다: 값은 
 
 import gzip
 import http.client
+import io
 import json
 import os
 import re
@@ -18,8 +19,16 @@ from collections.abc import Callable
 from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 
-from m30.adapters import SourceError, TransientSourceError, error_for_status
-from m30.adapters.filings import ACCESSION, Filing, FilingForm
+from m30.adapters import SourceError, TooLargeError, TransientSourceError, error_for_status
+from m30.adapters.filings import (
+    ACCESSION,
+    ANNUAL_REPORT_BODY_MAX,
+    SIC,
+    AnnualReport,
+    AnnualReportListing,
+    Filing,
+    FilingForm,
+)
 from m30.config import ET, EdgarSettings
 
 TICKERS_URL = "https://www.sec.gov/files/company_tickers.json"
@@ -28,6 +37,12 @@ SUBMISSION_TEXT_URL = "https://www.sec.gov/Archives/edgar/data/{cik_number}/{acc
 SEC_HOSTS = frozenset({"www.sec.gov", "data.sec.gov"})  # netloc 그대로 비교: 포트·사용자 정보가 붙으면 다르다
 MIN_INTERVAL = 0.125  # 요청 시작 간격(초) = 초당 최대 8회. SEC 상한 10회 미만
 FORMS = frozenset(FilingForm)  # 정확히 "8-K"·"8-K/A". 8-K12B 등은 다른 서식
+ANNUAL_FORM = "10-K"  # 정확히 이것만. 10-K/A(대개 Part III·첨부만)·10-KT(결산기 변경)는 보지 않는다
+# 분기 작업 요청 시작 간격(초). 아침 실행(MIN_INTERVAL, 초당 8회)과 겹쳐도 합이 초당 9회로 SEC 상한 10회 미만
+QUARTERLY_INTERVAL = 1.0
+# 분기 작업 응답 크기 상한(바이트, 받은 것·gzip을 푼 것 각각). 큰 10-K 전체 제출 파일(XBRL·그림 포함)이 수십 MB라 넉넉히 100MB.
+# 넘는 회사만 too_large로 실패시켜 str 변환·복사로 몇 배가 되는 메모리가 실행 전체를 멈추지 않게 한다. 실제 최대 크기는 live로 잴 예정
+ANNUAL_REPORT_FILE_MAX = 100_000_000
 EARNINGS_ITEM = "2.02"  # 8-K Item 2.02 Results of Operations and Financial Condition(#57 실적 공시)
 RECENT_COLUMNS = ("accessionNumber", "form", "acceptanceDateTime", "items", "reportDate")  # submissions filings.recent의 쓰는 열
 TEXT_EXTENSIONS = frozenset({".htm", ".html", ".txt"})  # 읽는 문서. PDF·그림(jpg·gif)·XBRL(xml·xsd)은 읽지도 저장하지도 않는다
@@ -47,6 +62,8 @@ BLOCK_TAGS = frozenset(
     "address article aside blockquote br caption dd div dl dt figcaption figure footer h1 h2 h3 h4 h5 h6 header hr li ol p pre"
     " section table tbody td tfoot th thead tr ul".split()
 )  # 열고 닫을 때 공백. 그 밖(span·b·a·font·ix:nonfraction)은 붙인다: $<ix:nonFraction>94.9</…> billion → $94.9 billion
+LINE_BREAK_TAGS = BLOCK_TAGS - {"td", "th"}  # 10-K 글자에서 줄을 나누는 태그. 표의 칸은 같은 줄에 공백으로
+_WHITESPACE = re.compile(r"\s")  # 10-K HTML 글자 안의 줄바꿈(\xa0 등 공백 포함)은 줄을 나누지 않는다
 
 Get = Callable[[str], bytes]
 
@@ -84,23 +101,28 @@ _OPENER = urllib.request.build_opener(_NoRedirect)  # 테스트가 이 자리를
 
 
 class EdgarClient:
-    def __init__(self, settings: EdgarSettings, *, timeout: float = 30.0, throttle: Throttle = SEC_THROTTLE) -> None:
+    def __init__(
+        self, settings: EdgarSettings, *, timeout: float = 30.0, throttle: Throttle = SEC_THROTTLE, max_bytes: int | None = None
+    ) -> None:
         self._settings = settings
         self._timeout = timeout
         self._throttle = throttle
+        self._max_bytes = max_bytes  # None = 상한 없음(아침 실행). 분기 작업은 ANNUAL_REPORT_FILE_MAX
 
     def get(self, url: str) -> bytes:
-        """응답 본문(Content-Encoding: gzip이면 푼 것). https·SEC_HOSTS·기본 포트가 아니면 요청 전에 ValueError."""
+        """응답 본문(Content-Encoding: gzip이면 푼 것). https·SEC_HOSTS·기본 포트가 아니면 요청 전에 ValueError.
+        max_bytes가 있으면 받은 바이트·푼 바이트를 그 + 1바이트까지만 읽고, 넘으면 TooLargeError."""
         parts = urllib.parse.urlsplit(url)
         if parts.scheme != "https" or parts.netloc not in SEC_HOSTS:
             raise ValueError("SEC requests must go to https://www.sec.gov or https://data.sec.gov")
         self._throttle.wait()
+        limit = self._max_bytes
         try:
             with _OPENER.open(self._request(url), timeout=self._timeout) as response:
                 encoding = (response.headers.get("Content-Encoding") or "identity").strip().lower()
-                body = response.read()
+                body = response.read() if limit is None else _read_capped(response, limit)
             if encoding == "gzip":
-                body = gzip.decompress(body)
+                body = gzip.decompress(body) if limit is None else _read_capped(gzip.GzipFile(fileobj=io.BytesIO(body)), limit)
         except urllib.error.HTTPError as e:  # URLError의 하위 클래스라 먼저 받는다
             raise error_for_status("sec", e.code) from None
         except TimeoutError:
@@ -114,6 +136,15 @@ class EdgarClient:
     def _request(self, url: str) -> urllib.request.Request:
         """헤더(User-Agent)는 이 프레임 안에서만 만든다. Request의 repr에는 헤더가 없다."""
         return urllib.request.Request(url, headers={"User-Agent": self._settings.user_agent, "Accept-Encoding": "gzip"})
+
+
+def _read_capped(stream: io.BufferedIOBase, limit: int) -> bytes:
+    """limit + 1바이트까지만 읽고, limit을 넘으면 TooLargeError(크기만 담은 메시지). 안 넘으면 끝까지 한 번 더 읽는다(빈 바이트):
+    HTTPResponse.read(n)은 끊긴 응답을 짧게 돌려줄 뿐 오류를 내지 않고, 이어진 read()가 IncompleteRead를 낸다."""
+    body = stream.read(limit + 1)
+    if len(body) > limit:
+        raise TooLargeError("sec response too large")
+    return body + stream.read()
 
 
 def ticker_ciks(get: Get) -> dict[str, str]:
@@ -188,6 +219,48 @@ class EdgarEarningsFilingSource:
         return _header(self._get(url).decode("utf-8", "replace"))[1]
 
 
+class EdgarAnnualReportSource:
+    """AnnualReportSource 구현(#60). listing = submissions 1회, annual_report = 전체 제출 파일 1회.
+    받기 오류는 잡지 않는다(SourceCalls가 다시 시도·차단·기록). 같은 접수번호를 두 번 받지 않는 것은 호출부가 지킨다.
+    shortcut: 전체 제출 파일(10-K는 XBRL·그림 포함 수십 MB까지)을 받는다, 시간·메모리가 문제면 primaryDocument + 헤더 파일 두 요청으로."""
+
+    def __init__(self, get: Get) -> None:
+        self._get = get
+
+    def listing(self, cik: str) -> AnnualReportListing:
+        """filings.recent(최신 먼저)에서 form == ANNUAL_FORM인 첫 행의 접수번호, 최상위 "sic"가 SIC에 맞으면 그 값.
+        모양 오류 → SourceError("sec submissions shape"): JSON·키 없음, cik 불일치, accessionNumber·form 길이 다름,
+        고른 접수번호가 ACCESSION 형식 밖. sic가 없거나 형식 밖이면 오류가 아니라 None."""
+        data = self._get(SUBMISSIONS_URL.format(cik=cik))
+        try:
+            top = json.loads(data)
+            if int(top["cik"]) != int(cik):
+                raise ValueError("other company")
+            recent = top["filings"]["recent"]
+            columns = [recent["accessionNumber"], recent["form"]]
+            if not all(type(column) is list for column in columns):
+                raise ValueError("columns")
+            accession = next((a for a, form in zip(*columns, strict=True) if form == ANNUAL_FORM), None)  # 길이가 다르면 ValueError
+            if accession is not None and not (isinstance(accession, str) and ACCESSION.fullmatch(accession)):  # 주소에 들어간다
+                raise ValueError("accession")
+            sic = top.get("sic")
+        except (AttributeError, KeyError, TypeError, ValueError):
+            raise SourceError("sec submissions shape") from None
+        return AnnualReportListing(accession, sic if isinstance(sic, str) and SIC.fullmatch(sic) else None)
+
+    def annual_report(self, cik: str, accession: str) -> AnnualReport:
+        """전체 제출 파일 → 헤더 접수 시각(없으면 SourceError("sec submission header")) + TYPE이 ANNUAL_FORM이고 HTML·텍스트인
+        첫 문서의 글자, 앞 ANNUAL_REPORT_BODY_MAX자. 그런 문서가 없거나 글자가 비면 SourceError("sec annual report document")."""
+        url = SUBMISSION_TEXT_URL.format(cik_number=int(cik), accession_digits=accession.replace("-", ""), accession=accession)
+        text = self._get(url).decode("utf-8", "replace").replace("\x00", "\ufffd")  # 8-K와 같다(Postgres text는 NUL 불가)
+        accepted_at = _header(text)[1]
+        body = next((_document_lines(section, extension) for kind, extension, section in _documents(text, ANNUAL_FORM)
+                     if kind == ANNUAL_FORM), "")[:ANNUAL_REPORT_BODY_MAX]
+        if not body.strip():
+            raise SourceError("sec annual report document")
+        return AnnualReport(accession, cik, accepted_at, body)
+
+
 def _recent(
     data: bytes, cik: str, since: datetime, until: datetime
 ) -> list[tuple[str, FilingForm, tuple[str, ...], date | None]]:
@@ -234,7 +307,7 @@ def _header(text: str) -> tuple[str, datetime]:
         raise SourceError("sec submission header") from None
 
 
-def _documents(text: str, form: FilingForm) -> list[tuple[str, str, str]]:
+def _documents(text: str, form: str) -> list[tuple[str, str, str]]:
     """전체 제출 파일(SGML) → 쓰는 문서의 (TYPE, 확장자, <DOCUMENT> 구간 원문), 파일 안 순서(SEQUENCE 순 = 보통 99.1, 99.2).
     쓰는 문서 = TYPE이 서식 이름(본문)이거나 EX-99·EX-99.*이고 파일이 HTML·텍스트인 것. 원격 DB 무료 한도(500MB) 때문에
     나머지 문서(그림·XBRL·ZIP·PDF·다른 첨부)는 저장하지 않는다(SEC-HEADER는 filings가 따로 앞에 붙인다).
@@ -257,6 +330,18 @@ def _document_text(section: str, extension: str) -> str:
     return " ".join(text.split()) if extension == ".txt" else _html_text(text)
 
 
+def _document_lines(section: str, extension: str) -> str:
+    """<TEXT> 안의 글자를 줄 단위로(#60 10-K): HTML은 태그를 떼고 LINE_BREAK_TAGS 경계마다 줄, .txt는 원래 줄.
+    줄마다 공백(NBSP 포함)을 한 칸으로, 빈 줄은 뺀다. #64·#66이 줄 머리의 'Item 1.' 같은 제목을 찾는다."""
+    text = TEXT.search(section).group(1)
+    if extension != ".txt":
+        parser = _TextParser(LINE_BREAK_TAGS)
+        parser.feed(text)
+        parser.close()
+        text = "".join(parser.parts)
+    return "\n".join(line for line in (" ".join(raw.split()) for raw in text.splitlines()) if line)
+
+
 def _without_cover(text: str) -> str:
     """처음 나오는 Item N.NN 또는 Explanatory Note부터. 둘 다 없으면 전체. 정정 공시는 항목 앞의 Explanatory Note가 핵심이다."""
     found = COVER_END.search(text)
@@ -264,26 +349,33 @@ def _without_cover(text: str) -> str:
 
 
 class _TextParser(HTMLParser):
-    def __init__(self) -> None:
+    def __init__(self, breaks: frozenset[str] = frozenset()) -> None:
         super().__init__(convert_charrefs=True)
         self.parts: list[str] = []
         self._hidden = 0  # 숨김 태그 깊이(겹쳐도 센다)
+        self._breaks = breaks  # 줄을 나누는 태그(10-K). 비면(8-K) 글자를 그대로 붙여 출력이 #60 전과 같다
 
     def handle_starttag(self, tag: str, attrs: list) -> None:
         if tag in HIDDEN_TAGS:
             self._hidden += 1
-        elif tag in BLOCK_TAGS:
-            self.parts.append(" ")
+        else:
+            self._block(tag)
 
     def handle_endtag(self, tag: str) -> None:
         if tag in HIDDEN_TAGS:
             self._hidden = max(0, self._hidden - 1)
+        else:
+            self._block(tag)
+
+    def _block(self, tag: str) -> None:
+        if tag in self._breaks:
+            self.parts.append("\n")
         elif tag in BLOCK_TAGS:
             self.parts.append(" ")
 
     def handle_data(self, data: str) -> None:
         if not self._hidden:
-            self.parts.append(data)
+            self.parts.append(_WHITESPACE.sub(" ", data) if self._breaks else data)
 
 
 def _html_text(html: str) -> str:

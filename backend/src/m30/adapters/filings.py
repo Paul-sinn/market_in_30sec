@@ -5,6 +5,8 @@ from enum import StrEnum
 from typing import Protocol
 
 ACCESSION = re.compile(r"[0-9]{10}-[0-9]{2}-[0-9]{6}")  # 접수번호 형식(fullmatch). 수집 검증과 EDGAR 주소 만들기가 같이 쓴다
+SIC = re.compile(r"[0-9]{4}")  # SEC 업종 코드 형식(fullmatch). submissions 읽기·수집 검증·DB check가 같다
+ANNUAL_REPORT_BODY_MAX = 1_000_000  # 저장하는 10-K 주 문서 글자 수 상한. Item 1은 문서 앞쪽이라 잘리는 건 꼬리다
 
 
 class FilingForm(StrEnum):
@@ -42,4 +44,34 @@ class FilingSource(Protocol):
     def filings(self, cik: str, since: datetime, until: datetime) -> list[Filing]:
         """cik가 since 이상 until 미만에 접수한 8-K·8-K/A. 순서 보장 없음. [] = 확인했지만 없음.
         실패는 SourceError(일시 실패 TransientSourceError, 401·403 AccessDeniedError). None은 돌려주지 않는다."""
+        ...
+
+
+@dataclass(frozen=True)
+class AnnualReportListing:
+    """회사 submissions 한 번에서 읽은 것(#60)."""
+
+    accession: str | None  # recent 중 가장 최근 10-K(form이 정확히 "10-K")의 접수번호. None = recent에 없음
+    sic: str | None  # SEC 업종 코드 4자리. None = 없거나 형식 밖(펀드는 "")
+
+
+@dataclass(frozen=True)
+class AnnualReport:
+    """sec_annual_report 한 행(#60). #64·#66의 입력."""
+
+    accession: str
+    cik: str  # 받은 회사 CIK 10자리
+    accepted_at: datetime  # SEC-HEADER 접수 시각, tz-aware(ET)
+    body: str  # 주 문서(TYPE 10-K)의 글자: 태그를 뗀 원문, 블록마다 줄바꿈, 앞 ANNUAL_REPORT_BODY_MAX자
+
+
+class AnnualReportSource(Protocol):
+    """10-K 출처(#60). 실패는 SourceError. 저장소를 모른다: '이미 받음' 판단은 호출부(분기 작업)가 한다."""
+
+    def listing(self, cik: str) -> AnnualReportListing:
+        """그 회사의 최신 10-K 접수번호와 업종 코드. 요청 1회."""
+        ...
+
+    def annual_report(self, cik: str, accession: str) -> AnnualReport:
+        """그 10-K의 접수 시각과 주 문서 글자. 요청 1회."""
         ...

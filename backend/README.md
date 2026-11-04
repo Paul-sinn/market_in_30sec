@@ -79,7 +79,7 @@ uv run python -m m30.pipeline --production 2026-10-16   # 지난 거래일 다�
 ## 커버 범위 (#58)
 
 - 커버 범위(고를 수 있는 종목 전체) = **주식**: SPY 최신 N-PORT 보고(`fund_holdings`에 저장된 것) 중 보통주(`EC`) 롱 회사의 티커 + **ETF**: 설정 목록 `src/m30/etfs.toml`. 지수 구성 목록은 쓰지 않는다(공시만).
-- 운영 실행마다 파이프라인 앞에서 갱신한다: ETF 목록 읽기 → SEC 티커 목록(요청 1회) → ETF 행 upsert(설정 값으로 덮음) → 저장된 SPY 최신 보고 → 주식 행 **추가만**(이미 있는 티커는 이름·CIK를 바꾸지 않는다). 어느 쪽도 행을 지우지 않는다: SPY에서 빠진 회사·목록에서 지운 ETF의 행·카드·내 종목은 그대로다. 생성 대상(활성 종목 ∪ 기본 종목)은 커버 범위와 무관하다.
+- 운영 실행마다 파이프라인 앞에서 갱신한다: ETF 목록 읽기 → SEC 티커 목록(요청 1회) → ETF 행 upsert(설정 값으로 덮음) → 저장된 SPY 최신 보고 → 주식 행 **추가만**(이미 있는 티커는 이름·CIK를 바꾸지 않는다. 업종 코드 `sic` 한 열만 분기 작업이 채운다, 아래 #60). 어느 쪽도 행을 지우지 않는다: SPY에서 빠진 회사·목록에서 지운 ETF의 행·카드·내 종목은 그대로다. 생성 대상(활성 종목 ∪ 기본 종목)은 커버 범위와 무관하다.
 - SPY 보고는 아침 실행의 ETF 편입 단계가 받아 저장한다(기준일 + 140일부터 새 보고를 찾는다 = 분기마다). 새 보고가 저장된 날의 커버 범위는 다음 실행부터 넓어진다. 빈 DB 첫 실행은 저장된 보고가 없어 ETF 행만 생긴다.
 - 한 회사 여러 티커: 회사(CIK)마다 SPY가 가진 주식 종류 수(EC 롱 행 수)만큼, SEC 티커 목록 순서대로 앞에서 고른다(Alphabet → `GOOGL`·`GOOG`, 권리·기타 티커 `CELG-RI`·`GOOGN`은 넣지 않는다). 이름은 N-PORT 이름에서 주식 종류·`/The`·법인 꼬리를 뗀 것(`Coca-Cola Co/The` → `Coca-Cola`). 손볼 이름이 있으면 사용자 확인 뒤 SQL로 고친다(다음 갱신이 덮지 않는다).
 - ETF 목록을 고칠 때(#59): `src/m30/etfs.toml`만 고치고 `uv run pytest -q tests/test_coverage.py`. 파일 머리 주석에 키 규칙이 있다. 레버리지·인버스는 `leverage`(부호 = 방향), `holdings`는 같은 지수의 일반 ETF.
@@ -90,6 +90,26 @@ uv run python -m m30.pipeline --production 2026-10-16   # 지난 거래일 다�
   - `NOT REFRESHED reason=etf_list_invalid`: `etfs.toml`이 규칙을 어겼거나 읽지 못했다. `uv run pytest -q tests/test_coverage.py`가 어긴 줄(순번·티커)을 알려 준다. 아무 행도 쓰지 않고 지난 행으로 카드를 만든다
   - `NOT REFRESHED reason=sec_tickers_failed`: SEC 티커 목록을 못 받았다. `SEC_USER_AGENT` 값·SEC 차단 여부(같은 실행의 `ACCESS DENIED`)를 본다. 다시 시도하지 않고 지난 행을 쓴다(빈 DB면 카드 0장 = 실패한 실행)
 - live 게이트(원격 아침 실행 전에 사람이 돌린다. 요청 수·시간은 `-s` 출력): `SEC_USER_AGENT="<이름> <연락 이메일>" uv run pytest -q -s -m live tests/test_holdings_live.py`(값은 명령 줄 안에서만). 실제 SPY 보고 + 티커 목록으로 회사 495개 이상, 못 찾은 회사 15개 이하, `GOOGL`·`GOOG`·`BRK-B` 있음, `GOOGN`·`GOOGM`·`CELG-RI`·`BRK-A` 없음을 확인한다. 못 찾은 이름·한 회사 여러 티커는 로컬 출력에만 찍힌다
+
+## 분기 작업 (10-K·업종 코드, #60)
+
+```bash
+uv run python -m m30.pipeline --quarterly   # 실제 SEC. 원격 DB 허용. 거래일·--quality는 받지 않는다
+```
+
+- `.github/workflows/quarterly.yml`이 매주 일요일 06:00 UTC에 돌린다(새 10-K가 나온 회사만 받으므로 매주 확인한다). Actions → `quarterly-job` → Run workflow로 수동 실행(입력 없음). 수동 실행은 평일 09:00~10:30 UTC(아침 실행 시간)를 피한다. **main 병합 뒤 첫 실행은 수동으로**(약 500개 회사, 추정 30~50분, 한도 120분).
+- 하는 일: 커버 범위 회사(CIK가 있고 ETF가 아닌 행의 서로 다른 CIK)마다 submissions 1회 → `coverage.sic` 채움(4자리 숫자일 때만, 아니면 지난 값 유지) → recent에서 form이 정확히 `10-K`인 첫 행(10-K/A·10-KT 제외)이 저장된 최신 접수번호와 다르면 전체 제출 파일 1회 → 주 문서(TYPE 10-K) 글자만 `sec_annual_report`에 한 행(태그를 뗀 원문, 블록마다 줄, 앞 1,000,000자, 추가만). 첨부·그림·XBRL은 저장하지 않는다. SEC 요청 간격 1초(아침 실행과 겹쳐도 합이 초당 9회).
+- 아침 실행과 섞이지 않는다: 잠금(`classid = 16`)·`pipeline_run`·Discord를 쓰지 않고 concurrency 그룹도 다르다(`quarterly-job`). 실행 기록은 Actions 로그와 exit 코드뿐이다.
+- 환경 변수 둘: `SUPABASE_DB_URL`, `SEC_USER_AGENT`(`ANTHROPIC_API_KEY`는 읽지 않는다). 없으면 DB에 붙기 전에 이름만 알리고 exit 2. DB 연결 가드·`(reason=…)`은 위 운영 모드와 같다.
+- exit 코드: 0 = 정상, 2 = 인자 오류·설정 누락·트랜잭션 풀러(6543), 1 = DB 연결 실패·`RUN FAILED: <예외 이름>`·회사 실패가 하나라도 있음·대상 회사 0개(빈·잘못된 DB). 끊겨도 저장한 10-K는 남고 다음 실행이 나머지를 받는다.
+- 출력 줄(코드·건수·CIK만. 10-K 글자·회사 이름·URL·연락처는 찍지 않는다):
+  - `!!! FAILED: failures=<회사 실패 수> companies=<대상 회사 수> !!!` + `failed: annual_report/<CIK>=<이유 코드>, …`(실패한 실행만)
+  - `ACCESS DENIED (not retried): annual_report` / `RATE LIMITED (429, retried): annual_report`
+  - `quarterly companies=<n> new=<n> unchanged=<n> no_annual_report=<n> sic=<n> sic_missing=<n>`(늘 `companies = new + unchanged + no_annual_report + 실패 수`)
+- 이유 코드와 확인할 것: `access_denied` SEC가 401·403(그 뒤 회사는 요청 없이 같은 코드) → `SEC_USER_AGENT`에 연락 이메일이 있는지, SEC 차단 여부 / `retries_exhausted` 타임아웃·429·5xx 4번 → 다음 주 실행이 다시 받는다, 계속되면 SEC 상태 / `error` 응답 모양·헤더·주 문서 없음·404 → 그 회사 submissions·전체 제출 파일을 로컬에서 열어 본다 / `invalid_data` 어댑터가 계약 밖 값(형식 밖 sic·접수번호, 빈·상한 초과 본문) / `too_large` 전체 제출 파일이 100MB(받은 바이트 또는 gzip을 푼 바이트) 초과, 다시 시도하지 않음 → 그 회사 크기를 확인하고 `ANNUAL_REPORT_FILE_MAX`를 올릴지 정한다 / `unexpected:<예외 이름>` 어댑터 버그.
+- `no_annual_report`(recent에 10-K 없음, 상장 1년 미만 등)와 `sic_missing`(펀드·SEC가 업종을 주지 않음)은 실패가 아니다.
+- DB 크기 확인(읽기 조회): `select count(*), pg_size_pretty(pg_total_relation_size('public.sec_annual_report')) from public.sec_annual_report`. 무료 한도 500MB, 연 약 60~100MB 추정. 한도에 가까우면 Item 1만 남기는 방식이나 유료 플랜으로(남긴 행을 줄이는 건 데이터 수정이라 사용자 확인 뒤).
+- live 확인(선택, 값은 명령 줄 안에서만): `SEC_USER_AGENT="<이름> <연락 이메일>" uv run pytest -q -s -m live tests/test_quarterly_live.py`. 실험 회사 6개의 실제 10-K를 받아 모양을 확인하고 CIK·글자 수·잘림·시간만 찍는다(본문은 찍지 않는다).
 
 ## 가격 표시 플래그 (`PRICE_DISPLAY`, #56)
 

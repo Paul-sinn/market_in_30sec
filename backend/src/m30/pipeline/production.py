@@ -1,4 +1,4 @@
-"""운영 모드(#26): 실제 출처(EDGAR·정부 기관·Anthropic·시세) + 미연결 출처. 원격 DB로 가는 유일한 길(CLI --production).
+"""운영 모드(#26): 실제 출처(EDGAR·정부 기관·Anthropic·시세) + 미연결 출처. 원격 DB로 가는 길은 CLI --production(이 모듈)과 --quarterly(분기 작업) 둘뿐이다.
 가짜 어댑터·시나리오를 import하지 않는다(테스트가 sys.modules로 확인)."""
 
 from dataclasses import dataclass

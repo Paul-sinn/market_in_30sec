@@ -85,3 +85,52 @@ def test_가격_표시_플래그는_secrets가_아닌_저장소_변수로_실행
     assert len(flag) == 1 and flag[0] > production
     assert re.match(r"^\s*PRICE_DISPLAY: \$\{\{ vars\.PRICE_DISPLAY \}\}(  #.*)?$", lines[flag[0]])
     assert "secrets.PRICE_DISPLAY" not in text()
+
+
+# 분기 작업(#60) 워크플로. 아침 실행과 따로 돈다
+QUARTERLY = WORKFLOW.parent / "quarterly.yml"
+
+
+def quarterly_text():
+    return QUARTERLY.read_text()
+
+
+def test_분기_작업_예약은_일요일이라_평일_아침_실행과_겹치지_않고_수동_실행이_있다():
+    crons = re.findall(r'^\s*- cron: "([^"]+)"', quarterly_text(), re.M)
+    assert len(crons) == 1
+    minute, hour, dom, month, weekdays = crons[0].split()
+    assert (dom, month, weekdays) == ("*", "*", "0")  # 일요일만(UTC). 아침 실행은 월~금
+    (timeout,) = re.findall(r"^\s*timeout-minutes: (\d+)(?:  #.*)?$", quarterly_text(), re.M)
+    start = datetime(2026, 11, 8, int(hour), int(minute), tzinfo=UTC)  # 일요일
+    assert (start + timedelta(minutes=int(timeout))).date() == start.date()  # 한도까지 돌아도 월요일 아침 실행 전에 끝난다
+    assert re.search(r"^  workflow_dispatch:", quarterly_text(), re.M)
+    assert "inputs." not in quarterly_text()  # 수동 실행 입력 없음
+
+
+def test_분기_작업_비밀값은_DB_주소와_SEC_연락처_둘뿐이고_실행_단계_env로만_넘긴다():
+    lines = quarterly_text().splitlines()
+    secret_lines = [i for i, line in enumerate(lines) if "secrets." in line]
+    assert sorted(re.search(r"secrets\.([A-Z_]+)", lines[i]).group(1) for i in secret_lines) == ["SEC_USER_AGENT", "SUPABASE_DB_URL"]
+    (run,) = [i for i, line in enumerate(lines) if "--quarterly" in line]
+    assert all(i > run for i in secret_lines)  # 실행 단계 env: 아래에만. 설치 단계에는 비밀값이 없다
+    assert not [line for line in lines if line.strip().startswith(("run:", "- run:")) and "${{" in line]
+    for banned in ("set -x", "printenv", "continue-on-error", "|| true", "ACTIONS_STEP_DEBUG", "pull_request", "push:", "shell:"):
+        assert banned not in quarterly_text(), banned
+
+
+def test_분기_작업_단계는_설치와_분기_작업_실행_둘뿐이다():
+    assert re.findall(r"^\s*- run: (.*)$", quarterly_text(), re.M) == [
+        "uv sync --locked --no-dev",
+        "uv run --no-sync python -m m30.pipeline --quarterly",
+    ]
+    uses = re.findall(r"uses: (\S+)", quarterly_text())
+    assert [u.split("@")[0] for u in uses] == ["actions/checkout", "astral-sh/setup-uv"]
+    assert all(re.fullmatch(r"[\w.-]+/[\w.-]+@[0-9a-f]{40}", u) for u in uses), uses
+
+
+def test_분기_작업은_아침_실행과_다른_concurrency_그룹에서_main_전용_environment로_돈다():
+    # 같은 그룹이면 2시간짜리 분기 작업 뒤에 아침 실행이 줄을 서거나 대기 중인 실행이 취소된다
+    assert re.search(r"^concurrency:\n  group: quarterly-job(  #.*)?\n  cancel-in-progress: false$", quarterly_text(), re.M)
+    assert "morning-pipeline" not in quarterly_text()
+    for needed in ("permissions:\n  contents: read", "environment: production", "persist-credentials: false"):
+        assert needed in quarterly_text(), needed

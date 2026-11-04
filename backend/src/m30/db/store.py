@@ -12,7 +12,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from m30.adapters.events import EarningsTiming
-from m30.adapters.filings import Filing
+from m30.adapters.filings import AnnualReport, Filing
 from m30.adapters.holdings import Holding, HoldingsReport
 from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.market_news import MarketNewsItem
@@ -233,6 +233,16 @@ class CardStore:
             [list(c) for c in columns],
         ).rowcount
 
+    def set_coverage_sic(self, cik: str, sic: str) -> None:
+        """그 CIK의 티커 전부(GOOGL·GOOG)의 업종 코드(#60 분기 작업). 다른 열은 건드리지 않는다(#58 D7 추가만의 sic 예외)."""
+        self._conn.execute("update public.coverage set sic = %s where cik = %s", (sic, cik))
+
+    def coverage_sics(self) -> dict[str, str]:
+        """티커 → 업종 코드. sic가 있는 행만, 티커 순. 연관 종목 같은 업종(#64)의 입력."""
+        return dict(self._conn.execute(
+            "select ticker, sic from public.coverage where sic is not null order by ticker"
+        ).fetchall())
+
     def upsert_card(self, card: StockCard) -> None:
         """(종목, 거래일) 카드를 통째로 덮어쓴다. 한 문장 upsert라 동시 실행에도 카드는 하나다. card.updated_at은 무시."""
         values = (
@@ -294,6 +304,31 @@ class CardStore:
                 ([r[0] for r in rows], trading_day),
             ).fetchall()
         return frozenset(r[0] for r in found)
+
+    def save_annual_report(self, report: AnnualReport) -> bool:
+        """10-K 한 행(#60). 이미 있는 접수번호는 건드리지 않는다(on conflict do nothing). 이번에 넣었으면 True."""
+        return self._conn.execute(
+            "insert into public.sec_annual_report (accession, cik, accepted_at, body) values (%s, %s, %s, %s)"
+            " on conflict (accession) do nothing",
+            (report.accession, report.cik, report.accepted_at, report.body),
+        ).rowcount == 1
+
+    def latest_annual_reports(self) -> dict[str, str]:
+        """CIK → 저장된 10-K 중 접수 시각이 가장 늦은 것(같으면 접수번호가 큰 것)의 접수번호. 본문은 읽지 않는다.
+        분기 작업의 '이미 받음' 판단, #64·#66의 '다시 만들 회사' 고르기."""
+        return dict(self._conn.execute(
+            "select distinct on (cik) cik, accession from public.sec_annual_report order by cik, accepted_at desc, accession desc"
+        ).fetchall())
+
+    def annual_report(self, accession: str) -> AnnualReport | None:
+        """본문 포함 한 건(accepted_at은 ET). 없으면 None. #64·#66은 회사마다 한 건씩 읽는다(본문을 한꺼번에 들지 않게)."""
+        row = self._conn.execute(
+            "select accession, cik, accepted_at, body from public.sec_annual_report where accession = %s", (accession,)
+        ).fetchone()
+        if row is None:
+            return None
+        accession, cik, accepted_at, body = row
+        return AnnualReport(accession, cik, accepted_at.astimezone(ET), body)
 
     def earnings_filing_times(self, accessions: Iterable[str]) -> dict[str, datetime]:
         """넘긴 접수번호 중 earnings_filing에 있는 것 → 헤더 접수 시각(ET)(#57)."""
