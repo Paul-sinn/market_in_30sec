@@ -1,13 +1,14 @@
 /**
  * 랜딩(#27). 사용자 시안 design-system/user-mockup/landing.dc.html을 토큰으로 옮겼다. DB를 읽지 않는 정적 페이지.
  * 시안 문구는 규칙·사실과 어긋나는 곳만 고쳤다(목록: _workspace/issue-27/01_web-dev_report.md 5절, 04_web-dev_report.md).
+ * 가격 숫자·가격 사실 설명은 뺐다(#62, 스토리 24: 가격 표시 off). 샘플은 피봇 카드 줄.
  */
 import Link from "next/link";
 
 import { Brand } from "@/components/brand";
 import { StockCard } from "@/components/stock-card";
 import type { CardView } from "@/lib/card-view";
-import { APP_NAME, NEW_FILINGS, OPEN_CARDS, PREV_CLOSE, QUIET_DAY } from "@/lib/copy";
+import { APP_NAME, CHECKED_PREFIX, NEW_FILINGS, OPEN_CARDS, QUIET_DAY } from "@/lib/copy";
 
 const WRAP = "mx-auto max-w-7xl px-8";
 const LABEL = "text-label font-semibold tracking-widest uppercase";
@@ -18,46 +19,45 @@ const BUTTON = "inline-flex items-center justify-center text-center font-bold tr
 const CTA = `${BUTTON} min-h-12 px-8 text-sm`;
 const NAV_LINK = "inline-flex min-h-12 items-center text-nav font-semibold tracking-wider uppercase hover:text-hover";
 
-// 샘플 카드: 카드와 같은 컴포넌트·같은 규칙의 문구(card-copy-rules 검사기 통과). 수치는 예시
+// 샘플 카드: 카드와 같은 컴포넌트·같은 규칙의 문구(card-copy-rules 검사기 통과). 가격 표시 off 카드처럼 change 키 없음(#62).
+// 세 번째 줄은 Plus가 보는 연관 소식(#67 전이라 lines에 둔다). 하단은 실제 카드처럼 확인된 줄의 범위(전부 SEC filings)
+const CHECKED = `${CHECKED_PREFIX} 7:30 AM ET · SEC filings`;
 const SAMPLES = [
   {
     ticker: "AAPL",
     name: "Apple",
     header: { text: NEW_FILINGS(3), status: "checked_found" }, // 첫 번째 줄 1등 + 2 more
-    change: { text: "−1.2%", tone: "down", label: PREV_CLOSE }, // 샘플은 날짜 없는 시안 라벨 그대로
     lines: [
-      { text: "Apple named a new CFO +2 more (Company)", status: "checked_found" },
-      { text: "Earnings Thu 10/15 after close (D-2)", status: "checked_found" },
-      { text: "8.0% below 52-week high", status: "checked_found" },
+      { text: "Apple named a new CFO +2 more (SEC filing)", status: "checked_found" },
+      { text: "Earnings Thu 10/15 after close (est.) (D-2)", status: "checked_found" },
+      { text: "Supplier Broadcom reported quarterly results (SEC filing)", status: "checked_found" },
     ],
     leverageTag: null,
-    checked: null,
+    checked: CHECKED,
   },
   {
     ticker: "QQQ",
     name: "Nasdaq-100 ETF",
-    header: { text: QUIET_DAY, status: "checked_none" },
-    change: { text: "+0.8%", tone: "up", label: PREV_CLOSE },
+    header: { text: QUIET_DAY, status: "checked_none" }, // 조용한 날 = 첫 번째 줄 확인함·없음
     lines: [
       { text: "No new SEC filings found", status: "checked_none" }, // ETF 첫 번째 줄(상위 편입 종목 소식)은 #10 미정
-      { text: "Ex-dividend 12/21 · $0.70/share", status: "checked_found" },
-      { text: "Up 5 days in a row", status: "checked_found" },
+      { text: "Not covered yet", status: "unsupported" }, // ETF: 실적 없음, 배당 출처 없음
+      { text: "Not covered yet", status: "unsupported" }, // ETF는 연관 소식 없음
     ],
     leverageTag: null,
-    checked: null,
+    checked: CHECKED,
   },
   {
     ticker: "KO",
     name: "Coca-Cola",
     header: { text: QUIET_DAY, status: "checked_none" },
-    change: { text: "+0.1%", tone: "up", label: PREV_CLOSE },
     lines: [
       { text: "No new SEC filings found", status: "checked_none" },
       { text: "No confirmed events found", status: "checked_none" },
-      { text: "No additional price highlights", status: "checked_none" },
+      { text: "No related filings found", status: "checked_none" },
     ],
     leverageTag: null,
-    checked: null,
+    checked: CHECKED,
   },
 ] satisfies CardView[];
 
@@ -69,9 +69,13 @@ const STATS = [
 ] as const;
 
 const CARD_LINES = [
-  ["01", "What happened", "One fact in 15 words or fewer, ending with its source — the company or an SEC filing."],
-  ["02", "What's next", "The nearest earnings date or dividend. Earnings show a countdown; unconfirmed dates are marked (est.)."],
-  ["03", "Price fact", "The most notable thing in recent closing prices — a streak, or the distance from a 52-week high."],
+  ["01", "What happened", "One fact from the company's SEC filings, in 15 words or fewer."],
+  ["02", "What's next", "The next earnings date, estimated from past filings and marked (est.), with a countdown."],
+  [
+    "03",
+    "Related updates",
+    "Same-day filings from a competitor, customer, supplier or peer. The relationship and the fact — never what it means for your stock.",
+  ],
 ] as const;
 
 const ARENA_DAY = [
@@ -108,7 +112,7 @@ const PLANS = [
     note: "About $0.22 a day · or $9.99 monthly",
     features: [
       "Every stock in coverage, unlimited swaps",
-      "The price-fact line on every card",
+      "Related updates on every card",
       "Today's Arena calls and agent talk",
       "Monthly report by stock vs. S&P 500 (SPY)",
       "Everything in Free",
@@ -159,8 +163,8 @@ export default function Landing() {
                 in 30 seconds.
               </h1>
               <p className="max-w-130 text-lg text-dim">
-                One card per stock each morning: what happened, what&apos;s scheduled, one price fact. Facts from filings
-                and closing prices — no tips, no hype.
+                One card per stock each morning: what happened, what&apos;s scheduled, and what related companies filed.
+                Facts from SEC filings — no tips, no hype.
               </p>
               <div className="flex flex-wrap gap-4 pt-2">
                 <Link href="/cards" className={`${CTA} bg-accent`}>
@@ -216,8 +220,8 @@ export default function Landing() {
               <p className={`${LABEL} text-dim`}>The card</p>
               <h2 className={H2}>Three lines. One fact each.</h2>
               <p className="max-w-120 text-base text-dim">
-                The day&apos;s change sits on top, measured from the previous close. Below it, never more than three lines —
-                and on a quiet day, the card says so instead of filling space.
+                Each card checks the latest SEC filings for one stock. Never more than three lines — and on a quiet day,
+                the card says so instead of filling space.
               </p>
               <ol className="mt-2 flex flex-col border-b border-surface">
                 {CARD_LINES.map(([num, title, body]) => (
@@ -270,7 +274,6 @@ export default function Landing() {
                   <div className="flex items-baseline gap-3">
                     <span className="text-lg font-bold">AAPL</span>
                     <span className="flex-1 text-muted">Apple</span>
-                    <span className="text-lg font-semibold text-down tabular-nums">−1.2%</span>
                   </div>
                   <div className="h-px bg-border" />
                   <p>{SAMPLES[0].lines[0].text}</p>

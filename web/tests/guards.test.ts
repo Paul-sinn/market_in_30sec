@@ -65,8 +65,49 @@ test("키보드 포커스 링: 모든 링크·버튼·펼침(summary, #38)·입�
   expect(files.filter((f) => /\boutline-(none|hidden|0)\b/.test(f.code)).map((f) => f.path)).toEqual([]);
 });
 
-test("랜딩(/)은 DB를 읽지 않는다(정적 페이지, 카드 읽기는 /cards만)", () => {
-  const landing = files.find((f) => f.path === join("app", "page.tsx"));
-  expect(landing).toBeDefined();
-  expect(landing!.code).not.toMatch(/@\/server|connection\(/);
+test("랜딩(/)과 법률 페이지(/terms, /privacy)는 DB를 읽지 않는다(정적 페이지, 카드 읽기는 /cards만, #62)", () => {
+  const legal = join("app", "(legal)");
+  const pages = files.filter((f) => f.path === join("app", "page.tsx") || f.path.startsWith(legal));
+  expect(pages.map((f) => f.path)).toEqual(expect.arrayContaining([join("app", "page.tsx"), join(legal, "terms", "page.tsx"), join(legal, "privacy", "page.tsx")]));
+  for (const f of pages) expect(f.code, f.path).not.toMatch(/@\/server|connection\(/);
+});
+
+test("<html>을 그리는 레이아웃은 app/layout.tsx 하나(모든 페이지가 하단 고지를 받는다, #62)", () => {
+  expect(files.filter((f) => /<html\b/.test(f.code)).map((f) => f.path)).toEqual([join("app", "layout.tsx")]);
+});
+
+// ---- 카드 조회 캐시(#62): 로그인 유저 데이터가 공용 캐시에 섞이지 않게 ----
+
+test('"use cache"는 src/server/card-cache.ts 한 곳, 인자 없는 getDashboardCached()만, 그 파일은 유저·요청 값을 읽지 않는다', () => {
+  expect(files.filter((f) => /["']use cache/.test(f.code)).map((f) => f.path)).toEqual([join("server", "card-cache.ts")]);
+  const cache = files.find((f) => f.path === join("server", "card-cache.ts"))!.code;
+  expect(cache.match(/["']use cache/g)).toHaveLength(1);
+  expect(cache).toMatch(/export async function getDashboardCached\(\)[^{]*\{\s*["']use cache: remote["'];/);
+  expect(cache.match(/\bfunction\b/g)).toHaveLength(1); // 캐시 함수 하나
+  expect(cache).not.toMatch(/next\/headers|cookies\(|headers\(|searchParams|from ["'](\.\/|@\/server\/)(auth|my-stocks|exposure)["']/);
+});
+
+test("/cards 페이지는 getDashboardCached를 부르고 getDashboard를 직접 부르지 않는다", () => {
+  const page = files.find((f) => f.path === join("app", "cards", "page.tsx"))!.code;
+  expect(page).toMatch(/getDashboardCached\(\)/);
+  expect(page).not.toMatch(/\bgetDashboard\(/);
+  // 캐시 래퍼를 부르는 곳은 /cards 페이지뿐
+  expect(files.filter((f) => /getDashboardCached\(\)/.test(f.code) && !f.path.startsWith("server")).map((f) => f.path)).toEqual([join("app", "cards", "page.tsx")]);
+});
+
+test("공유 캐시 헤더(s-maxage, Cache-Control public) 없음: /cards는 로그인 유저마다 다르다", () => {
+  const config = readFileSync(join(SRC, "..", "next.config.ts"), "utf8");
+  const shared = /s-maxage|stale-while-revalidate|\bpublic\s*,\s*max-age|["']public["']/i;
+  expect([...files, { path: "next.config.ts", code: config }].filter((f) => shared.test(f.code)).map((f) => f.path)).toEqual([]);
+});
+
+// ---- 이용약관·개인정보처리방침(#62) ----
+
+test("자리표시(PAUL_TODO) 0건", () => {
+  expect(files.filter((f) => f.code.includes("PAUL_TODO")).map((f) => f.path)).toEqual([]);
+});
+
+test("연락 이메일은 법률 페이지(app/(legal)/) 밖에 쓰지 않는다(사용자 결정 2026-11-04)", () => {
+  const email = /[\w.+-]+@(?!example\.test)[\w-]+\.[\w.]+/; // 테스트 유저 도메인 example.test 제외
+  expect(files.filter((f) => email.test(f.code) && !f.path.startsWith(join("app", "(legal)"))).map((f) => f.path)).toEqual([]);
 });

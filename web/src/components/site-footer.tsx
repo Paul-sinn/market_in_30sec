@@ -2,12 +2,12 @@ import { NOT_INVESTMENT_ADVICE } from "@/lib/copy";
 
 import { Brand } from "./brand";
 
-// 없는 페이지(약관 등)는 시안처럼 랜딩 안 앵커로. "/#…"라 /cards에서 눌러도 랜딩으로 간다
+// 절대 경로만: 어느 경로에서 눌러도 같은 곳. 웹에 없는 기능은 시안처럼 랜딩 안 앵커로. 연락·삭제는 법률 페이지의 절(#62, id 고정)
 const COLUMNS = [
   ["Product", [["The card", "/#card"], ["Morning push", "/#how"], ["Lock screen widget", "/#how"], ["Pricing", "/#pricing"]]],
   ["AI Arena", [["How calls are graded", "/#arena"], ["The agents", "/#arena"], ["Records", "/#arena"]]],
-  ["Support", [["Request a stock", "/#top"], ["Contact", "/#top"], ["Delete my account", "/#top"]]],
-  ["Legal", [["Terms of service", "/#top"], ["Privacy", "/#top"]]],
+  ["Support", [["Request a stock", "/terms#contact"], ["Contact", "/terms#contact"], ["Delete my account", "/privacy#delete"]]],
+  ["Legal", [["Terms of service", "/terms"], ["Privacy", "/privacy"]]],
 ] as const;
 
 export function SiteFooter() {
@@ -35,8 +35,8 @@ export function SiteFooter() {
         </div>
         <div className="flex flex-wrap justify-between gap-4 border-t border-surface pt-6 text-xs">
           <p className="max-w-190">
-            For informational purposes only. {NOT_INVESTMENT_ADVICE}. Arena trades are simulated with virtual money. Prices
-            are daily closes; the S&amp;P 500 and Nasdaq are shown through SPY and QQQ.
+            {/* 가격 문장은 가격 표시가 꺼져 있어 뺐다(#62). 다시 켜면 되살린다 */}
+            For informational purposes only. {NOT_INVESTMENT_ADVICE}. Arena trades are simulated with virtual money.
           </p>
         </div>
       </div>

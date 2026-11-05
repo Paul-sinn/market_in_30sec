@@ -3,12 +3,14 @@
  * Basic 성공 때 1년짜리 쿠키를 심어 기기당 한 번만 로그인한다(사용자 결정 2026-10-28).
  * DASHBOARD_USER·DASHBOARD_PASSWORD 중 하나라도 비면 쿠키가 있어도 전부 거부한다(닫힌 쪽).
  * 통과한 요청만 로그인 세션을 갱신한다(#37). 게이트 판단에는 Supabase가 끼지 않고, 401 경로는 Supabase를 부르지 않는다.
+ * 맨 앞은 카드 조회 요청 제한(#62): 게이트를 지워도(#70) 남는다. 429 경로도 Supabase를 부르지 않는다.
  */
 import { hash, hkdfSync, timingSafeEqual } from "node:crypto";
 import type { NextRequest } from "next/server";
 
 import { APP_NAME, AUTH_REQUIRED } from "@/lib/copy";
 import { refreshSession } from "@/server/auth";
+import { limitCardRead } from "@/server/rate-limit";
 
 // 해시로 길이를 맞춰야 timingSafeEqual을 쓸 수 있고, 길이 차이로 새는 정보도 없앤다
 const same = (a: string, b: string) => timingSafeEqual(hash("sha256", a, "buffer"), hash("sha256", b, "buffer"));
@@ -19,6 +21,9 @@ const COOKIE = "m30_auth";
 const token = (user: string, password: string) => Buffer.from(hkdfSync("sha256", password, user, "m30-dashboard-auth", 32)).toString("base64url");
 
 export async function proxy(request: NextRequest): Promise<Response> {
+  const limited = limitCardRead(request);
+  if (limited) return limited;
+
   const user = process.env.DASHBOARD_USER;
   const password = process.env.DASHBOARD_PASSWORD;
   const [, encoded] = request.headers.get("authorization")?.match(/^Basic (\S+)$/i) ?? [];

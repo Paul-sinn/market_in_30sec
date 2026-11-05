@@ -4,6 +4,7 @@
 - `/cards` 가장 최근 거래일의 카드 전부를 종목순으로 보여주는 비공개 대시보드(#24). 거래일 제목 바로 아래 `Market at a glance` 3줄(가격 표시 off면 2줄, #11·#56, 아래 "시장 한눈에"·"가격 표시 플래그" 절). 위에 Google 로그인·로그아웃 버튼(#37). 로그인하면 위 "My stocks", 아래 "Browse"(#38, 아래 "내 종목" 절)
 - `/auth/sign-in`(POST)·`/auth/callback`(GET)·`/auth/sign-out`(POST) 로그인 라우트(#37, 아래 "로그인" 절)
 - `/my-stocks`(POST) 내 종목 넣기·빼기(#38)
+- `/terms` 이용약관, `/privacy` 개인정보처리방침(#62, 정적 페이지, DB를 읽지 않는다). 본문은 `src/app/(legal)/*/page.tsx`, 같이 쓰는 값(연락처·운영자·수정일)은 `src/app/(legal)/legal.tsx`. 하단 Legal·Support 링크가 가리킨다(`/terms#contact`, `/privacy#delete`, 절 id 고정). 모든 페이지 하단 고지는 루트 레이아웃 하나(`app/layout.tsx`)가 그린다
 
 Next.js App Router + TypeScript + Tailwind. 규칙은 `.claude/skills/web-conventions/SKILL.md`. 디자인 기준은 사용자 시안 `design-system/user-mockup/landing.dc.html`, 그 값을 옮긴 토큰은 `src/app/globals.css` 한 곳(카드 화면 메모: `design-system/market_in_30sec/pages/dashboard.md`). 글꼴 Inter는 `next/font`가 빌드 때 받아 자체 제공한다.
 
@@ -60,6 +61,22 @@ npm run dev                               # http://localhost:3000(랜딩), /card
 - **기기당 한 번 로그인, 1년 기억**: Basic 로그인에 성공하면 `m30_auth` 쿠키(`HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=31536000`)를 심고, 이 쿠키가 있으면 로그인 창 없이 통과한다. 만료는 처음 로그인 뒤 1년 고정이다(쿠키로 들어온 요청은 쿠키를 다시 심지 않는다). 쿠키 값은 `DASHBOARD_PASSWORD`·`DASHBOARD_USER`에서 HKDF-SHA256(HMAC 기반)으로 만든 값이라 아이디·비밀번호가 들어 있지 않고, 따로 둘 비밀값도 없다. 다만 쿠키를 훔치면 비밀번호를 오프라인으로 추측해 볼 수 있으니 `DASHBOARD_PASSWORD`는 긴 무작위 값(20자 이상)으로 둔다.
 - 로그아웃: 버튼은 없다. 모든 기기를 내보내려면 Vercel에서 `DASHBOARD_PASSWORD`를 바꾸고 재배포한다(이전 쿠키가 전부 무효가 된다). 한 기기만 내보내려면 그 브라우저에서 이 사이트 쿠키를 지운다.
 - Basic Auth와 쿠키는 HTTPS 위에서만 안전하다(Vercel 도메인은 HTTPS). 쿠키에 `Secure`가 붙어 있어 HTTP로는 보내지지 않는다.
+
+## 요청 제한·캐시 (#62)
+
+- **요청 제한**: `src/proxy.ts` 맨 앞(배포 보호보다 먼저)의 `limitCardRead`(`src/server/rate-limit.ts`). `/cards`와 `/cards/…`만 IP당 고정 1분 창에 60번, 61번째부터 `429 Too many requests. Try again in a minute.`(`Retry-After`, `Cache-Control: no-store`, Set-Cookie 없음, Supabase 부르지 않음). IP는 `x-real-ip` → `x-forwarded-for` 첫 값 → `unknown`(로컬). IP는 응답·로그에 남기지 않는다. 다른 경로(`/`, `/terms`, `/privacy`, `/auth/*`, `/my-stocks`, `/_next/*`)는 세지 않는다
+  - 인스턴스 메모리라 Vercel 인스턴스마다 따로 센다(실제 한도 = 인스턴스 수 × 60). 남용이 보이면 Vercel 방화벽 요청 제한 규칙을 더한다(코드 변경 없음)
+  - 로컬 확인: `npm run build && npm start` 뒤 `for i in $(seq 61); do curl -s -o /dev/null -w '%{http_code}\n' -u "$DASHBOARD_USER:$DASHBOARD_PASSWORD" http://localhost:3000/cards; done | sort | uniq -c` → `200` 60, `429` 1
+- **캐시**: 공용 카드 읽기 하나만 `getDashboardCached()`(`src/server/card-cache.ts`, `"use cache: remote"` + `cacheLife("minutes")`)로 감싼다. 1분 뒤 다시 읽고 최대 1시간. 발행·재발행·발행 중단(#16)이 약 1분 안에 보인다. 재배포하면 키가 바뀌어 새로 읽는다. Vercel에서 remote 캐시 처리기가 없으면 Next 기본 메모리 캐시로 동작한다
+- **로그인 유저 데이터가 캐시에 섞이지 않게**(`tests/guards.test.ts`): 캐시는 인자 없는 함수 하나이고 쿠키·헤더·유저 모듈을 읽지 않는다. 캐시 값은 노출 판단 전 공용 데이터이고 `exposeCards`·내 종목·플랜은 캐시 밖에서 요청마다. `"use cache`는 그 파일에만 있고, 공유 캐시 헤더(`s-maxage`, `Cache-Control: public`)는 없다. 유저마다 다른 값(알아두기 진도 등)도 캐시 밖에서 계산한다
+
+## 계정 삭제 요청 처리 (#62, 운영 절차)
+
+개인정보처리방침 `/privacy#delete`: 유저가 계정 이메일로 연락 주소에 "Delete my account"를 보내면 30일 안에 지우고 답장한다. 데이터 삭제는 항상 Paul이 직접 한다.
+
+1. 보낸 주소가 Supabase 대시보드 Authentication → Users의 그 유저 이메일과 같은지 확인한다(다르면 지우지 않고 계정 이메일로 다시 보내 달라고 답한다)
+2. 그 유저 → Delete user. 프로필·내 종목·이력·아침 요약은 FK cascade로 같이 지워진다(`supabase/migrations/20261028051643_auth_user_delete_with_my_stocks.sql`, `…_morning_notice.sql`). 대기 등록(#69)도 같은 cascade여야 한다
+3. 지웠다고 답장한다. 서버 기록·백업은 각 제공자 주기대로 사라진다(방침 `keep` 절)
 
 ## 로그인 (#37)
 
@@ -149,7 +166,7 @@ cd web && npm run lint && npm test && npm run build
 - `tests/auth.db.test.ts`: 진짜 세션으로 확인(정상·없음·위조 3종·만료), 프록시 갱신(새 쿠키가 응답과 같은 요청의 페이지 둘 다에), 로그아웃(쿠키 삭제 + Auth에서 폐기), 콜백 실패(code 없음·공급자 오류·가짜 code). `tests/my-stocks.db.test.ts`: 프로필 보장(첫 로그인·재로그인 그대로·이상한 타임존 → NY·빈 타임존 → NY), 내 종목(#38: 3개 → 4번째 거절 → 빼기 → 남은 교체 → 4번째 빼기 거절 → 다시 넣기 무변화, 프로필 타임존의 오늘, Plus, 잠금, 다른 유저 안 보임, 커버 범위 밖 티커는 쓰지 않음)
 - `tests/my-stocks.route.test.ts`(DB 없음): `POST /my-stocks` 세션 없음 → 쓰지 않음, 세션 유저 id로만 쓰기, 거절 이름 → 결과 코드, 교착(40P01) 1회 재시도, 그 밖 오류·이상한 입력 → 실패 코드와 고정 로그, 열린 리디렉션 없음
 - `tests/auth.test.ts`(DB 없음): 로그인 미설정·Google 꺼짐·Auth 응답 없음 → 실패 문구, Google 켜짐 → PKCE authorize + HttpOnly 검증값 쿠키, 콜백 → 프로필 보장 연결, 프로필 실패 → 세션 삭제, 로그인·콜백·로그아웃이 `next`·`redirect` 값을 무시(열린 리디렉션 없음)
-- `tests/proxy.test.ts`는 배포 보호(`/`·`/cards` 둘 다, 인증 없음·틀린 값·형식 깨짐·환경 변수 미설정 → 401, 맞는 값 → 통과 + 쿠키, 맞는 쿠키 → 통과, 틀린 쿠키·비밀번호 바뀐 뒤 옛 쿠키 → 401, 응답·쿠키에 아이디·비밀번호 없음, matcher로 빠지는 경로 없음)와 로그인 세션 갱신의 경계(게이트 거부·세션 없음·`/_next/` 정적 파일이면 Auth 요청 0회)를 DB 없이 본다.
+- `tests/proxy.test.ts`는 카드 조회 요청 제한(#62: 60번 통과 → 429 문구·헤더, 429에 쿠키·IP·비밀값 없음·Supabase 0회, IP별·창별, 세지 않는 경로, 추적 상한)과 배포 보호(`/`·`/cards`·`/terms`·`/privacy`, 인증 없음·틀린 값·형식 깨짐·환경 변수 미설정 → 401, 맞는 값 → 통과 + 쿠키, 맞는 쿠키 → 통과, 틀린 쿠키·비밀번호 바뀐 뒤 옛 쿠키 → 401, 응답·쿠키에 아이디·비밀번호 없음, matcher로 빠지는 경로 없음)와 로그인 세션 갱신의 경계(게이트 거부·세션 없음·`/_next/` 정적 파일이면 Auth 요청 0회)를 DB 없이 본다.
 - DB 없이 도는 테스트만: `npx vitest run --exclude 'tests/*.db.test.ts'`
 - `tests/cards.read.test.ts`는 DB 없이 supabase-js 응답을 흉내 내 읽기 실패·1,000행 가드를 본다.
 - 번들 노출 검사: 가짜 canary 키(`SUPABASE_SERVICE_ROLE_KEY`·`SUPABASE_PUBLISHABLE_KEY`·`DASHBOARD_PASSWORD`)로 빌드하고 `.next/static`에서 canary와 `supabase-js|postgrest|gotrue-js|supabase-ssr`를 찾는다. 둘 다 0건이 아니면 실패(exit 1). 값은 출력하지 않는다.
