@@ -48,6 +48,7 @@
 - 2026-10-27 — 첫 운영 실행이 DB 연결에서 4번 실패했는데 원인을 알 수 없었음(Direct connection URI, 특수문자 비밀번호) → 비밀값을 숨기려고 연결 실패 메시지에서 이유까지 지웠음 → 값 없는 오류도 고정 이유 코드(`reason=…`)는 남긴다(#26, PR #30. 2026-11-03 backend-conventions에 규칙화)
 - 2026-10-27 — #14 live 측정 중 backend-dev가 SEC User-Agent 값(연락 이메일)을 scratchpad 도우미 스크립트에 씀(바로 삭제, 커밋·실행 출력엔 없음) → "명령에만 넣는다"가 그 실행의 프롬프트에만 있었고 규칙 문서에 없었음 → 비밀값·사용자 식별값은 명령 줄 안에서만, 임시 파일 포함 어떤 파일에도 쓰지 않는다(backend-conventions에 규칙화)
 - 2026-10-29 — 로컬 Supabase가 안 뜬 상태에서 `eval "export $(supabase status … | grep DB_URL)"`가 맨 `export`로 실행돼 환경 변수 전체를 도구 출력에 찍음(로컬 세션 토큰 포함, DB·API 키는 없었음) → 빈 값일 때 `export`가 목록 출력이 됨 → `export`는 치환 결과 안에 넣는다(`sed 's/^/export /'`), backend README 수정(2026-11-03 backend-conventions 4장에 규칙화)
+- 2026-11-03 — #60 qa 변이 확인에서 변이 셋이 적용되지 않은 채 통과로 나옴(다시 해서 잡음) → 레포 밖 복사본의 pytest가 레포 `src`를 import함 → 복사본은 `PYTHONPATH`를 복사본 `src`로, 변이 모듈의 `__file__`이 복사본인지 먼저 확인(qa에 규칙화)
 
 ## Agent skills
 

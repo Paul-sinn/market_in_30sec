@@ -46,6 +46,7 @@ model: sonnet
 ## 변이 확인
 - 레포 밖 복사본에서만 한다. `PYTHONDONTWRITEBYTECODE=1`을 켜고 `__pycache__`를 지운 복사본을 쓴다. 이유: 같은 크기로 바꾼 변이가 `.pyc` 캐시 때문에 적용되지 않은 채 통과로 나온다(#5)
 - 복사본에서 `tests/test_copy_rules.py`는 `parents[2]/.claude`를 찾으므로 복사본 옆에 `.claude/skills/card-copy-rules` 폴더를 복사해 둔다(링크 금지). 이유: 실행기가 `Path(__file__).resolve()`로 서버 코드를 찾아, 링크면 복사본이 아니라 레포 코드를 검사한다(#22)
+- 복사본에서 pytest를 돌릴 때 `PYTHONPATH`를 복사본의 `src`로 지정하고, 변이가 실제로 import됐는지(변이 줄이 든 모듈의 `__file__`이 복사본 경로인지) 먼저 확인한다. 이유: #60에서 복사본 pytest가 레포 `src`를 import해 변이 셋이 적용되지 않은 채 통과로 나왔다
 - 끝나면 레포 `git status --short`가 시작 때와 같은지 확인한다
 
 ## 입력·출력 규칙

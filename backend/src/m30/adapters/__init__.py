@@ -11,6 +11,7 @@ class Source(StrEnum):
     HOLDINGS = "holdings"  # ETF 편입 종목 보고(N-PORT). 대상 = 편입을 읽을 ETF 티커
     MARKET_NEWS = "market_news"  # 시장 전체 소식(공식 발표, #11). 대상 없음
     EARNINGS = "earnings"  # EDGAR 과거 실적 공시(8-K Item 2.02, #57). 대상 = 목록은 CIK, 헤더 시각은 접수번호
+    ANNUAL_REPORT = "annual_report"  # EDGAR 10-K(#60 분기 작업). 대상 = CIK(목록·문서 둘 다)
     LLM = "llm"
 
 
@@ -25,6 +26,10 @@ class TransientSourceError(SourceError):
 
 class AccessDeniedError(SourceError):
     """401·403(키 오류, SEC 차단). 재시도하지 않고, 이번 실행에서 그 출처를 더 부르지 않는다. 실행 요약 맨 위."""
+
+
+class TooLargeError(SourceError):
+    """응답이 크기 상한을 넘음(#60 분기 작업의 10-K 전체 제출 파일). 다시 받아도 같은 크기라 재시도하지 않는다."""
 
 
 class RateLimitedError(TransientSourceError):

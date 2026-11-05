@@ -1,0 +1,36 @@
+name: quarterly-job
+
+# 분기 작업(#60): 커버 범위 회사의 새 10-K 원문 + 업종 코드. 아침 실행(morning.yml)과 따로 돈다: DB 잠금·실행 기록·concurrency 그룹이 다르다.
+# 레포가 공개라 이 로그도 공개다. CLI는 결과 코드·건수·CIK만 찍는다. run:은 한 줄, secrets는 env:로만 넘긴다(주입 방지)
+on:
+  schedule:
+    - cron: "0 6 * * 0"  # 일요일 06:00 UTC(01:00 EST / 02:00 EDT). 평일 아침 실행(09:17 UTC 월~금)과 겹치지 않는다
+  workflow_dispatch:  # 수동 실행은 평일 09:00~10:30 UTC를 피한다(겹쳐도 SEC 요청 합은 초당 9회)
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quarterly-job  # 분기 작업끼리만 하나씩. 아침 실행과 같은 그룹이면 아침 실행이 기다리거나 취소된다
+  cancel-in-progress: false
+
+jobs:
+  quarterly:
+    runs-on: ubuntu-24.04
+    environment: production  # secrets는 main 브랜치 실행에만
+    timeout-minutes: 120  # 첫 실행(약 500개 회사) 추정 30~50분. 끊겨도 받은 10-K는 남고 다음 실행이 나머지를 받는다
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@18d369b23da25a81e9458561248e1aafff6a70fa  # v10.3.1
+        with:
+          version: "0.11.2"
+      - run: uv sync --locked --no-dev
+      - run: uv run --no-sync python -m m30.pipeline --quarterly
+        env:
+          SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+          SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}

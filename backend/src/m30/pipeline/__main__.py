@@ -1,5 +1,6 @@
 """python -m m30.pipeline 2026-10-16 --scenario scenarios/first_card.json   로컬 개발: 가짜 출처, 로컬 DB만
 python -m m30.pipeline --production [YYYY-MM-DD]                          운영: 실제·미연결 출처, 원격 DB 허용, 비우면 오늘(ET)
+python -m m30.pipeline --quarterly                                        분기 작업(#60): 새 10-K 원문·업종 코드. 실제 SEC, 원격 DB 허용
 둘 다 --quality: 실제 Haiku로 돌리고 카드 문장·초안·보류함·분류를 찍는다. 로컬 DB만(#14)"""
 
 import argparse
@@ -12,7 +13,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import TextIO
 
-from m30.adapters.edgar import EdgarClient
+from m30.adapters.edgar import ANNUAL_REPORT_FILE_MAX, QUARTERLY_INTERVAL, EdgarAnnualReportSource, EdgarClient, Throttle
 from m30.adapters.gov import GovClient
 from m30.adapters.tiingo import TiingoPriceSource
 from m30.adapters.unavailable import NoPriceSource
@@ -39,6 +40,7 @@ from m30.notify import discord_content, send_discord
 from m30.pipeline.collect import FailureReason, error_name, filing_window
 from m30.pipeline.morning import MorningPipeline, RunSummary
 from m30.pipeline.production import CoverageRefresh, run_failed, run_production
+from m30.pipeline.quarterly import QuarterlySummary, quarterly_failed, run_quarterly
 from m30.trading_day import CalendarError, is_trading_day
 
 
@@ -47,10 +49,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("trading_day", nargs="?", type=date.fromisoformat, help="거래일 YYYY-MM-DD (동부 기준)")
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument("--scenario", type=Path, help="가짜 시나리오 JSON 경로 (로컬 DB만)")
-    mode.add_argument("--production", action="store_true", help="실제 출처로 실행. 원격 DB를 쓸 수 있는 유일한 모드")
+    mode.add_argument("--production", action="store_true", help="실제 출처로 실행. 원격 DB를 쓸 수 있는 모드(분기 작업과 함께)")
+    mode.add_argument("--quarterly", action="store_true",
+                      help="분기 작업: 커버 범위 회사의 새 10-K 원문·업종 코드. 실제 SEC, 원격 DB 허용")
     parser.add_argument("--quality", action="store_true",
                         help="실제 Haiku로 돌리고 카드 문장·초안·보류함·분류를 찍는다. 로컬 DB만")
     args = parser.parse_args(argv)
+    if args.quarterly:
+        if args.trading_day is not None or args.quality:
+            parser.error("--quarterly takes no trading_day or --quality")
+        return _quarterly()
     if args.production:
         return _production(args.trading_day, args.quality)
     if args.trading_day is None:
@@ -357,6 +365,45 @@ def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> in
     for line in lines:
         print(line)
     return 1 if run_failed(summary) else 0
+
+
+def _quarterly() -> int:
+    """분기 작업(#60): 설정 → DB 연결 → run_quarterly(실제 SEC, 초당 1회) → 요약 → exit 코드. 아침 실행 잠금·실행 기록·Discord 없음.
+    운영 가드는 _run_production과 같다: 설정 누락 2, 6543 2, 연결 실패 1(이유 코드), 그 밖 예외 RUN FAILED 1."""
+    try:  # DB·SEC에 닿기 전에. 메시지에는 변수 이름만 있다
+        settings, edgar_settings = load_settings(), load_edgar_settings()
+    except ConfigError as e:
+        print(e, file=sys.stderr)
+        return 2
+    error = None
+    try:
+        with connect(settings) as conn:
+            get = EdgarClient(edgar_settings, throttle=Throttle(QUARTERLY_INTERVAL), max_bytes=ANNUAL_REPORT_FILE_MAX).get
+            summary = run_quarterly(CardStore(conn), reports=EdgarAnnualReportSource(get))
+    except (ConfigError, DBConnectError) as e:  # 우리가 쓴 문구(변수 이름·포트만): 6543 거부, 연결 실패
+        print(e, file=sys.stderr)
+        return 2 if isinstance(e, ConfigError) else 1
+    except Exception as e:
+        error = error_name(e)  # 공개 로그: str(e)·traceback에는 행 내용·라이브러리가 넣은 값이 섞일 수 있다
+    if error is not None:
+        print(f"RUN FAILED: {error}", file=sys.stderr)
+        return 1
+    _print_quarterly(summary)
+    return 1 if quarterly_failed(summary) else 0
+
+
+def _print_quarterly(summary: QuarterlySummary) -> None:
+    """결과 코드·건수·CIK만(공개 로그): 10-K 글자·회사 이름·URL·연락처·예외 메시지를 찍지 않는다. 형식은 _print_summary와 같다."""
+    if quarterly_failed(summary):
+        print(f"!!! FAILED: failures={len(summary.failures)} companies={summary.companies} !!!")
+        if summary.failures:
+            print("failed: " + ", ".join(_failure(f.source, f.subject, f.reason, f.error) for f in summary.failures))
+    if summary.access_denied:
+        print(f"ACCESS DENIED (not retried): {', '.join(summary.access_denied)}")
+    if summary.rate_limited:
+        print(f"RATE LIMITED (429, retried): {', '.join(summary.rate_limited)}")
+    print(f"quarterly companies={summary.companies} new={summary.new} unchanged={summary.unchanged}"
+          f" no_annual_report={summary.no_annual_report} sic={summary.sic} sic_missing={summary.sic_missing}")
 
 
 if __name__ == "__main__":

@@ -115,7 +115,8 @@ def test_RLS가_꺼진_테이블이_없다(admin):
         " where n.nspname = 'public' and c.relkind in ('r', 'p') and not c.relrowsecurity")]
     tables = {"coverage", "stock_card", "sec_filing", "indicator_release", "filing_classification", "hold_queue",
               "stock_card_revision", "user_profile", "my_stock", "my_stock_history", "default_ticker", "pipeline_run",
-              "fund_holdings", "morning_notice", "market_glance", "market_news_item", "earnings_filing", "earnings_estimate"}
+              "fund_holdings", "morning_notice", "market_glance", "market_news_item", "earnings_filing", "earnings_estimate",
+              "sec_annual_report"}
     assert tables <= set(public_tables(admin))  # 검사 대상이 비어서 통과하는 것을 막는다
     assert rls_off == []
 
@@ -679,3 +680,54 @@ def test_실적_추정_시점은_before_open·after_close·unknown만_받는다(
 def test_실적_추정의_근거_접수번호는_저장된_실적_공시여야_하고_접수번호·CIK_형식이_아니면_거부한다(aapl_basis, sql, params, error):
     with pytest.raises(error):
         aapl_basis.execute(sql, params)
+
+
+# 분기 작업(#60): 10-K 원문 표와 업종 코드. 추가만
+ANNUAL_SQL = "insert into public.sec_annual_report (accession, cik, accepted_at, body) values (%s, %s, %s, %s)"
+ANNUAL_ROW = ("0000320193-25-000079", "0000320193", "2025-10-31 18:05:02-04", "Item 1. Business")
+
+
+def test_10_K_원문은_서버가_추가만_하고_고치거나_지울_수_없다(admin):
+    as_service_role(admin, ANNUAL_SQL, ANNUAL_ROW)
+
+    assert service_role_privileges(admin, "sec_annual_report") == ["SELECT", "INSERT"]  # 처음 받은 원문을 그대로 둔다
+    with pytest.raises(errors.UniqueViolation):
+        admin.execute(ANNUAL_SQL, ANNUAL_ROW)
+    for sql in ("update public.sec_annual_report set body = 'x'", "delete from public.sec_annual_report"):
+        with pytest.raises(errors.InsufficientPrivilege):
+            as_service_role(admin, sql)
+
+
+@pytest.mark.parametrize(
+    "row, error",
+    [
+        (("0000320193-25-79", *ANNUAL_ROW[1:]), errors.CheckViolation),
+        ((ANNUAL_ROW[0], "320193", *ANNUAL_ROW[2:]), errors.CheckViolation),
+        ((*ANNUAL_ROW[:3], ""), errors.CheckViolation),
+        ((*ANNUAL_ROW[:2], None, ANNUAL_ROW[3]), errors.NotNullViolation),
+    ],
+    ids=["접수번호_형식_밖", "CIK_6자리", "빈_본문", "접수_시각_없음"],
+)
+def test_10_K_원문_형식이_틀리면_DB가_거부한다(admin, row, error):
+    with pytest.raises(error):
+        admin.execute(ANNUAL_SQL, row)
+
+
+def test_8_K_공시_표는_그대로다(admin):
+    columns = [r[0] for r in admin.execute(
+        "select column_name from information_schema.columns"
+        " where table_schema = 'public' and table_name = 'sec_filing' order by ordinal_position")]
+
+    assert columns == ["accession", "cik", "form", "accepted_at", "items", "trading_day", "received_at", "payload", "report_date"]
+    with pytest.raises(errors.CheckViolation):  # 10-K는 첫 번째 줄 분류 대상이 아니다
+        admin.execute(FILING_SQL.replace("'8-K'", "'10-K'"), (ACCESSION, "0000320193"))
+
+
+@pytest.mark.parametrize("sic, ok", [("3571", True), (None, True), ("357", False), ("35711", False), ("35A1", False), ("", False)])
+def test_업종_코드는_네_자리_숫자만_받는다(admin, sic, ok):
+    sql = "insert into public.coverage (ticker, name, cik, sic) values ('AAPL', 'Apple', '0000320193', %s)"
+    if ok:
+        admin.execute(sql, (sic,))
+    else:
+        with pytest.raises(errors.CheckViolation):
+            admin.execute(sql, (sic,))

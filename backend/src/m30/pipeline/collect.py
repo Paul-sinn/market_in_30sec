@@ -8,9 +8,17 @@ from decimal import Decimal
 from enum import StrEnum
 from itertools import pairwise
 
-from m30.adapters import AccessDeniedError, RateLimitedError, Source, SourceError, TransientSourceError
+from m30.adapters import AccessDeniedError, RateLimitedError, Source, SourceError, TooLargeError, TransientSourceError
 from m30.adapters.events import Earnings, EarningsTiming, ExDividend
-from m30.adapters.filings import ACCESSION, Filing, FilingForm
+from m30.adapters.filings import (
+    ACCESSION,
+    ANNUAL_REPORT_BODY_MAX,
+    SIC,
+    AnnualReport,
+    AnnualReportListing,
+    Filing,
+    FilingForm,
+)
 from m30.adapters.holdings import Holding, HoldingsReport
 from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.market_news import MarketNewsItem
@@ -45,6 +53,7 @@ class FailureReason(StrEnum):
     RETRIES_EXHAUSTED = "retries_exhausted"  # 일시 실패 4번
     ERROR = "error"  # 재시도하지 않는 SourceError
     INVALID_DATA = "invalid_data"  # 받은 값이 계약에 안 맞음(타입·형식)
+    TOO_LARGE = "too_large"  # 응답이 크기 상한을 넘음(#60 10-K 전체 제출 파일)
     UNEXPECTED = "unexpected"  # SourceError가 아닌 예외(어댑터·검증 버그). error에 error_name(#17)
 
 
@@ -134,6 +143,8 @@ def _reason(error: SourceError) -> FailureReason:
         return FailureReason.ACCESS_DENIED
     if isinstance(error, TransientSourceError):
         return FailureReason.RETRIES_EXHAUSTED
+    if isinstance(error, TooLargeError):
+        return FailureReason.TOO_LARGE
     return FailureReason.ERROR
 
 
@@ -206,6 +217,28 @@ def valid_earnings_accessions(value: object) -> bool:
 def valid_accepted_at(value: object) -> bool:
     """실적 공시 헤더 접수 시각(#57): tz-aware datetime."""
     return _is_aware(value)
+
+
+def valid_annual_report_listing(value: object) -> bool:
+    """10-K 목록(#60): 접수번호는 None 또는 형식 문자열(EDGAR 주소·DB 키에 들어간다), sic는 None 또는 4자리 숫자(DB check)."""
+    return (
+        isinstance(value, AnnualReportListing)
+        and (value.accession is None or (isinstance(value.accession, str) and ACCESSION.fullmatch(value.accession) is not None))
+        and (value.sic is None or (isinstance(value.sic, str) and SIC.fullmatch(value.sic) is not None))
+    )
+
+
+def valid_annual_report(value: object, cik: str, accession: str) -> bool:
+    """10-K 원문(#60): 요청한 접수번호·CIK, tz-aware 접수 시각, DB에 넣을 수 있고 비지 않은 상한 이하 본문."""
+    return (
+        isinstance(value, AnnualReport)
+        and value.accession == accession
+        and value.cik == cik
+        and _is_aware(value.accepted_at)
+        and _is_text(value.body)
+        and value.body.strip() != ""
+        and len(value.body) <= ANNUAL_REPORT_BODY_MAX
+    )
 
 
 def valid_holdings(report: object, fund: str) -> bool:
