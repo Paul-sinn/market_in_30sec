@@ -20,10 +20,12 @@ NPORT_FORM = "NPORT-P"  # 정확히 이것만. NPORT-P/A(정정)는 보지 않�
 SERIES_SCAN_MAX = 60
 XML = re.compile(r"<XML>\s*(.*?)\s*</XML>", re.DOTALL)
 DOCTYPE = re.compile(r"<!DOCTYPE", re.IGNORECASE)  # 엔티티 확장(billion laughs)을 막으려고 DTD가 있는 문서는 읽지 않는다
-LEGAL_TAIL = frozenset({"the", "inc", "incorporated", "corp", "corporation", "co", "company", "ltd", "limited", "plc", "new", "de"})
-_THE = re.compile(r"/the\b")
+LEGAL_TAIL = frozenset({"the", "inc", "incorporated", "corp", "corporation", "co", "cos", "company", "companies", "ltd", "limited",
+                        "public", "plc", "nv", "new", "de"})
+_POSSESSIVE = re.compile(r"['’]s\b")
 _CLASS = re.compile(r"\bclass [a-z]\b")
 _TOKEN = re.compile(r"[a-z0-9]+")
+_INITIALS = re.compile(r"\b([a-z0-9]) (?=[a-z0-9]\b)")  # 이어진 한 글자 토큰 사이 공백
 
 
 def fund_series(get: Get) -> dict[str, tuple[str, str]]:
@@ -47,12 +49,17 @@ def fund_series(get: Get) -> dict[str, tuple[str, str]]:
 
 
 def issuer_key(name: str) -> str:
-    """발행 회사 이름 → 비교 키. casefold → '/the'·'class x' 제거 → 영숫자 토큰 → 끝의 법인 꼬리 토큰 제거.
-    'Coca-Cola Co/The' = 'COCA COLA CO' = 'coca cola', 'Alphabet Inc Class C' = 'Alphabet Inc.' = 'alphabet'."""
-    tokens = _TOKEN.findall(_CLASS.sub(" ", _THE.sub(" ", name.casefold())))
-    while tokens and tokens[-1] in LEGAL_TAIL:
+    """발행 회사 이름 → 비교 키(#58). casefold → 첫 '/' 앞만 → 소유격 "'s"는 's'로 붙임 → 'class x' 제거 → 영숫자 토큰
+    (다른 아포스트로피·구두점·&는 버려짐) → 'and' 토큰 제거 → 이어진 한 글자 토큰은 붙임 → 끝의 법인 꼬리 토큰 제거 → 토큰 정렬.
+    'Coca-Cola Co/The' = 'COCA COLA CO' = 'coca cola', 'Alphabet Inc Class C' = 'Alphabet Inc.' = 'alphabet',
+    'Charles Schwab Corp/The' = 'SCHWAB CHARLES CORP' = 'charles schwab'(SEC 정형명은 성·이름 순서가 뒤집힌 회사가 있다),
+    'DR Horton Inc' = 'HORTON D R INC /DE/' = 'dr horton', "McDonald's Corp" = 'MCDONALDS CORP', "O'Reilly" = 'O REILLY',
+    'Air Products and Chemicals Inc' = 'Air Products & Chemicals, Inc.'. 혼자인 한 글자는 그대로('T Rowe Price' = 'PRICE T ROWE')."""
+    text = _CLASS.sub(" ", _POSSESSIVE.sub("s", name.casefold().split("/", 1)[0]))
+    tokens = _INITIALS.sub(r"\1", " ".join(t for t in _TOKEN.findall(text) if t != "and")).split()
+    while tokens and tokens[-1] in LEGAL_TAIL:  # 꼬리는 끝 토큰으로 판단하므로 정렬보다 먼저
         tokens.pop()
-    return " ".join(tokens)
+    return " ".join(sorted(tokens))
 
 
 def issuer_ciks(get: Get) -> dict[str, str]:

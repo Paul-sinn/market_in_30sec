@@ -85,7 +85,8 @@ export async function getDashboard(): Promise<{ tradingDay: string | null; glanc
   };
 }
 
-/** 커버 범위 전부, 종목순(내 종목 고르기 목록, #38) */
+/** 커버 범위 전부, 종목순(내 종목 고르기 검색의 후보, #38·#58). 검색어는 이 조회에 넣지 않는다(메모리에서 searchStocks) */
+// shortcut: PostgREST 기본 최대 1000행, 커버 범위가 1000을 넘으면 range로 나눠 읽는다
 export async function getCoverage(): Promise<Stock[]> {
   const { data, error } = await db().from("coverage").select("ticker, name").order("ticker");
   if (error) throw new Error(`coverage read failed: ${error.message}`);

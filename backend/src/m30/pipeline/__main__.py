@@ -38,7 +38,7 @@ from m30.models import LineStatus, NewsKind
 from m30.notify import discord_content, send_discord
 from m30.pipeline.collect import FailureReason, error_name, filing_window
 from m30.pipeline.morning import MorningPipeline, RunSummary
-from m30.pipeline.production import run_failed, run_production
+from m30.pipeline.production import CoverageRefresh, run_failed, run_production
 from m30.trading_day import CalendarError, is_trading_day
 
 
@@ -180,6 +180,14 @@ def _print_summary(summary: RunSummary, say: Callable[[str], None] = print) -> N
             f" market_news={g.market_news_line.status} review={summary.glance_review}")
 
 
+def _coverage_line(refresh: CoverageRefresh) -> str:
+    """커버 범위 갱신(#58 D8). 이유 코드·건수·기준일만(공개 로그: 회사 이름·문장 없음)."""
+    if refresh.reason is not None:
+        return f"coverage: NOT REFRESHED reason={refresh.reason}, stored rows used"
+    return (f"coverage: refreshed etfs={refresh.etfs} stocks={refresh.stocks} added={refresh.added} unmatched={refresh.unmatched}"
+            f" sp500={refresh.sp500_period_end or 'none'}")
+
+
 def _failure(stage: str, subject: str | None, reason: str, error: str | None) -> str:
     """{stage}/{subject}={reason}, 예상 못 한 예외는 =unexpected:{예외 이름}. 대상이 없으면(지표) {stage}={reason}."""
     code = f"{reason}:{error}" if error else reason
@@ -288,7 +296,7 @@ def _notify(day: date, code: int, lines: Sequence[str]) -> None:
 
 
 def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> int:
-    """거래일·날짜 확인 → 설정 → DB 연결 → CIK 갱신·파이프라인(SEC·정부 기관·Anthropic·Tiingo) → 요약 → exit 코드. 외부 출처는 DB 연결 뒤에만 부른다.
+    """거래일·날짜 확인 → 설정 → DB 연결 → 커버 범위 갱신·파이프라인(SEC·정부 기관·Anthropic·Tiingo) → 요약 → exit 코드. 외부 출처는 DB 연결 뒤에만 부른다.
     시세: 가격 표시 플래그(PRICE_DISPLAY, #56)가 꺼져 있으면 시세 어댑터를 만들지 않고 TIINGO_API_KEY도 읽지 않는다(등락률·어제 마감 미지원).
     켜져 있으면 TIINGO_API_KEY가 있으면 Tiingo, 없으면(유료 구독 전) 시세 없이(등락률·세 번째 줄 지연).
     quality(#14): 로컬 DB만, 시세는 항상 없이(무료 키 시간당 50회 보호. 품질 확인 대상은 첫 번째 줄), 끝에 품질 블록(say가 아니라 print:
@@ -322,7 +330,7 @@ def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> in
                     say.notify = False
                     return 0
                 say(BACKUP_RUN)  # 정시 dispatch가 오지 않았다는 신호(#17 D7). Discord에도 들어간다
-            summary, refreshed = run_production(
+            summary, refresh = run_production(
                 store,
                 day,
                 get=EdgarClient(edgar_settings).get,
@@ -344,7 +352,7 @@ def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> in
         say(f"RUN FAILED: {error}", file=sys.stderr)
         return 1
     _print_summary(summary, say)
-    say("coverage: refreshed" if refreshed else "coverage: NOT REFRESHED (sec ticker list failed), stored rows used")
+    say(_coverage_line(refresh))
     say(f"prices={price_code}")  # off = 가격 표시 꺼짐(#56), none = TIINGO_API_KEY 없음(구독 전) 또는 --quality
     for line in lines:
         print(line)

@@ -46,3 +46,9 @@ export const MY_STOCK_NOTICE = {
   free_my_stock_limit: "Free plan can pick 3 stocks. Remove one to add another.",
   failed: "My stocks could not be updated", // 그 밖의 실패(LOAD_FAILED·SIGN_IN_FAILED와 같은 형식)
 } as const;
+
+// 고르기 검색(#58, copy-reviewer 검수 대상)
+export const SEARCH_STOCKS = "Search by ticker or company"; // 검색칸 라벨(보이는 라벨)
+export const SEARCH = "Search"; // 검색 버튼
+export const NO_MATCHES = "No matching stocks"; // 검색어가 있는데 결과 0개(이미 내 종목인 것만 맞을 때도)
+export const MORE_MATCHES = "Type more to narrow the list"; // 결과가 SEARCH_MAX(20)에서 잘림

@@ -50,10 +50,13 @@ REPLACEMENT_OTHER = "filed a company update"  # U2: 옛 "filed an 8-K report"는
 REPLACEMENT_AMENDED = "updated an earlier report"  # U2: 8-K/A는 항목과 관계없이(없던 인사 변화를 새로 알리지 않게)
 
 _THE = re.compile(r"^The\s+", re.I)
-_LEGAL_TAIL = re.compile(
-    r"(?:\s*,\s*|\s+)(?:(?:&|and)\s+)?(?:Inc\.?|Incorporated|Corp\.?|Corporation|Co\.?|Company|Ltd\.?|Limited|plc|N\.V\.|S\.A\.|L\.P\.)$",
+_LEGAL_TAIL = re.compile(  # 'of' 뒤는 이름의 일부('Interpublic Group of Cos')
+    r"(?<!\sof)(?:\s*,\s*|\s+)(?:(?:&|and)\s+)?"
+    r"(?:Inc\.?|Incorporated|Corp\.?|Corporation|Co\.?|Cos|Company|Companies|Ltd\.?|Limited|plc|N\.V\.|S\.A\.|L\.P\.)$",
     re.I,
 )
+# 꼬리를 떼면 일반 명사만 남아 오해를 부르는 이름: 꼬리를 남긴다('News Corp' → 'News'면 기사 소식으로 읽힌다, #58)
+_KEEP_TAIL = frozenset({"news"})
 
 WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")  # 고정 튜플: 서버 로캘이 바뀌어도 요일 표기가 같다
 TIMING_TEXT = {EarningsTiming.BEFORE_OPEN: "before open", EarningsTiming.AFTER_CLOSE: "after close"}
@@ -78,10 +81,11 @@ def news_template_line(news: TickerNews, checked_at: datetime, scope: str = NEWS
 
 
 def company_short_name(name: str) -> str:
-    """앞 'The '와 끝 법인 꼬리(Inc.·Corp.·Co.·Company·Ltd.·plc 등, 앞 쉼표·&·and 포함)를 반복해서 뗀다. 남는 게 없으면 원래 이름.
-    'Best Buy Co., Inc.' → 'Best Buy'. 대체 줄과 종목명 가리기가 같이 쓴다(첫 번째 줄 지시문도 꼬리를 떼고 쓰게 한다)."""
+    """앞 'The '와 끝 법인 꼬리(Inc.·Corp.·Co.·Cos·Company·Companies·Ltd.·plc 등, 앞 쉼표·&·and 포함, 'of' 뒤 제외)를 반복해서 뗀다.
+    남는 게 없거나 _KEEP_TAIL이면 그 앞 단계. 'Best Buy Co., Inc.' → 'Best Buy', 'News Corp' → 'News Corp'.
+    대체 줄과 종목명 가리기가 같이 쓴다(첫 번째 줄 지시문도 꼬리를 떼고 쓰게 한다)."""
     short = name
-    while (cut := _LEGAL_TAIL.sub("", _THE.sub("", short, count=1), count=1)) != short:
+    while (cut := _LEGAL_TAIL.sub("", _THE.sub("", short, count=1), count=1)) != short and cut.strip().lower() not in _KEEP_TAIL:
         short = cut
     return short.strip() or name
 

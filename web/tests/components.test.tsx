@@ -386,36 +386,96 @@ describe("내 종목·둘러보기(#38)", () => {
     glance: null,
     cards: [card(), card({ ticker: "MSFT", name: "Microsoft" }), card({ ticker: "NVDA", name: "NVIDIA" })],
   };
-  const view = (stocks: string[], swapsLeft: number | null, result?: string): MyDashboardView =>
+  const view = (stocks: string[], swapsLeft: number | null, result?: string, q?: string, cover = coverage): MyDashboardView =>
     myDashboardView(
       data.cards,
-      coverage,
-      { stocks: stocks.map((t) => ({ ...coverage.find((c) => c.ticker === t)!, locked: false })), swapsLeft },
+      cover,
+      { stocks: stocks.map((t) => ({ ...cover.find((c) => c.ticker === t)!, locked: false })), swapsLeft },
       result,
+      q,
     );
+  const SEARCH_FORM = { method: "get", action: "/cards#pick", fields: {}, button: "Search" };
+  const pick = (html: string) => html.match(/<details\b.*?<\/details>/)?.[0] ?? "";
   const render = (mine?: MyDashboardView) => renderToStaticMarkup(<Dashboard data={data} mine={mine} />);
   const headings = (html: string) => [...html.matchAll(/<h([12])\b[^>]*>(.*?)<\/h\1>/g)].map((m) => `h${m[1]} ${text(m[2])}`);
 
   test("로그인 전: 지금 대시보드 그대로(내 종목·둘러보기·고르기 없음)", () => {
     const html = render();
-    expect(text(html)).not.toMatch(/My stocks|Browse|Pick your stocks|Swaps left/);
+    expect(text(html)).not.toMatch(/My stocks|Browse|Pick your stocks|Swaps left|Search/);
     expect(forms(html)).toEqual([]);
+    expect(html).not.toMatch(/role="search"|<input/);
     expect(lines(html)).toHaveLength(9);
   });
 
-  test("내 종목 0개: 고르기(커버 범위 전부)가 열린 채 먼저, 그 아래 둘러보기(카드 전부)", () => {
+  test("내 종목 0개: 고르기(검색창만, #58)가 열린 채 먼저, 그 아래 둘러보기(카드 전부)", () => {
     const html = render(view([], 3));
     expect(html).toMatch(/<details[^>]*\bopen=""/);
     expect(text(html).indexOf("Pick your stocks")).toBeLessThan(text(html).indexOf("Browse"));
-    expect(forms(html)).toEqual(
-      coverage.map((c) => ({
+    expect(forms(html)).toEqual([SEARCH_FORM]); // 검색어가 없으면 목록 없음(커버 범위 약 550개를 다 그리지 않는다)
+    expect(text(pick(html))).not.toMatch(/No matching stocks|Type more/);
+    expect(headings(html)).toEqual(["h1 Fri, Oct 16, 2026", "h2 My stocks", "h2 Browse", "h2 AAPL", "h2 MSFT", "h2 NVDA"]);
+  });
+
+  test("고르기: 검색 폼은 GET /cards#pick, 라벨 있는 검색칸, 결과마다 넣기 버튼(#58)", () => {
+    const html = render(view([], 3, undefined, "a"));
+    expect(pick(html)).toMatch(/^<details id="pick"/); // 검색 뒤 새 페이지가 이 칸으로 간다
+    const form = pick(html).match(/<form\b[^>]*>/)![0];
+    expect(form).toMatch(/\brole="search"/);
+    expect(form).toMatch(/\bmethod="get"/);
+    expect(form).toMatch(/\baction="\/cards#pick"/);
+    const input = pick(html).match(/<input\b[^>]*>/)![0];
+    const id = input.match(/\bid="([^"]+)"/)![1];
+    expect(pick(html)).toMatch(new RegExp(`<label[^>]*for="${id}"[^>]*>Search by ticker or company</label>`));
+    for (const attr of ['type="search"', 'name="q"', 'value="a"', 'maxLength="40"', 'autoComplete="off"', 'autoCorrect="off"', 'spellCheck="false"', 'enterKeyHint="search"'])
+      expect(input, attr).toContain(attr);
+    expect(input.match(/class="([^"]*)"/)![1].split(" ")).toEqual(expect.arrayContaining(["min-h-11", "min-w-0", "grow", "text-base"])); // 높이 44px, 좁은 폭에서 줄어듦, 16px(iOS 확대 방지)
+    expect(forms(html)).toEqual([
+      SEARCH_FORM,
+      // a: 티커로 시작(AAPL) → 이름에 포함(NVIDIA, ProShares …). MSFT(Microsoft)는 a가 없다
+      ...["AAPL", "NVDA", "TQQQ"].map((t) => ({
         method: "post",
         action: "/my-stocks",
-        fields: { change: "add", ticker: c.ticker },
-        button: `Add ${c.ticker}`, // 보이는 글자는 Add, 화면 읽기 프로그램에는 티커까지
+        fields: { change: "add", ticker: t },
+        button: `Add ${t}`, // 보이는 글자는 Add, 화면 읽기 프로그램에는 티커까지
       })),
-    );
-    expect(headings(html)).toEqual(["h1 Fri, Oct 16, 2026", "h2 My stocks", "h2 Browse", "h2 AAPL", "h2 MSFT", "h2 NVDA"]);
+    ]);
+  });
+
+  test("고르기: 검색어가 있으면 열리고(내 종목이 있어도), 0개면 No matching stocks, 20개에서 잘리면 Type more to narrow the list", () => {
+    const none = render(view(["MSFT"], 2, undefined, "zzz"));
+    expect(pick(none)).toMatch(/^<details[^>]*\bopen=""/);
+    expect(pick(none)).toMatch(/<p id="pick-note"[^>]*>No matching stocks<\/p>/);
+    expect(pick(none)).toMatch(/<input\b[^>]*aria-describedby="pick-note"/); // 입력칸에 머무는 화면 읽기 프로그램도 듣는다
+    expect(forms(pick(none))).toEqual([SEARCH_FORM]);
+    expect(render(view(["MSFT"], 2, undefined, "msft"))).toContain("No matching stocks"); // 이미 내 종목인 것만 맞음
+
+    const many = Array.from({ length: 25 }, (_, i) => ({ ticker: `ZZ${String.fromCharCode(65 + i)}`, name: `Test Fund ${i}` }));
+    const cut = render(view([], 3, undefined, "zz", many));
+    expect(pick(cut)).toMatch(/<p id="pick-note"[^>]*>Type more to narrow the list<\/p>/);
+    expect(forms(cut).filter((f) => f.fields.change === "add")).toHaveLength(20);
+
+    const fits = render(view([], 3, undefined, "a"));
+    expect(text(pick(fits))).not.toMatch(/No matching stocks|Type more/);
+    expect(fits).not.toContain("aria-describedby");
+  });
+
+  test("고르기: 검색어는 입력칸 값으로만 돌아오고(이스케이프) 문구 영역에는 그리지 않는다", () => {
+    const html = render(view([], 3, undefined, '"><b>q-canary</b>'));
+    expect(html).not.toContain("<b>");
+    expect(pick(html)).toContain('value="&quot;&gt;&lt;b&gt;q-canary&lt;/b&gt;"');
+    expect(html.replace(/<input\b[^>]*>/, "")).not.toContain("q-canary");
+  });
+
+  test("고르기: 휴대폰 폭(320px)에서 가로 스크롤이 생기지 않는 구조(고정 폭 없음, 입력칸은 줄고 버튼은 안 준다)", () => {
+    // 브라우저 자동화가 없어 구조로 고정: 폼 줄은 flex, 입력칸 min-w-0 grow, 버튼 shrink-0, 결과 이름 min-w-0 wrap-break-word
+    const html = pick(render(view([], 3, undefined, "a")));
+    expect(html).not.toMatch(/class="[^"]*\b(min-|max-)?w-(\[|[1-9])/);
+    expect(html).not.toMatch(/\b(whitespace-nowrap|text-nowrap|truncate|overflow-x-)/);
+    const row = html.match(/<div class="([^"]*)"><input\b[^>]*>(<button\b[^>]*>)/)!;
+    expect(row[1].split(" ")).toContain("flex");
+    expect(row[2].match(/class="([^"]*)"/)![1].split(" ")).toContain("shrink-0");
+    const name = html.match(/<span class="([^"]*)">NVIDIA<\/span>/)![1].split(" ");
+    expect(name).toEqual(expect.arrayContaining(["min-w-0", "wrap-break-word"]));
   });
 
   test("내 종목 있음: 위 My stocks(카드 또는 Summary arrives tomorrow morning + 빼기), 아래 Browse(나머지 카드), 고르기는 접힘", () => {
@@ -431,7 +491,10 @@ describe("내 종목·둘러보기(#38)", () => {
     expect(all.filter((f) => f.fields.change === "remove")).toEqual(
       ["TQQQ", "MSFT"].map((t) => ({ method: "post", action: "/my-stocks", fields: { change: "remove", ticker: t }, button: `Remove ${t}` })),
     );
-    expect(all.filter((f) => f.fields.change === "add").map((f) => f.fields.ticker)).toEqual(["AAPL", "NVDA"]);
+    expect(all.filter((f) => f.method === "get")).toEqual([SEARCH_FORM]); // 검색어가 없으면 검색창만
+    expect(all.filter((f) => f.fields.change === "add")).toEqual([]);
+    const found = forms(render(view(["TQQQ", "MSFT"], 2, undefined, "a")));
+    expect(found.filter((f) => f.fields.change === "add").map((f) => f.fields.ticker)).toEqual(["AAPL", "NVDA"]); // 내 종목(TQQQ) 빼고
   });
 
   test("Plus(남은 교체 null)는 횟수를 그리지 않는다. 무료 0회는 그린다", () => {
@@ -452,10 +515,10 @@ describe("내 종목·둘러보기(#38)", () => {
     expect(render(view(["MSFT"], 0))).not.toContain('role="status"');
   });
 
-  test("넣기·빼기 버튼과 고르기 펼침은 터치 영역 44px 이상(min-h-11 이상)", () => {
-    const html = render(view(["MSFT"], 2));
-    const all = [...targets(html), ...[...html.matchAll(/<summary\b[^>]*>/g)].map((m) => m[0])];
-    expect(all.length).toBe(1 + 3 + 1); // 빼기 1 + 넣기 3 + 펼침 1
+  test("넣기·빼기·검색 버튼, 검색칸, 고르기 펼침은 터치 영역 44px 이상(min-h-11 이상)", () => {
+    const html = render(view(["MSFT"], 2, undefined, "a"));
+    const all = [...targets(html), ...[...html.matchAll(/<(summary|input(?! type="hidden"))\b[^>]*>/g)].map((m) => m[0])];
+    expect(all.length).toBe(1 + 1 + 3 + 1 + 1); // 빼기 1 + 검색 1 + 넣기 3 + 펼침 1 + 검색칸 1
     for (const t of all) expect(t, t).toMatch(/class="[^"]*\b(min-)?h-1[12]\b/);
   });
 });

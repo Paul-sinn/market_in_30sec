@@ -12,6 +12,7 @@ import sys
 import urllib.error
 import urllib.response
 from email.message import Message
+from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -23,6 +24,7 @@ from m30.adapters.edgar import SUBMISSION_TEXT_URL, SUBMISSIONS_URL, TICKERS_URL
 from m30.adapters.gov import BEA_ICS_URL, BLS_ICS_URL
 from m30.adapters.gov_news import BEA_RSS_URL, BLS_FEED_URL, CENSUS_RSS_URL, FED_RSS_URL
 from m30.adapters.nport import MF_TICKERS_URL
+from m30.models import Coverage
 
 RESPONSES = Path(__file__).resolve().parent / "edgar_responses"
 # 실험 회사 11개의 CIK (company_tickers.json fixture, #19 test_실험_종목_15개…와 같은 값). ETF 4개는 CIK 없음
@@ -32,6 +34,15 @@ COMPANY_CIKS = {
     "PFE": "0000078003",
 }
 ETFS = ("SPY", "QQQ", "TQQQ", "SCHD")
+# #58 전 원격 커버 범위(실험 15행, #20). 회사 이름은 손으로 고른 흔한 이름. 운영 테스트는 이 행을 심고 시작한다(원격과 같은 시작 상태)
+REMOTE_START = tuple(Coverage(ticker, name, cik=COMPANY_CIKS[ticker]) for ticker, name in (
+    ("AAPL", "Apple"), ("MSFT", "Microsoft"), ("NVDA", "NVIDIA"), ("AMZN", "Amazon"), ("GOOGL", "Alphabet"), ("META", "Meta"),
+    ("TSLA", "Tesla"), ("JPM", "JPMorgan Chase"), ("XOM", "Exxon Mobil"), ("KO", "Coca-Cola"), ("PFE", "Pfizer"),
+)) + (
+    Coverage("SPY", "SPDR S&P 500 ETF", holdings_ticker="SPY"), Coverage("QQQ", "Invesco QQQ", holdings_ticker="QQQ"),
+    Coverage("TQQQ", "ProShares UltraPro QQQ", leverage=Decimal("3"), holdings_ticker="QQQ"),
+    Coverage("SCHD", "Schwab U.S. Dividend Equity ETF", holdings_ticker="SCHD"),
+)
 # 녹화 N-PORT(#10, test_nport docstring): 신탁 CIK → 그 submissions에 남긴 NPORT-P 접수번호
 NPORT = {"0000884394": ("0001410368-26-089410",), "0001067839": ("0001067839-26-000030",),
          "0001454889": ("0001410368-26-108627", "0001410368-26-108609")}

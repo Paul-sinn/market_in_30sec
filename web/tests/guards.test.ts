@@ -17,6 +17,10 @@ test("DB 쓰기 호출은 src/server/my-stocks.ts 한 곳(#37)", () => {
   expect(files.filter((f) => write.test(f.code)).map((f) => f.path)).toEqual([join("server", "my-stocks.ts")]);
 });
 
+test("PostgREST 글자 필터(ilike·like·textSearch·or) 호출 없음: 고르기 검색어는 서버 메모리에서만 비교한다(#58 D10)", () => {
+  expect(files.filter((f) => /\.(i?like|textSearch|or)\(/.test(f.code)).map((f) => f.path)).toEqual([]);
+});
+
 test("이메일·비밀번호·OTP 로그인 호출 없음(HANDOFF 3-7, 테스트 도우미에만 있다)", () => {
   const email = /\b(signInWithPassword|signInWithOtp|signUp|verifyOtp|signInAnonymously|resetPasswordForEmail)\b/;
   expect(files.filter((f) => email.test(f.code)).map((f) => f.path)).toEqual([]);
@@ -55,9 +59,9 @@ test("등락률 토큰: up은 초록, down은 빨강(어두운 테마 하나, #2
   for (const [r, g, b] of rgb("down")) expect(r > g && r > b).toBe(true);
 });
 
-test("키보드 포커스 링: 모든 링크·버튼·펼침(summary, #38)에 2px 외곽선, 지우는 클래스 없음(#27 qa N4)", () => {
+test("키보드 포커스 링: 모든 링크·버튼·펼침(summary, #38)·입력칸(input, #58)에 2px 외곽선, 지우는 클래스 없음(#27 qa N4)", () => {
   const css = readFileSync(join(SRC, "app", "globals.css"), "utf8");
-  expect(css).toMatch(/:where\(a, button, summary\):focus-visible \{\s*outline: 2px solid var\(--color-foreground\);\s*outline-offset: 2px;\s*\}/);
+  expect(css).toMatch(/:where\(a, button, summary, input\):focus-visible \{\s*outline: 2px solid var\(--color-foreground\);\s*outline-offset: 2px;\s*\}/);
   expect(files.filter((f) => /\boutline-(none|hidden|0)\b/.test(f.code)).map((f) => f.path)).toEqual([]);
 });
 

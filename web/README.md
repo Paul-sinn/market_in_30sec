@@ -101,7 +101,7 @@ Google 로그인(Supabase Auth)은 전부 웹 서버에서 돈다. 브라우저�
 ## 내 종목 (#38)
 
 - 로그인 화면: 거래일 제목 → **My stocks**(잠기지 않은 내 종목을 넣은 순서로. 그날 카드가 없으면 같은 자리에 `Summary arrives tomorrow morning`, 카드마다 `Remove`) → **Browse**(나머지 카드). 무료면 제목 옆에 `Swaps left today: N`
-- 고르기: My stocks 아래 `Pick your stocks` 펼침(커버 범위 중 내 종목이 아닌 것마다 `Add`). 내 종목이 0개면 열린 채로 나온다(첫 방문). 로그인 전 화면은 #37 그대로
+- 고르기: My stocks 아래 `Pick your stocks` 펼침 안의 검색(#58). `GET /cards?q=…#pick` 폼이라 JS 없이 돌고, 서버가 커버 범위 전체를 읽어 메모리에서 거른 결과 최대 20개만 그린다(검색어는 SQL·PostgREST 필터에 넣지 않는다). 순서는 티커 같음 → 티커로 시작 → 회사 이름에 포함, `BRK.B` = `BRK-B`, `coca cola` = `Coca-Cola`. 검색어가 없으면 검색창만, 결과마다 `Add`. 내 종목이 0개거나 검색어가 있으면 열린 채로 나온다. 로그인 전 화면은 #37 그대로
 - 넣기·빼기는 일반 폼 `POST /my-stocks`(`change=add|remove`, `ticker`) → 303 `/cards`(실패하면 `/cards?my_stock=<코드>`). JS 없이 돌고 브라우저에 Supabase가 없다. 유저는 세션(`getVerifiedUserId`)으로만 알고 본문의 유저 id는 읽지 않는다. 세션이 없으면 쓰지 않고 `/cards`로
 - 규칙은 DB 트리거만 지킨다(ADR-0004): 무료 잠기지 않은 내 종목 3개, 빼기 = 교체 1회·하루 3회(프로필 타임존 자정), 넣기는 교체가 아님, 이미 내 종목이면 아무 일 없음(이력 없음). 웹은 거절 이름만 문구로 바꾼다
   - `free_swap_limit` → `Free plan can swap stocks 3 times a day. Plus has no limit.`

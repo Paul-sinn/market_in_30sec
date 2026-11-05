@@ -28,7 +28,7 @@ async function Cards({ searchParams }: Pick<PageProps<"/cards">, "searchParams">
   return (
     <>
       <AuthControl signedIn={userId !== null} failed={query.sign_in === "failed"} />
-      <Dashboard data={data} mine={mine ? myDashboardView(data.cards, mine[0], mine[1], query.my_stock) : undefined} />
+      <Dashboard data={data} mine={mine ? myDashboardView(data.cards, mine[0], mine[1], query.my_stock, query.q) : undefined} />
     </>
   );
 }

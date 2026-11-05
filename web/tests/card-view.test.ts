@@ -9,6 +9,9 @@ import {
   glanceView,
   lineView,
   myDashboardView,
+  QUERY_MAX,
+  SEARCH_MAX,
+  searchStocks,
   type CardView,
   type LineStatus,
 } from "@/lib/card-view";
@@ -182,8 +185,8 @@ describe("myDashboardView: 로그인한 대시보드(#38)", () => {
   const coverage = ["AAPL", "MSFT", "NVDA", "TSLA", "TQQQ"].map((t) => ({ ticker: t, name: `${t} Inc.` }));
   const cards = ["AAPL", "MSFT", "NVDA", "TSLA"].map(card);
 
-  test("내 종목 = 잠기지 않은 것만 넣은 순서로(카드 없으면 null), 둘러보기 = 나머지 카드, 고르기 = 내 종목(잠긴 것 포함)이 아닌 커버 범위", () => {
-    const view = myDashboardView(cards, coverage, { stocks: [stock("TQQQ"), stock("MSFT"), stock("NVDA", true)], swapsLeft: 2 }, undefined);
+  test("내 종목 = 잠기지 않은 것만 넣은 순서로(카드 없으면 null), 둘러보기 = 나머지 카드, 고르기 = 내 종목(잠긴 것 포함)이 아닌 커버 범위의 검색 결과(#58)", () => {
+    const view = myDashboardView(cards, coverage, { stocks: [stock("TQQQ"), stock("MSFT"), stock("NVDA", true)], swapsLeft: 2 }, undefined, " inc ");
     expect(view).toEqual({
       mine: [
         { ticker: "TQQQ", name: "TQQQ Inc.", card: null },
@@ -194,9 +197,24 @@ describe("myDashboardView: 로그인한 대시보드(#38)", () => {
         { ticker: "AAPL", name: "AAPL Inc." },
         { ticker: "TSLA", name: "TSLA Inc." },
       ],
+      query: "inc",
+      more: false,
       swapsLeft: 2,
       notice: null,
     });
+  });
+
+  test("검색어가 없으면 고르기 결과 없음(커버 범위 약 550개를 다 그리지 않는다, #58 D10)", () => {
+    for (const q of [undefined, "", "   ", ["AAPL"], 1]) {
+      const view = myDashboardView(cards, coverage, { stocks: [], swapsLeft: 3 }, undefined, q);
+      expect([view.pickable, view.query, view.more], String(q)).toEqual([[], "", false]);
+    }
+  });
+
+  test("검색 결과에서 내 종목(잠긴 것 포함)은 빠진다: 티커가 같아도", () => {
+    const my = { stocks: [stock("NVDA", true), stock("TSLA")], swapsLeft: 1 };
+    const pick = (q: string) => myDashboardView(cards, coverage, my, undefined, q).pickable.map((s) => s.ticker);
+    expect([pick("nvda"), pick("tsla"), pick("aapl")]).toEqual([[], [], ["AAPL"]]);
   });
 
   test("Plus는 남은 교체 null 그대로", () => {
@@ -210,6 +228,69 @@ describe("myDashboardView: 로그인한 대시보드(#38)", () => {
     expect(notice("failed")).toBe("My stocks could not be updated");
     for (const other of [undefined, "", "ok", "constructor", "__proto__", "toString", ["failed"], "<script>"]) {
       expect(notice(other), String(other)).toBeNull();
+    }
+  });
+});
+
+describe("searchStocks: 서버가 고르기 후보를 거른다(#58 D10)", () => {
+  // 커버 범위는 DB에서 티커순으로 온다(getCoverage)
+  const COVERAGE = [
+    ["AMAT", "Applied Materials"],
+    ["AMZN", "Amazon"],
+    ["BRK-B", "Berkshire Hathaway"],
+    ["KO", "Coca-Cola"],
+    ["MA", "Mastercard"],
+    ["MAR", "Marriott International"],
+    ["MAS", "Masco"],
+    ["MSFT", "Microsoft"],
+    ["T", "AT&T"],
+  ].map(([ticker, name]) => ({ ticker, name }));
+  const tickers = (q: unknown) => searchStocks(COVERAGE, q as string).results.map((s) => s.ticker);
+
+  test("순서: 티커 같음 → 티커로 시작 → 이름에 포함, 같은 묶음은 받은(티커) 순서, 중복 없음", () => {
+    // MAR·MAS는 티커로 시작하고 이름에도 ma가 있지만 한 번만, AMAT·AMZN은 이름(Applied MAterials, AMAzon)으로
+    expect(tickers("ma")).toEqual(["MA", "MAR", "MAS", "AMAT", "AMZN"]);
+  });
+
+  test("대소문자·앞뒤 공백 무시", () => {
+    for (const q of ["MA", "Ma", "mA", "  ma\t"]) expect(tickers(q), q).toEqual(["MA", "MAR", "MAS", "AMAT", "AMZN"]);
+  });
+
+  test("티커의 . 은 - 와 같다(BRK.B = BRK-B)", () => {
+    for (const q of ["brk.b", "BRK.B", "brk-b"]) expect(tickers(q), q).toEqual(["BRK-B"]);
+    expect(tickers("brk.")).toEqual(["BRK-B"]);
+  });
+
+  test("이름은 영숫자 밖 글자를 공백 하나로 보고 비교한다(coca cola = Coca-Cola, at&t = AT&T)", () => {
+    for (const q of ["coca cola", "Coca-Cola", "COCA  COLA", "coca.cola"]) expect(tickers(q), q).toEqual(["KO"]);
+    expect(tickers("at&t")).toEqual(["T"]);
+    expect(tickers("at t")).toEqual(["T"]);
+    expect(tickers("berkshire")).toEqual(["BRK-B"]);
+  });
+
+  test("빈 검색어·공백·문자열 아닌 값은 결과 없음", () => {
+    for (const q of ["", "   ", "\n", undefined, null, ["ma"], 42, { q: "ma" }]) {
+      expect(searchStocks(COVERAGE, q as string), JSON.stringify(q)).toEqual({ results: [], more: false });
+    }
+  });
+
+  test("검색어는 앞 40자만 본다", () => {
+    expect(QUERY_MAX).toBe(40);
+    const long = [{ ticker: "LONG", name: `${"a".repeat(40)} Holdings` }];
+    expect(searchStocks(long, `${"a".repeat(40)}zzz`).results).toEqual(long); // 41자부터는 버린다
+    expect(searchStocks(long, `${"a".repeat(39)}z`).results).toEqual([]);
+  });
+
+  test("최대 20개, 넘으면 more", () => {
+    expect(SEARCH_MAX).toBe(20);
+    const many = (n: number) => Array.from({ length: n }, (_, i) => ({ ticker: `X${String(i).padStart(2, "0")}`, name: `Fund ${i}` }));
+    expect(searchStocks(many(21), "x")).toEqual({ results: many(20), more: true });
+    expect(searchStocks(many(20), "x")).toEqual({ results: many(20), more: false });
+  });
+
+  test("이상한 입력(SQL·PostgREST 필터·와일드카드·HTML)은 글자 그대로 비교한다: 전부 맞거나 에러가 나지 않는다", () => {
+    for (const q of ["%", "*", "_", "'", '"', ".", "-", "&", "\\", "' OR 1=1 --", "'; DROP TABLE coverage;--", "or(ticker.eq.AAPL)", "name.ilike.*", "a,b", "<script>", "%00", "\u0000", "🙂"]) {
+      expect(tickers(q), q).toEqual([]);
     }
   });
 });

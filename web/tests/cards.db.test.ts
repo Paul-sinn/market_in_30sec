@@ -337,3 +337,14 @@ test("가격 표시 off(#56)면 DB에 등락률·가격 사실·어제 마감 �
     expect(html).toContain("Web Test A reported Q3 results (SEC filing)"); // 두 줄은 그대로
   }
 });
+
+test("고르기 검색(#58): 로컬 커버 범위(티커순)를 서버 메모리에서 거른다. 이상한 검색어도 결과 없음일 뿐 조회는 같다", async () => {
+  const coverage = await getCoverage(); // 검색어를 받지 않는 조회: SQL·PostgREST 필터에 들어갈 길이 없다
+  const my = { stocks: [{ ticker: "ZZWA", name: "Web Test A", locked: false }], swapsLeft: 3 };
+  const pick = (q: unknown) => myDashboardView([], coverage, my, undefined, q).pickable.map((s) => s.ticker);
+  expect(pick("zzw")).toEqual(["ZZWB", "ZZWC", "ZZWD", "ZZWE"]); // 티커로 시작, 티커순, 내 종목 ZZWA 빠짐
+  expect(pick("ZZWC")).toEqual(["ZZWC"]);
+  expect(pick("web-test e")).toEqual(["ZZWE"]); // 이름 정규화
+  for (const q of ["%", "*", "'; DROP TABLE coverage;--", "or(ticker.eq.ZZWB)", "name.ilike.*"]) expect(pick(q), q).toEqual([]);
+  expect(await getCoverage()).toEqual(coverage);
+});
