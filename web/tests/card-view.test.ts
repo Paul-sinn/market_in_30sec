@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 
 import {
+  cardHeaderView,
   changeView,
   checkedFooter,
   formatCheckedAt,
@@ -10,6 +11,7 @@ import {
   lineView,
   myDashboardView,
   QUERY_MAX,
+  QUIET_DAY_STATUS,
   SEARCH_MAX,
   searchStocks,
   type CardView,
@@ -85,6 +87,33 @@ describe("lineView", () => {
 
   test("줄이 없으면(축소판의 첫 번째 줄 등) 숨기지 않고 지연 문구", () => {
     expect(lineView(null)).toEqual({ text: "Update delayed", status: "delayed" });
+  });
+});
+
+describe("cardHeaderView: 첫 번째 줄 상태 → 카드 헤더 고정 문구(#63)", () => {
+  test("확인함·있음은 저장 건수로 N new filing(s): 1은 단수, 2 이상 복수", () => {
+    expect(cardHeaderView("checked_found", 1)).toEqual({ text: "1 new filing", status: "checked_found" });
+    expect(cardHeaderView("checked_found", 2)).toEqual({ text: "2 new filings", status: "checked_found" });
+    expect(cardHeaderView("checked_found", 12)).toEqual({ text: "12 new filings", status: "checked_found" });
+  });
+
+  test("확인함·없음 Quiet day, 지연 Update delayed, 미지원 Not covered yet(건수는 보지 않는다)", () => {
+    expect(cardHeaderView("checked_none", null)).toEqual({ text: "Quiet day", status: "checked_none" });
+    expect(cardHeaderView("delayed", null)).toEqual({ text: "Update delayed", status: "delayed" });
+    expect(cardHeaderView("unsupported", null)).toEqual({ text: "Not covered yet", status: "unsupported" });
+    expect(cardHeaderView("checked_none", 3)).toEqual({ text: "Quiet day", status: "checked_none" }); // DB 제약상 없지만 건수가 와도 상태가 정한다
+  });
+
+  test("첫 번째 줄이 없으면(축소판) Update delayed: lineView(null)과 같은 판단", () => {
+    expect(cardHeaderView(null, null)).toEqual({ text: "Update delayed", status: "delayed" });
+  });
+
+  test("확인함·있음인데 건수가 없거나 1 미만이면(#63 전 카드) 헤더 없음: 숫자를 지어내지 않는다", () => {
+    for (const n of [null, 0, -1]) expect(cardHeaderView("checked_found", n), String(n)).toBeNull();
+  });
+
+  test("조용한 날 = 첫 번째 줄 checked_none 하나뿐", () => {
+    expect(QUIET_DAY_STATUS).toBe("checked_none");
   });
 });
 
@@ -177,6 +206,7 @@ describe("myDashboardView: 로그인한 대시보드(#38)", () => {
     ticker,
     name: `${ticker} Inc.`,
     change: { text: "+1.0%", tone: "up", label: "Thu 10/15 close" },
+    header: null,
     lines: [],
     leverageTag: null,
     checked: null,

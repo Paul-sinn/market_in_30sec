@@ -24,7 +24,13 @@ export function StockCard({ card }: { card: CardView }) {
       <header className="flex flex-wrap items-baseline gap-x-3 gap-y-1 pb-2">
         <h2 className="text-lg font-bold">{card.ticker}</h2>
         <p className="min-w-0 grow wrap-break-word text-muted">{card.name}</p>
-        {/* 가격 표시 off(#56)면 change 키가 없다: 티커·종목명만 */}
+        {/* 카드 헤더(#63): 고정 문구 그대로, 상태는 색에만. null = #63 전 카드(건수 없음) */}
+        {card.header && (
+          <p data-header-status={card.header.status} className={`whitespace-nowrap ${LINE_TONE[card.header.status]}`}>
+            {card.header.text}
+          </p>
+        )}
+        {/* 가격 표시 off(#56)면 change 키가 없다 */}
         {card.change && (
           <p className="ml-auto flex items-baseline gap-3">
             <span data-tone={card.change.tone} className={`tabular-nums ${CHANGE_TONE[card.change.tone]}`}>

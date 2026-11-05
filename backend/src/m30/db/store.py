@@ -47,6 +47,7 @@ CARD_COLUMNS = (
     "leverage_tag",
     "news_line_accession",
     "previous_trading_day",  # publish_suspended는 넣지 않는다: 재실행이 사람이 켠 발행 중단을 덮지 않게
+    "news_line_filing_count",
 )
 _UPSERT_CARD = (
     f"insert into public.stock_card ({', '.join(CARD_COLUMNS)}) values ({', '.join(['%s'] * len(CARD_COLUMNS))})"
@@ -257,6 +258,7 @@ class CardStore:
             card.leverage_tag,
             card.news_line_accession,
             card.previous_trading_day,
+            card.news_line_filing_count,
         )
         self._conn.execute(_UPSERT_CARD, values)
 
@@ -509,6 +511,7 @@ class CardStore:
                 news_line_accession=r["news_line_accession"],
                 previous_trading_day=r["previous_trading_day"],
                 publish_suspended=r["publish_suspended"],
+                news_line_filing_count=r["news_line_filing_count"],
             )
             for r in rows
         ]
@@ -548,16 +551,16 @@ class CardStore:
         )
         return dict(rows.fetchall())
 
-    def republished_news(self, trading_day: date) -> dict[str, tuple[str, str | None]]:
-        """티커 → (카드 첫 번째 줄 문구, news_line_accession): trading_day 카드 중 republished 보류함 행이 있는 카드의 현재 값.
-        카드 루프 전에 읽는다(재실행이 사람이 재발행한 줄을 덮지 않게)."""
+    def republished_news(self, trading_day: date) -> dict[str, tuple[str, str | None, int | None]]:
+        """티커 → (카드 첫 번째 줄 문구, news_line_accession, news_line_filing_count): trading_day 카드 중 republished 보류함 행이
+        있는 카드의 현재 값. 카드 루프 전에 읽는다(재실행이 사람이 재발행한 줄을 덮지 않게). 재발행 트리거는 문구만 바꾸므로 공시 수도 그대로"""
         rows = self._conn.execute(
-            "select c.ticker, c.news_line_text, c.news_line_accession from public.stock_card c"
+            "select c.ticker, c.news_line_text, c.news_line_accession, c.news_line_filing_count from public.stock_card c"
             " where c.trading_day = %s and exists (select from public.hold_queue h where h.ticker = c.ticker"
             " and h.trading_day = c.trading_day and h.state = 'republished')",
             (trading_day,),
         )
-        return {ticker: (text, accession) for ticker, text, accession in rows}
+        return {ticker: (text, accession, filing_count) for ticker, text, accession, filing_count in rows}
 
     def replace_hold_items(self, ticker: str, trading_day: date, rows: Iterable[HoldItem]) -> None:
         """한 트랜잭션: (ticker, trading_day)의 pending이면서 amended_filing이 아닌 행을 지우고 rows를 넣는다.

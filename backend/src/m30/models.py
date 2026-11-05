@@ -139,6 +139,7 @@ class StockCard:
     news_line_accession: str | None = None  # 첫 번째 줄이 쓴 공시(통과·대체·재발행 줄). 데이터 상태 문구면 None
     previous_trading_day: date | None = None  # 등락률·세 번째 줄의 종가 날짜. 파이프라인은 항상 채운다. None = #16 전 카드
     publish_suspended: bool = False  # 발행 중단(사람이 대시보드에서 켠다). 저장소에서 읽은 카드에만 의미가 있고 upsert_card는 쓰지 않는다
+    news_line_filing_count: int | None = None  # 첫 번째 줄이 다룬 공시 수 = 1등 + +N more(#63). 확인함·있음 줄에만. 카드 헤더 N new filing(s)
 
 
 @dataclass(frozen=True)

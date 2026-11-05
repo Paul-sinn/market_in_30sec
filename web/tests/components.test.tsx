@@ -23,6 +23,7 @@ vi.mock("next/font/google", () => ({ Inter: vi.fn(() => ({ variable: "font-sans-
 const card = (over: Partial<CardView> = {}): CardView => ({
   ticker: "AAPL",
   name: "Apple Inc.",
+  header: { text: "1 new filing", status: "checked_found" },
   change: { text: "+1.3%", tone: "up", label: "Thu 10/15 close" },
   lines: [
     { text: "Apple reported Q3 results (SEC filing)", status: "checked_found" },
@@ -44,6 +45,14 @@ const change = (html: string) => {
   const m = html.match(/data-tone="([^"]+)"[^>]*>(.*?)<\//);
   return m && [m[1], m[2]];
 };
+
+/** 카드 헤더(#63): [상태, 문구] */
+const cardHeader = (html: string) => {
+  const m = html.match(/data-header-status="([^"]+)"[^>]*>(.*?)<\//);
+  return m && [m[1], m[2]];
+};
+/** 카드 머리(<header>)의 보이는 글자 */
+const head = (html: string) => text(html.match(/<header\b.*?<\/header>/)?.[0] ?? "");
 
 /** data-tone / data-status 요소의 class */
 const classOf = (html: string, attr: string) => html.match(new RegExp(`${attr}"[^>]*class="([^"]+)"`))?.[1].split(" ") ?? [];
@@ -170,6 +179,34 @@ describe("StockCard", () => {
   test("확인 시각이 없으면 하단 줄을 그리지 않는다", () => {
     expect(text(renderToStaticMarkup(<StockCard card={card({ checked: null })} />))).not.toContain("Checked");
   });
+
+  test("카드 머리에 헤더 문구를 상태 색으로 그리고 하단 확인 줄은 그대로(#63)", () => {
+    for (const [h, color] of [
+      [{ text: "3 new filings", status: "checked_found" }, "text-foreground"],
+      [{ text: "Quiet day", status: "checked_none" }, "text-muted"],
+      [{ text: "Update delayed", status: "delayed" }, "text-muted"],
+      [{ text: "Not covered yet", status: "unsupported" }, "text-muted"],
+    ] as const) {
+      const html = renderToStaticMarkup(<StockCard card={card({ header: h })} />);
+      expect(cardHeader(html), h.text).toEqual([h.status, h.text]);
+      expect(classOf(html, `data-header-status="${h.status}`), h.text).toContain(color);
+      expect(head(html), h.text).toContain(h.text); // 머리 안
+      expect(text(html), h.text).toContain("Checked 7:30 AM ET · SEC filings · Daily prices");
+    }
+  });
+
+  test("머리 순서: 티커 → 종목명 → 헤더 → (가격 표시 on일 때만) 등락률 → 종가 라벨(#63)", () => {
+    expect(head(renderToStaticMarkup(<StockCard card={card()} />))).toBe("AAPLApple Inc.1 new filing+1.3%Thu 10/15 close");
+    const off = card();
+    delete off.change;
+    expect(head(renderToStaticMarkup(<StockCard card={off} />))).toBe("AAPLApple Inc.1 new filing");
+  });
+
+  test("헤더가 null인 카드(#63 전)는 머리에 티커·종목명만(가격 표시 on이면 등락률은 그대로)", () => {
+    const html = renderToStaticMarkup(<StockCard card={card({ header: null })} />);
+    expect(cardHeader(html)).toBeNull();
+    expect(head(html)).toBe("AAPLApple Inc.+1.3%Thu 10/15 close");
+  });
 });
 
 describe("Dashboard", () => {
@@ -234,6 +271,12 @@ describe("랜딩 / (#27 사용자 시안)", () => {
     }
     expect(page).toContain("Sample cards. Figures are illustrative.");
     expect(page.match(/prev close/g)).toHaveLength(3);
+    // 카드 헤더(#63): 샘플마다 첫 번째 줄에 맞춘 고정 문구(AAPL은 1등 + 2 more)
+    expect([...html.matchAll(/data-header-status="([^"]+)"[^>]*>(.*?)<\//g)].map((m) => [m[1], m[2]])).toEqual([
+      ["checked_found", "3 new filings"],
+      ["checked_none", "Quiet day"],
+      ["checked_none", "Quiet day"],
+    ]);
   });
 
   test("판정 기준은 ADR-0002(모든 콜 당일 시가 → 종가)", () => {

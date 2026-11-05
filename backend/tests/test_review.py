@@ -383,6 +383,17 @@ def test_대체_줄에는_보도자료_제목이_들어가지_않는다(store, m
     assert ran.summary.reviews["AAPL"].stage is HoldStage.DRAFT
 
 
+def test_대체_줄이_들어가도_공시_수는_통과한_줄과_같다(store):
+    run(store, earnings(sentence("Apple reported Q4 revenue of $102.5B"), FACT, more=2))
+    passed = cards(store)["AAPL"]
+    run(store, earnings("x", "x", more=2))  # 같은 공시, 초안 JSON 두 번 깨짐 → 대체 줄
+    replaced = cards(store)["AAPL"]
+
+    assert (passed.news_line.text, passed.news_line_filing_count) == (
+        "Apple reported Q4 revenue of $102.5B +2 more (SEC filing)", 3)
+    assert (replaced.news_line.text, replaced.news_line_filing_count) == ("Apple reported quarterly results +2 more (SEC filing)", 3)
+
+
 GOOG_CIK = "0001652044"
 
 
@@ -490,7 +501,20 @@ def test_재발행된_카드는_같은_거래일을_다시_돌려도_사람_문�
     assert (row.state, row.edited_text) == (HoldState.REPUBLISHED, human)
 
 
-ORIGINAL_AT, AMENDED_AT = "2026-10-14T16:00:00-04:00", "2026-10-15T10:00:00-04:00"  # THU·FRI 공시 기간 안
+def test_재발행된_카드는_다시_돌려도_공시_수가_그대로다(store, admin):
+    human = "Apple reported Q4 revenue of $102.5B +2 more (SEC filing)"
+    run(store, earnings("x", "x", more=2))  # 대체 줄 + 보류함 행, 공시 수 3
+    with admin.transaction():
+        admin.execute("set local role service_role")
+        admin.execute("update public.hold_queue set edited_text = %s, state = 'republished'", (human,))
+    ran = run(store, earnings("x", "x", more=3))  # 재실행 때 공시가 하나 더 보여도 사람이 고친 줄이 다룬 수 그대로
+
+    card = cards(store)["AAPL"]
+    assert len(ran.summary.news["AAPL"].candidates) == 4
+    assert (card.news_line.text, card.news_line_filing_count) == (human, 3)
+
+
+ORIGINAL_AT, AMENDED_AT ="2026-10-14T16:00:00-04:00", "2026-10-15T10:00:00-04:00"  # THU·FRI 공시 기간 안
 
 
 def amendment_days(store, original_report="2026-10-14", amended_report="2026-10-14"):

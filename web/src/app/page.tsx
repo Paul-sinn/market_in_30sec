@@ -7,7 +7,7 @@ import Link from "next/link";
 import { Brand } from "@/components/brand";
 import { StockCard } from "@/components/stock-card";
 import type { CardView } from "@/lib/card-view";
-import { APP_NAME, OPEN_CARDS, PREV_CLOSE } from "@/lib/copy";
+import { APP_NAME, NEW_FILINGS, OPEN_CARDS, PREV_CLOSE, QUIET_DAY } from "@/lib/copy";
 
 const WRAP = "mx-auto max-w-7xl px-8";
 const LABEL = "text-label font-semibold tracking-widest uppercase";
@@ -23,6 +23,7 @@ const SAMPLES = [
   {
     ticker: "AAPL",
     name: "Apple",
+    header: { text: NEW_FILINGS(3), status: "checked_found" }, // 첫 번째 줄 1등 + 2 more
     change: { text: "−1.2%", tone: "down", label: PREV_CLOSE }, // 샘플은 날짜 없는 시안 라벨 그대로
     lines: [
       { text: "Apple named a new CFO +2 more (Company)", status: "checked_found" },
@@ -35,6 +36,7 @@ const SAMPLES = [
   {
     ticker: "QQQ",
     name: "Nasdaq-100 ETF",
+    header: { text: QUIET_DAY, status: "checked_none" },
     change: { text: "+0.8%", tone: "up", label: PREV_CLOSE },
     lines: [
       { text: "No new SEC filings found", status: "checked_none" }, // ETF 첫 번째 줄(상위 편입 종목 소식)은 #10 미정
@@ -47,6 +49,7 @@ const SAMPLES = [
   {
     ticker: "KO",
     name: "Coca-Cola",
+    header: { text: QUIET_DAY, status: "checked_none" },
     change: { text: "+0.1%", tone: "up", label: PREV_CLOSE },
     lines: [
       { text: "No new SEC filings found", status: "checked_none" },
