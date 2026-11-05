@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, test, vi } from "vitest";
 
+import LegalLayout from "@/app/(legal)/layout";
+import Privacy from "@/app/(legal)/privacy/page";
+import Terms from "@/app/(legal)/terms/page";
 import ErrorPage from "@/app/cards/error";
 import CardsLayout from "@/app/cards/layout";
 import RootLayout from "@/app/layout";
@@ -226,7 +229,7 @@ describe("Dashboard", () => {
   });
 });
 
-test("모든 페이지(루트 레이아웃) 하단에 Not investment advice. 하단 링크는 어느 경로에서나 랜딩 앵커로", () => {
+test("모든 페이지(루트 레이아웃) 하단에 Not investment advice. 하단 링크는 랜딩 앵커 또는 약관·개인정보 페이지로(절대 경로)", () => {
   const html = renderToStaticMarkup(
     RootLayout({ children: <p>page</p>, params: Promise.resolve({}) } as unknown as LayoutProps<"/">),
   );
@@ -238,7 +241,24 @@ test("모든 페이지(루트 레이아웃) 하단에 Not investment advice. 하
   expect(readFileSync(join(__dirname, "..", "src", "app", "globals.css"), "utf8")).toMatch(/--font-sans: var\(--font-inter\),/);
   const footer = html.slice(html.indexOf("<footer"));
   expect(hrefs(footer).length).toBeGreaterThan(0);
-  for (const h of hrefs(footer)) expect(h, h).toMatch(/^\/(#[a-z]+)?$/); // /cards에서 눌러도 랜딩 섹션으로 간다
+  for (const h of hrefs(footer)) expect(h, h).toMatch(/^\/((#[a-z]+)?|terms(#[a-z-]+)?|privacy(#[a-z-]+)?)$/); // 어느 경로에서 눌러도 같은 곳
+  // 가격 표시가 꺼져 있어 사실이 아닌 가격 문장은 없다(#62, 스토리 24)
+  expect(text(footer)).toContain("For informational purposes only. Not investment advice. Arena trades are simulated with virtual money.");
+  expect(text(footer)).not.toMatch(/Prices are daily closes|SPY|QQQ/);
+});
+
+test("하단 Legal: Terms of service → /terms, Privacy → /privacy. Support: Request a stock·Contact → /terms#contact, Delete my account → /privacy#delete(#62)", () => {
+  const links = Object.fromEntries([...renderToStaticMarkup(<SiteFooter />).matchAll(/<a[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/g)].map((m) => [m[2], m[1]]));
+  expect(links).toMatchObject({
+    "Terms of service": "/terms",
+    Privacy: "/privacy",
+    "Request a stock": "/terms#contact",
+    Contact: "/terms#contact",
+    "Delete my account": "/privacy#delete",
+  });
+  // 가리키는 절 id가 페이지에 있다
+  expect(renderToStaticMarkup(<Terms />)).toContain('id="contact"');
+  expect(renderToStaticMarkup(<Privacy />)).toContain('id="delete"');
 });
 
 /** 링크·버튼의 href / class */
@@ -254,29 +274,38 @@ describe("랜딩 / (#27 사용자 시안)", () => {
     for (const h of hrefs(html).filter((h) => h.startsWith("#"))) expect(html, h).toContain(`id="${h.slice(1)}"`);
   });
 
-  test("샘플 카드: 현재 고정 문구로(폐기 문구·미정 ETF 줄 없음), 안내 문구 유지", () => {
+  test("샘플 카드: 피봇 카드 줄(첫 번째 줄·추정 실적일·연관 소식, #62), 폐기 문구 없음, 안내 문구 유지", () => {
     expect(lines(html)).toEqual([
-      ["checked_found", "Apple named a new CFO +2 more (Company)"],
-      ["checked_found", "Earnings Thu 10/15 after close (D-2)"],
-      ["checked_found", "8.0% below 52-week high"],
-      ["checked_none", "No new SEC filings found"],
-      ["checked_found", "Ex-dividend 12/21 · $0.70/share"],
-      ["checked_found", "Up 5 days in a row"],
+      ["checked_found", "Apple named a new CFO +2 more (SEC filing)"],
+      ["checked_found", "Earnings Thu 10/15 after close (est.) (D-2)"],
+      ["checked_found", "Supplier Broadcom reported quarterly results (SEC filing)"],
+      ["checked_none", "No new SEC filings found"], // 조용한 날 샘플: 헤더 Quiet day와 같은 첫 번째 줄
+      ["unsupported", "Not covered yet"],
+      ["unsupported", "Not covered yet"],
       ["checked_none", "No new SEC filings found"],
       ["checked_none", "No confirmed events found"],
-      ["checked_none", "No additional price highlights"],
+      ["checked_none", "No related filings found"],
     ]);
+    // 카드마다 하단 확인 줄(실제 카드와 같은 모양)
+    expect(page.match(/Checked 7:30 AM ET · SEC filings/g)).toHaveLength(3);
     for (const old of ["No major news today", "No events in next 2 weeks", "No notable price moves", "Top holdings"]) {
       expect(page).not.toContain(old);
     }
     expect(page).toContain("Sample cards. Figures are illustrative.");
-    expect(page.match(/prev close/g)).toHaveLength(3);
+    expect(page).not.toContain("prev close");
     // 카드 헤더(#63): 샘플마다 첫 번째 줄에 맞춘 고정 문구(AAPL은 1등 + 2 more)
     expect([...html.matchAll(/data-header-status="([^"]+)"[^>]*>(.*?)<\//g)].map((m) => [m[1], m[2]])).toEqual([
       ["checked_found", "3 new filings"],
       ["checked_none", "Quiet day"],
       ["checked_none", "Quiet day"],
     ]);
+  });
+
+  test("랜딩에 가격 숫자·가격 사실 문구가 없다(#55 스토리 24, #62)", () => {
+    expect(page).not.toMatch(/\d%|52-week|prev close|days in a row|Price fact|price-fact|closing prices|Prices are daily closes/i);
+    expect(html).not.toContain("data-tone"); // 등락률 요소 0개(샘플·Step 02 미니 카드)
+    expect(page).toContain("Related updates on every card"); // Plus 목록의 가격 사실 줄 자리
+    expect(page).toContain("Same-day filings from a competitor, customer, supplier or peer.");
   });
 
   test("판정 기준은 ADR-0002(모든 콜 당일 시가 → 종가)", () => {
@@ -287,8 +316,8 @@ describe("랜딩 / (#27 사용자 시안)", () => {
   test("copy-reviewer 1차 교체 문구(03_orchestrator_decisions)", () => {
     // 첫 번째 줄 생성기는 날짜를 쓰지 않는다: 샘플·미리보기 모두 같은 줄
     expect(page).not.toContain("effective Jan 1");
-    expect(page.match(/Apple named a new CFO \+2 more \(Company\)/g)).toHaveLength(2);
-    expect(page).toContain("The nearest earnings date or dividend. Earnings show a countdown; unconfirmed dates are marked (est.).");
+    expect(page.match(/Apple named a new CFO \+2 more \(SEC filing\)/g)).toHaveLength(2);
+    expect(page).toContain("The next earnings date, estimated from past filings and marked (est.), with a countdown.");
     expect(page).toContain("Settings required");
     expect(page).toContain("long only, daily prices only.");
     expect(page).toContain("The next cards are ready at 7:45 AM ET.");
@@ -335,7 +364,9 @@ describe("랜딩 / (#27 사용자 시안)", () => {
   test("링크·버튼은 터치 영역 44px 이상(min-h-11 이상)", () => {
     const cards = renderToStaticMarkup(CardsLayout({ children: null } as unknown as LayoutProps<"/cards">));
     expect(hrefs(cards)).toContain("/"); // 카드 화면의 브랜드는 랜딩으로
-    const all = [...targets(html), ...targets(renderToStaticMarkup(<SiteFooter />)), ...targets(cards)];
+    const legal = [LegalLayout({ children: null }), <Terms key="t" />, <Privacy key="p" />].map((el) => targets(renderToStaticMarkup(el)));
+    expect(hrefs(renderToStaticMarkup(LegalLayout({ children: null })))).toContain("/"); // 법률 페이지 머리의 브랜드도 랜딩으로
+    const all = [...targets(html), ...targets(renderToStaticMarkup(<SiteFooter />)), ...targets(cards), ...legal.flat()];
     expect(all.length).toBeGreaterThan(10);
     for (const t of all) expect(t, t).toMatch(/class="[^"]*\b(min-)?h-1[12]\b/);
   });
@@ -630,4 +661,136 @@ describe("시장 한눈에(#11)", () => {
   test("읽는 동안 스켈레톤에 시장 한눈에 자리(제목 1 + 시장 한눈에 1 + 카드 3)", () => {
     expect(renderToStaticMarkup(<DashboardSkeleton />).match(/bg-surface/g)).toHaveLength(5);
   });
+});
+
+// ---- 이용약관·개인정보처리방침(#62). 정적 페이지: DB를 읽지 않는다(guards.test.ts) ----
+
+const EMAIL = "tlsrudgk13@gmail.com"; // 사용자 결정(2026-11-04): 공개 연락 이메일. 법률 페이지와 이 테스트에만 쓴다
+/** 보이는 글자(엔티티 풀기) */
+const visible = (html: string) => text(html).replaceAll("&#x27;", "'").replaceAll("&amp;", "&").replaceAll("&quot;", '"');
+/** <section id="…">의 보이는 글자 */
+const section = (html: string, id: string) => visible(html.match(new RegExp(`<section id="${id}"[^>]*>(.*?)</section>`))?.[1] ?? "");
+const sectionIds = (html: string) => [...html.matchAll(/<section id="([^"]+)"/g)].map((m) => m[1]);
+const mailtos = (html: string) => [...html.matchAll(/<a[^>]*href="mailto:([^"]*)"[^>]*>([^<]*)<\/a>/g)].map((m) => [m[1], m[2]]);
+
+describe("이용약관 /terms(#62)", () => {
+  const html = renderToStaticMarkup(<Terms />);
+  const page = visible(html);
+
+  test("제목·마지막 수정일·운영자·절 id 전부", () => {
+    expect(html).toMatch(/<h1[^>]*>Terms of Service<\/h1>/);
+    expect(page).toMatch(/Last updated: [A-Z][a-z]+ \d{1,2}, 20\d\d/);
+    expect(page).toContain("Paul Sin");
+    expect(sectionIds(html)).toEqual(["service", "not-advice", "sources", "accounts", "use", "disclaimers", "changes", "contact"]);
+    expect(html.match(/<h2\b/g)).toHaveLength(8); // 절마다 h2(h1 → h2 순서)
+  });
+
+  test("not-advice 절: Not investment advice + 증권사·투자자문업자 아님 + 사고팔라는 권유 아님 + AI가 틀릴 수 있음", () => {
+    const s = section(html, "not-advice");
+    expect(s).toContain("Not investment advice");
+    expect(s).toMatch(/not a broker-dealer or an investment adviser/);
+    expect(s).toMatch(/not a recommendation to buy, sell or hold/);
+    expect(s).toMatch(/AI/);
+    expect(s).toMatch(/mistakes/);
+    expect(s).toContain("(est.)");
+  });
+
+  test("데이터 출처는 SEC·정부 공개 자료, 가격·실시간 시세는 제공하지 않고 결제도 받지 않는다", () => {
+    expect(section(html, "sources")).toMatch(/SEC EDGAR.*BLS.*BEA.*Census.*Federal Reserve/);
+    expect(section(html, "sources")).toMatch(/not affiliated with or endorsed by/);
+    const service = section(html, "service");
+    expect(service).toMatch(/does not provide stock prices or real-time quotes/);
+    expect(service).toMatch(/do not take any payments/);
+    expect(service).toMatch(/free/);
+  });
+
+  test("최소 연령 18세, 준거법 California, 중재 조항 없음", () => {
+    expect(section(html, "accounts")).toMatch(/at least 18 years old/);
+    expect(section(html, "accounts")).toMatch(/Google/);
+    expect(section(html, "disclaimers")).toMatch(/laws of the State of California/);
+    expect(page).not.toMatch(/arbitration/i);
+  });
+
+  test("연락처 절에 연락 이메일 mailto 링크, 변경 절에서 삭제 방법(/privacy#delete)으로", () => {
+    expect(mailtos(html.match(/<section id="contact".*?<\/section>/)![0])).toEqual([[EMAIL, EMAIL]]);
+    expect(hrefs(html.match(/<section id="changes".*?<\/section>/)![0])).toContain("/privacy#delete");
+  });
+});
+
+describe("개인정보처리방침 /privacy(#62)", () => {
+  const html = renderToStaticMarkup(<Privacy />);
+  const page = visible(html);
+
+  test("제목·마지막 수정일·운영자·절 id 전부", () => {
+    expect(html).toMatch(/<h1[^>]*>Privacy Policy<\/h1>/);
+    expect(page).toMatch(/Last updated: [A-Z][a-z]+ \d{1,2}, 20\d\d/);
+    expect(page).toContain("Paul Sin");
+    expect(sectionIds(html)).toEqual(["collect", "not-collect", "use", "share", "cookies", "keep", "delete", "rights", "children", "changes", "contact"]);
+    expect(html).not.toMatch(/<h[4-6]\b/); // h1 → h2 → h3까지
+  });
+
+  test("Google 로그인 때 저장하는 것: 이메일·Google 이름과 사진 링크·계정 식별자·로그인 IP와 브라우저, 플랜·타임존·아침 알림 시간·대기 등록, 내 종목과 이력, 아침 요약", () => {
+    const s = section(html, "collect");
+    for (const fact of [
+      "email address",
+      "Google account ID",
+      "name and profile photo link",
+      "IP address and browser details of your sign-in sessions",
+      "plan (Free or Plus)",
+      "time zone",
+      "morning notification time",
+      "Notify me",
+      "the stocks you pick",
+      "history of each add and remove",
+      "local date",
+      "one-line summary",
+      "Supabase",
+    ]) {
+      expect(s, fact).toContain(fact);
+    }
+    // 로그인하지 않아도: 서버 기록, 요청 제한 IP 약 1분, 잠긴 기능 탭은 날짜별 합계만
+    expect(s).toMatch(/server logs/);
+    expect(s).toMatch(/about a minute/);
+    expect(s).toMatch(/daily totals/);
+  });
+
+  test("삭제 절(id=delete): 연락 이메일 + 30일 + 지우는 범위 + 로그아웃 위치", () => {
+    const raw = html.match(/<section id="delete".*?<\/section>/)![0];
+    const s = section(html, "delete");
+    expect(mailtos(raw)).toEqual([[EMAIL, EMAIL]]);
+    expect(s).toContain("Delete my account");
+    expect(s).toMatch(/within 30 days/i);
+    for (const item of ["profile", "your stocks and their history", "morning summaries", "Notify me"]) expect(s, item).toContain(item);
+    expect(hrefs(raw)).toContain("/cards");
+  });
+
+  test("팔지 않음·맞춤 광고 공유 없음·광고 쿠키 없음·Do Not Track 문장, Plus 출시 알림은 로그인 이메일로 한 번", () => {
+    expect(section(html, "use")).toMatch(/do not sell your personal information/);
+    expect(section(html, "use")).toMatch(/targeted advertising/);
+    expect(section(html, "use")).toMatch(/email .*once when Plus launches/);
+    expect(section(html, "cookies")).toMatch(/No advertising or analytics cookies/);
+    expect(section(html, "cookies")).toContain("Do Not Track");
+    expect(section(html, "not-collect")).toMatch(/Payment information/);
+  });
+
+  test("서비스 제공자 Supabase·Vercel·Google·GitHub, AI에는 개인정보를 보내지 않음, 저장 지역은 단정하지 않는다", () => {
+    const s = section(html, "share");
+    for (const p of ["Supabase", "Vercel", "Google", "GitHub"]) expect(s, p).toContain(p);
+    expect(s).toMatch(/AI .*only public filings.*never your personal information/);
+    expect(section(html, "keep")).toMatch(/Supabase.*Vercel/);
+    expect(page).not.toMatch(/United States|U\.S\. region|\bEU\b|region/); // 사용자 결정: 지역 미확인
+  });
+
+  test("권리·아동(13세 미만)·연락처", () => {
+    expect(section(html, "rights")).toMatch(/California/);
+    expect(section(html, "rights")).toMatch(/not discriminate/);
+    expect(section(html, "children")).toMatch(/under 13/);
+    expect(mailtos(html.match(/<section id="contact".*?<\/section>/)![0])).toEqual([[EMAIL, EMAIL]]);
+  });
+});
+
+test("법률 페이지 머리: 브랜드(→ 랜딩) + 본문 <main>, 하단 고지는 루트 레이아웃이 그린다", () => {
+  const html = renderToStaticMarkup(LegalLayout({ children: <p>legal</p> }));
+  expect(hrefs(html)).toEqual(["/"]);
+  expect(html).toMatch(/<main\b[^>]*>.*<p>legal<\/p>.*<\/main>/);
 });
