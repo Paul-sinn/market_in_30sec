@@ -1,5 +1,7 @@
+import Link from "next/link";
+
 import { QUERY_MAX, type MyDashboardView } from "@/lib/card-view";
-import { ADD, MORE_MATCHES, MY_STOCKS, NO_MATCHES, PICK_STOCKS, REMOVE, SEARCH, SEARCH_STOCKS, SWAPS_LEFT } from "@/lib/copy";
+import { ADD, MORE_MATCHES, MY_STOCKS, NO_MATCHES, PAST_CARDS, PICK_STOCKS, REMOVE, SEARCH, SEARCH_STOCKS, SWAPS_LEFT } from "@/lib/copy";
 
 import { PendingCard, StockCard } from "./stock-card";
 
@@ -41,7 +43,12 @@ export function MyStocksSection({ view, grid }: { view: MyDashboardView; grid: s
           {view.mine.map((s) => (
             <li key={s.ticker} className="flex flex-col gap-2">
               <div className="grow">{s.card ? <StockCard card={s.card} /> : <PendingCard ticker={s.ticker} name={s.name} />}</div>
-              <div className="self-end">
+              <div className="flex flex-wrap justify-end gap-2">
+                {/* 프리페치 없음: 프리페치도 /cards/… 요청 제한(#62)에 세어져 내 종목이 많으면 한도를 먹는다 */}
+                <Link href={`/cards/${s.ticker}`} prefetch={false} className="inline-flex min-h-11 items-center px-4 text-sm font-bold tracking-widest uppercase">
+                  {PAST_CARDS}
+                  <span className="sr-only"> {s.ticker}</span>
+                </Link>
                 <ChangeForm change="remove" ticker={s.ticker} label={REMOVE} />
               </div>
             </li>
