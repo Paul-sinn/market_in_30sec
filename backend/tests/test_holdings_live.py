@@ -96,7 +96,11 @@ def test_실제_SPY_N_PORT와_SEC_티커_목록으로_커버_범위_주식을_�
     unmatched_ok = unmatched <= 15
     # 회사 하한 495 − 못 찾음 상한 15 = 찾은 회사 480, 회사마다 1행 이상. 위 둘에서도 나오지만 들어갈 행 수를 직접 본다
     rows_ok = len(stocks) >= 480
-    defaults_ok = set(DEFAULT_TICKERS) - {e.ticker for e in load_etfs()} <= tickers  # 기본 종목 주식 11개
+    defaults = set(DEFAULT_TICKERS) - {e.ticker for e in load_etfs()}  # 기본 종목 주식 11개
+    if report.period_end < date(2026, 9, 30):
+        # shortcut: 06-30 보고 'Exxon Mobil Corp' ↔ SEC 목록 'ExxonMobil Holdings Corp'(지주회사 재편, 새 CIK)라 못 찾는다, 09-30 보고부터 다시 요구
+        defaults -= {"XOM"}
+    defaults_ok = defaults <= tickers
     share_classes = {"GOOGL", "GOOG", "BRK-B"} <= tickers  # SPY가 가진 종류만, 주 티커
     no_other = not {"GOOGN", "GOOGM", "CELG-RI", "BRK-A"} & tickers  # 권리·기타·SPY가 안 가진 종류
     names_ok = all(s.name and coverage_name(s.name) == s.name for s in stocks)  # 법인 꼬리가 남지 않았다

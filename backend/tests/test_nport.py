@@ -156,6 +156,20 @@ def test_펀드_목록에서_같은_심볼이_다른_CIK나_시리즈를_가리�
         ("News Corp", "NEWS CORP /NEW/"),
         ("Charles Schwab Corp/The", "SCHWAB CHARLES CORP"),  # SEC 정형명은 성·이름 순서가 뒤집힌 회사가 있다(#58)
         ("T Rowe Price Group Inc", "PRICE T ROWE GROUP INC"),
+        # 2026-06-30 SPY 보고 이름 ↔ 2026-11 SEC 티커 목록 title(live 게이트 1차 실패, #58)
+        ("Lowe's Cos Inc", "LOWES COMPANIES INC"),
+        ("McDonald's Corp", "MCDONALDS CORP"),
+        ("O'Reilly Automotive Inc", "O REILLY AUTOMOTIVE INC"),
+        ("DR Horton Inc", "HORTON D R INC /DE/"),
+        ("CH Robinson Worldwide Inc", "C. H. ROBINSON WORLDWIDE, INC."),
+        ("WW Grainger Inc", "W.W. GRAINGER, INC."),
+        ("Huntington Bancshares Inc/OH", "HUNTINGTON BANCSHARES INC /MD/"),
+        ("Vertex Pharmaceuticals Inc", "VERTEX PHARMACEUTICALS INC / MA"),
+        ("CRH PLC", "CRH PUBLIC LTD CO"),
+        ("NXP Semiconductors NV", "NXP Semiconductors N.V."),
+        ("Air Products and Chemicals Inc", "Air Products & Chemicals, Inc."),
+        ("Wells Fargo & Co", "WELLS FARGO & COMPANY/MN"),
+        ("SLB Ltd", "SLB LIMITED/NV"),
     ],
 )
 def test_N_PORT_이름과_SEC_회사_이름은_법인_꼬리·주식_종류를_빼고_같으면_같은_회사다(nport_name, sec_title):
