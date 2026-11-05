@@ -1,8 +1,8 @@
 import "server-only";
 
-import { cardHeaderView, checkedFooter, lineView, type CardView } from "@/lib/card-view";
+import { cardHeaderView, checkedFooter, formatTradingDay, lineView, type CardView, type PastCardsView, type Stock } from "@/lib/card-view";
 
-import type { StoredCard } from "./cards";
+import type { CardHistory, StoredCard } from "./cards";
 import type { Plan } from "./my-stocks";
 import { priceDisplayOn } from "./price-display";
 
@@ -15,7 +15,9 @@ import { priceDisplayOn } from "./price-display";
  * 카드 헤더(#63)는 모든 viewer·플래그에 같다: 첫 번째 줄은 늘 무료 범위라 새로 열리는 정보가 없다.
  * 화면 모델은 허용한 키만 하나씩 옮긴다(펼치기 금지, tests/exposure.test.tsx 화이트리스트).
  */
-export function exposeCards(cards: StoredCard[], viewer: { plan: Plan; stocks: { ticker: string; locked: boolean }[] } | null): CardView[] {
+type Viewer = { plan: Plan; stocks: { ticker: string; locked: boolean }[] };
+
+export function exposeCards(cards: StoredCard[], viewer: Viewer | null): CardView[] {
   const full = new Set(viewer?.plan === "plus" ? viewer.stocks.filter((s) => !s.locked).map((s) => s.ticker) : []);
   const prices = priceDisplayOn();
   return cards.filter((c) => !c.suspended).map((c) => {
@@ -35,4 +37,21 @@ export function exposeCards(cards: StoredCard[], viewer: { plan: Plan; stocks: {
     if (prices) view.change = { text: c.change.text, tone: c.change.tone, label: c.change.label };
     return view;
   });
+}
+
+/** 지난 카드 범위(#68, HANDOFF 3-8): Plus 최근 90일, 무료 오늘만. 오늘(카드가 있는 최신 거래일) 포함 달력일. 읽기(getCardHistory)가 이 값만큼만 읽는다 */
+export const pastCardDays = (plan: Plan) => (plan === "plus" ? 90 : 1);
+
+/**
+ * 지난 카드 화면 모델(#68). stock = 그 유저의 잠기지 않은 내 종목(past-cards.ts가 확인), history = 최신순 카드.
+ * 카드마다 exposeCards를 그대로 거친다: 가격 표시 플래그, 세 번째 줄 플랜별, 발행 중단 제외, 허용한 키만.
+ * 첫 칸은 늘 오늘(카드가 없거나 발행 중단이면 card null = 카드 없음 자리). 그 앞날은 내보낼 카드가 있는 날만.
+ * 무료는 받은 카드가 더 있어도 오늘만 + locked. 알아두기는 지난 카드에 없다(#66이 붙어도 여기서는 유저 진도를 넘기지 않는다, 키 화이트리스트는 tests/exposure.test.tsx)
+ */
+export function exposePastCards(stock: Stock, { today, cards }: CardHistory, viewer: Viewer): PastCardsView {
+  const plus = viewer.plan === "plus";
+  const view = (card?: StoredCard) => (card && exposeCards([card], viewer)[0]) ?? null;
+  const earlier = plus ? cards.filter((c) => c.day !== today).map((c) => ({ day: c.day, card: view(c.card) })).filter((d) => d.card) : [];
+  const days = today === null ? [] : [{ day: today, card: view(cards.find((c) => c.day === today)?.card) }, ...earlier];
+  return { ticker: stock.ticker, name: stock.name, days: days.map((d) => ({ day: formatTradingDay(d.day), card: d.card })), locked: !plus };
 }

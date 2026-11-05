@@ -57,3 +57,7 @@ export const SEARCH_STOCKS = "Search by ticker or company"; // 검색칸 라벨(
 export const SEARCH = "Search"; // 검색 버튼
 export const NO_MATCHES = "No matching stocks"; // 검색어가 있는데 결과 0개(이미 내 종목인 것만 맞을 때도)
 export const MORE_MATCHES = "Type more to narrow the list"; // 결과가 SEARCH_MAX(20)에서 잘림
+
+// 지난 카드(#68, copy-reviewer 검수 대상). 뒤로 링크는 MY_STOCKS, 카드 없는 날은 SUMMARY_TOMORROW·NO_CARDS를 그대로 쓴다
+export const PAST_CARDS = "Past cards"; // 내 종목 카드 아래 링크(화면 읽기 프로그램에는 티커까지)·지난 카드 화면 라벨
+export const PAST_CARDS_IN_PLUS = "Past 90 days in Plus"; // 무료: 오늘 카드 아래 잠금 안내(누르는 곳 없음, 결제 연결 없음). "… in Plus" 잠금 문구 형식

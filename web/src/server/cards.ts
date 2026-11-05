@@ -53,10 +53,8 @@ export type StoredCard = {
   newsFilingCount: number | null; // 첫 번째 줄이 다룬 공시 수(DB 값 그대로, #63). 헤더는 exposeCards가 만든다
 };
 
-/** 가장 최근 거래일의 카드 전부(종목순)와 같은 날 시장 한눈에. 카드가 없으면 tradingDay·glance null.
- * 카드는 줄 노출 판단 전이다(exposeCards). 시장 한눈에는 모든 플랜·로그인 전에 같아서 여기서 화면 모델로 바꾼다 */
-export async function getDashboard(): Promise<{ tradingDay: string | null; glance: GlanceView | null; cards: StoredCard[] }> {
-  const client = db();
+/** 카드가 있는 가장 최근 거래일("2099-12-31") = 대시보드·지난 카드의 오늘. 카드가 없으면 null */
+async function latestTradingDay(client: ReturnType<typeof db>): Promise<string | null> {
   const latest = await client
     .from("stock_card")
     .select("trading_day")
@@ -64,9 +62,16 @@ export async function getDashboard(): Promise<{ tradingDay: string | null; glanc
     .limit(1)
     .maybeSingle<{ trading_day: string }>();
   if (latest.error) throw new Error(`stock_card read failed: ${latest.error.message}`);
-  if (!latest.data) return { tradingDay: null, glance: null, cards: [] };
+  return latest.data?.trading_day ?? null;
+}
 
-  const day = latest.data.trading_day;
+/** 가장 최근 거래일의 카드 전부(종목순)와 같은 날 시장 한눈에. 카드가 없으면 tradingDay·glance null.
+ * 카드는 줄 노출 판단 전이다(exposeCards). 시장 한눈에는 모든 플랜·로그인 전에 같아서 여기서 화면 모델로 바꾼다 */
+export async function getDashboard(): Promise<{ tradingDay: string | null; glance: GlanceView | null; cards: StoredCard[] }> {
+  const client = db();
+  const day = await latestTradingDay(client);
+  if (!day) return { tradingDay: null, glance: null, cards: [] };
+
   // 가격 표시 off(#56): 어제 마감 열은 읽지도 않는다(DB에 옛 값이 있어도 서버 메모리에 올라오지 않는다). 카드의 가격 키는 exposeCards가 뺀다
   const glanceLines = priceDisplayOn() ? GLANCE_LINES : GLANCE_LINES.filter((l) => l !== "close_line");
   const [{ data, error }, glance] = await Promise.all([
@@ -86,6 +91,29 @@ export async function getDashboard(): Promise<{ tradingDay: string | null; glanc
     ),
     cards: data.map(toStoredCard),
   };
+}
+
+/** 한 종목의 지난 카드(#68). today = 최신 거래일(카드가 없으면 null), day = 그 카드의 거래일("2099-12-30") */
+export type CardHistory = { today: string | null; cards: { day: string; card: StoredCard }[] };
+
+/** 한 종목의 최근 days일 카드, 최신순. days는 오늘(카드가 있는 최신 거래일) 포함 달력일이고 플랜별 값은 exposure.ts pastCardDays.
+ * 이미 쌓인 카드를 읽기만 한다(새 저장 없음). ticker는 부르는 쪽(past-cards.ts)이 그 유저의 내 종목인지 확인한 값이다.
+ * 달력일인 이유: 웹에는 휴장일 달력이 없고(#16, 파이프라인 몫), 종목은 활성일 때만 카드가 생겨 "카드 90장"은 90거래일이 아니다 */
+export async function getCardHistory(ticker: string, days: number): Promise<CardHistory> {
+  const client = db();
+  const today = await latestTradingDay(client);
+  if (!today) return { today: null, cards: [] };
+  const from = new Date(`${today}T00:00:00Z`); // trading_day는 날짜만 있는 값: UTC 자정으로 읽고 날짜만 뺀다(formatTradingDay와 같다)
+  from.setUTCDate(from.getUTCDate() - (days - 1));
+  const { data, error } = await client
+    .from("stock_card")
+    .select(`trading_day,${COLUMNS}`)
+    .eq("ticker", ticker)
+    .gte("trading_day", from.toISOString().slice(0, 10))
+    .order("trading_day", { ascending: false })
+    .overrideTypes<(Row & { trading_day: string })[], { merge: false }>(); // 90일 = 최대 90행(MAX_ROWS 아래)
+  if (error) throw new Error(`stock_card read failed: ${error.message}`);
+  return { today, cards: data.map((r) => ({ day: r.trading_day, card: toStoredCard(r) })) };
 }
 
 /** 커버 범위 전부, 종목순(내 종목 고르기 검색의 후보, #38·#58). 검색어는 이 조회에 넣지 않는다(메모리에서 searchStocks) */

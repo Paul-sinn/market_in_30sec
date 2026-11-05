@@ -14,10 +14,11 @@ import Landing from "@/app/page";
 import { AuthControl } from "@/components/auth-control";
 import { Dashboard, DashboardSkeleton } from "@/components/dashboard";
 import { MarketGlance } from "@/components/market-glance";
+import { PastCards } from "@/components/past-cards";
 import { SiteFooter } from "@/components/site-footer";
 import { StockCard } from "@/components/stock-card";
 import { TimezoneField } from "@/components/timezone-field";
-import { myDashboardView, type CardView, type GlanceView, type MyDashboardView } from "@/lib/card-view";
+import { myDashboardView, type CardView, type GlanceView, type MyDashboardView, type PastCardsView } from "@/lib/card-view";
 import { SIGN_IN, SIGN_IN_FAILED, SIGN_OUT } from "@/lib/copy";
 
 // next/font/google은 빌드 때 글꼴을 받는다. 레이아웃 렌더 테스트에서는 변수 이름만 준다(Inter 말고 다른 글꼴을 부르면 실패)
@@ -571,6 +572,15 @@ describe("내 종목·둘러보기(#38)", () => {
     expect(found.filter((f) => f.fields.change === "add").map((f) => f.fields.ticker)).toEqual(["AAPL", "NVDA"]); // 내 종목(TQQQ) 빼고
   });
 
+  test("내 종목마다 지난 카드 링크(#68): /cards/티커, 보이는 글자 Past cards, 화면 읽기 프로그램에는 티커까지. 카드 없는 내 종목에도, 둘러보기에는 없다", () => {
+    const html = render(view(["TQQQ", "MSFT"], 2));
+    const links = [...html.matchAll(/<a\b[^>]*href="(\/cards\/[^"]*)"[^>]*>(.*?)<\/a>/g)].map((m) => [m[1], text(m[2])]);
+    expect(links).toEqual([
+      ["/cards/TQQQ", "Past cards TQQQ"],
+      ["/cards/MSFT", "Past cards MSFT"],
+    ]);
+  });
+
   test("Plus(남은 교체 null)는 횟수를 그리지 않는다. 무료 0회는 그린다", () => {
     expect(text(render(view(["MSFT"], null)))).not.toContain("Swaps left");
     expect(text(render(view(["MSFT"], 0)))).toContain("Swaps left today: 0");
@@ -592,7 +602,7 @@ describe("내 종목·둘러보기(#38)", () => {
   test("넣기·빼기·검색 버튼, 검색칸, 고르기 펼침은 터치 영역 44px 이상(min-h-11 이상)", () => {
     const html = render(view(["MSFT"], 2, undefined, "a"));
     const all = [...targets(html), ...[...html.matchAll(/<(summary|input(?! type="hidden"))\b[^>]*>/g)].map((m) => m[0])];
-    expect(all.length).toBe(1 + 1 + 3 + 1 + 1); // 빼기 1 + 검색 1 + 넣기 3 + 펼침 1 + 검색칸 1
+    expect(all.length).toBe(1 + 1 + 1 + 3 + 1 + 1); // 지난 카드 1 + 빼기 1 + 검색 1 + 넣기 3 + 펼침 1 + 검색칸 1
     for (const t of all) expect(t, t).toMatch(/class="[^"]*\b(min-)?h-1[12]\b/);
   });
 });
@@ -793,4 +803,61 @@ test("법률 페이지 머리: 브랜드(→ 랜딩) + 본문 <main>, 하단 고
   const html = renderToStaticMarkup(LegalLayout({ children: <p>legal</p> }));
   expect(hrefs(html)).toEqual(["/"]);
   expect(html).toMatch(/<main\b[^>]*>.*<p>legal<\/p>.*<\/main>/);
+});
+
+describe("지난 카드 /cards/[ticker](#68)", () => {
+  const quiet = card({
+    header: { text: "Quiet day", status: "checked_none" },
+    lines: [
+      { text: "No new SEC filings found", status: "checked_none" },
+      { text: "No confirmed events found", status: "checked_none" },
+      { status: "locked" },
+    ],
+  });
+  const view = (over: Partial<PastCardsView> = {}): PastCardsView => ({
+    ticker: "AAPL",
+    name: "Apple Inc.",
+    locked: false,
+    days: [
+      { day: "Fri, Oct 16, 2026", card: card() },
+      { day: "Thu, Oct 15, 2026", card: quiet },
+    ],
+    ...over,
+  });
+  const render = (v: PastCardsView) => renderToStaticMarkup(<PastCards view={v} />);
+  const headings = (html: string) => [...html.matchAll(/<h([12])\b[^>]*>(.*?)<\/h\1>/g)].map((m) => `h${m[1]} ${text(m[2])}`);
+
+  test("Plus: 뒤로(My stocks → /cards#my-stocks), Past cards 라벨, h1 티커 + 종목명, 날짜(h2)마다 카드 최신순, 잠금 안내 없음", () => {
+    const html = render(view());
+    expect(headings(html)).toEqual(["h1 AAPL", "h2 Fri, Oct 16, 2026", "h2 AAPL", "h2 Thu, Oct 15, 2026", "h2 AAPL"]);
+    expect([...html.matchAll(/<a\b[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g)].map((m) => [m[1], text(m[2])])).toEqual([["/cards#my-stocks", "My stocks"]]);
+    const t = text(html);
+    expect(t.indexOf("Past cards")).toBeLessThan(t.indexOf("Apple Inc."));
+    expect(t.indexOf("Apple reported Q3 results (SEC filing)")).toBeLessThan(t.indexOf("No new SEC filings found"));
+    expect(t).not.toContain("Past 90 days in Plus");
+  });
+
+  test("무료: 오늘 카드 + Past 90 days in Plus(글자뿐, 결제·누르는 곳 없음: 링크·버튼은 뒤로 하나)", () => {
+    const html = render(view({ locked: true, days: [{ day: "Fri, Oct 16, 2026", card: quiet }] }));
+    expect(headings(html)).toEqual(["h1 AAPL", "h2 Fri, Oct 16, 2026", "h2 AAPL"]);
+    expect(text(html).indexOf("Price facts in Plus")).toBeLessThan(text(html).indexOf("Past 90 days in Plus"));
+    expect(targets(html)).toHaveLength(1);
+  });
+
+  test("오늘 카드 없음은 Summary arrives tomorrow morning 자리, 날이 하나도 없으면 No cards yet", () => {
+    const pending = render(view({ locked: true, days: [{ day: "Fri, Oct 16, 2026", card: null }] }));
+    expect(headings(pending)).toEqual(["h1 AAPL", "h2 Fri, Oct 16, 2026", "h2 AAPL"]);
+    expect(text(pending)).toContain("Summary arrives tomorrow morning");
+    expect(text(pending)).toContain("Past 90 days in Plus");
+    const empty = render(view({ days: [] }));
+    expect(text(empty)).toContain("No cards yet");
+    expect(headings(empty)).toEqual(["h1 AAPL"]);
+  });
+
+  test("뒤로 링크는 터치 영역 44px 이상, 휴대폰 폭에서 가로 스크롤이 생기지 않는 구조(고정 폭·줄바꿈 금지 없음)", () => {
+    const html = render(view({ locked: true }));
+    for (const t of targets(html)) expect(t, t).toMatch(/class="[^"]*\b(min-)?h-1[12]\b/);
+    expect(html).not.toMatch(/class="[^"]*\b(min-|max-)?w-(\[|[1-9])/);
+    expect(html).not.toMatch(/\b(text-nowrap|truncate|overflow-x-)/);
+  });
 });
