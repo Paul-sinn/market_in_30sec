@@ -7,7 +7,7 @@ import { afterEach, describe, expect, test, vi } from "vitest";
 import { Dashboard } from "@/components/dashboard";
 import { myDashboardView, type CardView } from "@/lib/card-view";
 import type { StoredCard, StoredLine } from "@/server/cards";
-import { exposeCards } from "@/server/exposure";
+import { exposeCards, exposePastCards, pastCardDays } from "@/server/exposure";
 import type { MyStocks } from "@/server/my-stocks";
 
 const AT = "2026-10-16T11:30:00Z"; // 7:30 AM ET
@@ -298,5 +298,92 @@ describe("카드 헤더(#63): 첫 번째 줄 상태와 저장 건수로만 정�
     const [off] = exposeCards([stored(THIRD["사실 있음"])], null);
     expect(off.header).toEqual({ text: "1 new filing", status: "checked_found" });
     expect("change" in off).toBe(false);
+  });
+});
+
+describe("지난 카드(#68): 한 종목의 날짜별 카드. Plus = 받은 날 전부, 무료 = 오늘만 + 잠금 안내", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  const TODAY = "2026-10-16";
+  const OLD = `canary-old-${randomUUID()}`; // 지난 날 카드의 세 번째 줄
+  const SUSPENDED = `canary-suspended-past-${randomUUID()}`;
+  const AAPL = { ticker: "AAPL", name: "Apple Inc." };
+  const history = {
+    today: TODAY,
+    cards: [
+      { day: TODAY, card: stored(THIRD["사실 있음"]) },
+      { day: "2026-10-15", card: stored(line(SUSPENDED, "checked_found", "Daily prices"), { suspended: true }) },
+      { day: "2026-07-20", card: stored(line(OLD, "checked_found", "Daily prices")) },
+    ],
+  };
+  const KEYS = ["change", "checked", "header", "leverageTag", "lines", "name", "ticker"]; // 오늘 카드(exposeCards)와 같은 키
+
+  test("범위(읽기가 쓰는 값): Plus 90일, 무료 1일(오늘)", () => {
+    expect(pastCardDays("plus")).toBe(90);
+    expect(pastCardDays("free")).toBe(1);
+  });
+
+  test("Plus 내 종목: 최신순, 카드마다 세 줄 전부, 발행 중단 날은 빠짐, 잠금 안내 없음", () => {
+    const view = exposePastCards(AAPL, history, my("plus", "AAPL"));
+    expect(view).toEqual({
+      ...AAPL,
+      locked: false,
+      days: [
+        { day: "Fri, Oct 16, 2026", card: FULL["사실 있음"] },
+        {
+          day: "Mon, Jul 20, 2026",
+          card: {
+            ...FREE,
+            lines: [...FIRST_TWO, { text: OLD, status: "checked_found" }],
+            checked: "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar · Daily prices",
+          },
+        },
+      ],
+    });
+    expect(JSON.stringify(view)).not.toContain(SUSPENDED);
+  });
+
+  test("무료 내 종목: 지난 날 카드를 받아도 오늘만 + locked, 세 번째 줄은 잠금", () => {
+    const view = exposePastCards(AAPL, history, my("free", "AAPL"));
+    expect(view).toEqual({ ...AAPL, locked: true, days: [{ day: "Fri, Oct 16, 2026", card: FREE }] });
+    expect(JSON.stringify(view)).not.toContain(OLD);
+  });
+
+  test("오늘 카드가 없거나 발행 중단이면 첫 칸은 card null(카드 없음 자리), 지난 날은 그대로", () => {
+    const missing = exposePastCards(AAPL, { today: TODAY, cards: history.cards.slice(1) }, my("plus", "AAPL"));
+    expect(missing.days.map((d) => [d.day, d.card && d.card.lines[2]])).toEqual([
+      ["Fri, Oct 16, 2026", null],
+      ["Mon, Jul 20, 2026", { text: OLD, status: "checked_found" }],
+    ]);
+    const suspended = { today: TODAY, cards: [{ day: TODAY, card: stored(THIRD["사실 있음"], { suspended: true }) }] };
+    for (const plan of ["free", "plus"] as const) expect(exposePastCards(AAPL, suspended, my(plan, "AAPL")).days).toEqual([{ day: "Fri, Oct 16, 2026", card: null }]);
+  });
+
+  test("DB에 카드가 하나도 없으면(today null) 날 없음", () => {
+    expect(exposePastCards(AAPL, { today: null, cards: [] }, my("plus", "AAPL"))).toEqual({ ...AAPL, locked: false, days: [] });
+  });
+
+  test("가격 표시 off: 모든 날 카드에 가격 키 없음, 두 줄, 지난 날의 가격 사실 원문도 없음", () => {
+    vi.stubEnv("PRICE_DISPLAY", undefined);
+    for (const plan of ["free", "plus"] as const) {
+      const view = exposePastCards(AAPL, history, my(plan, "AAPL"));
+      expect(view.days.length, plan).toBe(plan === "plus" ? 2 : 1);
+      for (const { card } of view.days) {
+        expect(Object.keys(card!).sort(), plan).toEqual(KEYS.filter((k) => k !== "change"));
+        expect(card!.lines, plan).toHaveLength(2);
+      }
+      expect(JSON.stringify(view), plan).not.toMatch(new RegExp(`${OLD}|Up 5 days|Daily prices|\\+1\\.3%`));
+    }
+  });
+
+  test("화이트리스트: 날 칸은 day·card만, 카드는 오늘 카드와 같은 키만(알아두기 등 새 키는 지난 카드에 붙이지 않는다)", () => {
+    for (const plan of ["free", "plus"] as const) {
+      const view = exposePastCards(AAPL, history, my(plan, "AAPL"));
+      expect(Object.keys(view).sort(), plan).toEqual(["days", "locked", "name", "ticker"]);
+      for (const d of view.days) {
+        expect(Object.keys(d).sort(), plan).toEqual(["card", "day"]);
+        expect(Object.keys(d.card!).sort(), plan).toEqual(KEYS);
+      }
+    }
   });
 });

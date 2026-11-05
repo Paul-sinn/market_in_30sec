@@ -2,6 +2,7 @@
 
 - `/` 랜딩(#27, 정적 페이지, DB를 읽지 않는다)
 - `/cards` 가장 최근 거래일의 카드 전부를 종목순으로 보여주는 비공개 대시보드(#24). 거래일 제목 바로 아래 `Market at a glance` 3줄(가격 표시 off면 2줄, #11·#56, 아래 "시장 한눈에"·"가격 표시 플래그" 절). 위에 Google 로그인·로그아웃 버튼(#37). 로그인하면 위 "My stocks", 아래 "Browse"(#38, 아래 "내 종목" 절)
+- `/cards/[ticker]` 내 종목 하나의 지난 카드(#68). Plus는 오늘 포함 최근 90일(달력일, 날짜 기준은 카드가 있는 최신 거래일), 무료는 오늘 카드 + `Past 90 days in Plus`. 로그인 전·내 종목이 아닌 티커(다른 유저 종목·커버 범위 밖·잠긴 종목)는 `/cards`로. 내 종목 카드 아래 `Past cards` 링크(프리페치 없음: 프리페치도 요청 제한에 세어진다). 조회 입구 `src/server/past-cards.ts`, 범위·노출은 `exposure.ts`(`pastCardDays`·`exposePastCards`), 결제 연결 없음(Plus는 DB에서 수동 지정)
 - `/auth/sign-in`(POST)·`/auth/callback`(GET)·`/auth/sign-out`(POST) 로그인 라우트(#37, 아래 "로그인" 절)
 - `/my-stocks`(POST) 내 종목 넣기·빼기(#38)
 - `/terms` 이용약관, `/privacy` 개인정보처리방침(#62, 정적 페이지, DB를 읽지 않는다). 본문은 `src/app/(legal)/*/page.tsx`, 같이 쓰는 값(연락처·운영자·수정일)은 `src/app/(legal)/legal.tsx`. 하단 Legal·Support 링크가 가리킨다(`/terms#contact`, `/privacy#delete`, 절 id 고정). 모든 페이지 하단 고지는 루트 레이아웃 하나(`app/layout.tsx`)가 그린다

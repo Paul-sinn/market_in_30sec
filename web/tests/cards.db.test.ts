@@ -12,11 +12,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, afterEach, beforeAll, expect, test, vi } from "vitest";
 
 import { Dashboard } from "@/components/dashboard";
-import { myDashboardView } from "@/lib/card-view";
+import { PastCards } from "@/components/past-cards";
+import { formatTradingDay, myDashboardView } from "@/lib/card-view";
 import type { VerifiedUserId } from "@/server/auth";
 import { getCoverage, getDashboard } from "@/server/cards";
 import { exposeCards } from "@/server/exposure";
 import { addMyStock, ensureProfile, getMyStocks } from "@/server/my-stocks";
+import { getPastCards } from "@/server/past-cards";
 
 import { admin, createTestUser, deleteTestUsers } from "./local-supabase";
 
@@ -27,6 +29,10 @@ const SUSPENDED_TEXT = "Web Test E suspended line"; // 발행 중단 카드(ZZWE
 const AT = "2099-12-31T12:30:00+00:00"; // 7:30 AM EST
 const HOLD = `canary-hold-${randomUUID()}`; // 시장 한눈에 보류 기록(검수 안 된 문장). 웹은 읽지 않는다
 const EARLIER_GLANCE = `canary-earlier-glance-${randomUUID()}`; // 이전 거래일 행에만 있는 문구
+// 지난 카드(#68): ZZWA의 지난 날에만 있는 문구. 90일 = 오늘(DAY) 포함 달력일이라 2099-10-03까지 들어가고 10-02는 밖
+const PAST_OLDEST = `canary-past-oldest-${randomUUID()}`; // 2099-10-03(범위 첫날)의 세 번째 줄
+const PAST_OUTSIDE = `canary-past-outside-${randomUUID()}`; // 2099-10-02(범위 밖)
+const PAST_SUSPENDED = `canary-past-suspended-${randomUUID()}`; // 2099-12-29 발행 중단
 
 const glanceRow = (trading_day: string, close: string) => ({
   trading_day,
@@ -151,6 +157,38 @@ const cards = [
     status: "fallback",
     change_pct: 9.9,
     change_status: "checked_found",
+    leverage_tag: null,
+  },
+  // 지난 카드(#68)만 읽는 날들(ZZWA)
+  {
+    ticker: "ZZWA",
+    trading_day: "2099-12-29",
+    publish_suspended: true,
+    status: "normal",
+    change_pct: null,
+    change_status: "delayed",
+    ...line("news_line", PAST_SUSPENDED, "checked_found", "SEC filings"),
+    news_line_filing_count: 1,
+    leverage_tag: null,
+  },
+  {
+    ticker: "ZZWA",
+    trading_day: "2099-10-03",
+    status: "normal",
+    change_pct: null,
+    change_status: "delayed",
+    ...line("news_line", "No new SEC filings found", "checked_none", "SEC filings"),
+    ...line("price_fact_line", PAST_OLDEST, "checked_found", "Daily prices"),
+    leverage_tag: null,
+  },
+  {
+    ticker: "ZZWA",
+    trading_day: "2099-10-02",
+    status: "normal",
+    change_pct: null,
+    change_status: "delayed",
+    ...line("news_line", PAST_OUTSIDE, "checked_found", "SEC filings"),
+    news_line_filing_count: 1,
     leverage_tag: null,
   },
 ];
@@ -443,4 +481,69 @@ test("고르기 검색(#58): 로컬 커버 범위(티커순)를 서버 메모리
   expect(pick("web-test e")).toEqual(["ZZWE"]); // 이름 정규화
   for (const q of ["%", "*", "'; DROP TABLE coverage;--", "or(ticker.eq.ZZWB)", "name.ilike.*"]) expect(pick(q), q).toEqual([]);
   expect(await getCoverage()).toEqual(coverage);
+});
+
+// ---- 지난 카드(#68): 웹 서버 카드 조회 입구 getPastCards(세션 유저 id, 요청 티커) ----
+
+/** 프로필 + 내 종목(넣은 순서) 뒤 플랜을 바꾼다. Plus → 무료로 바꾸면 넷째부터 잠긴다(DB 트리거) */
+async function pastUser(plan: "free" | "plus", tickers: string[], then?: "free") {
+  const id = (await createTestUser()).id as VerifiedUserId; // 테스트에서만: 운영에서는 getVerifiedUserId만 만든다
+  created.push(id);
+  await ensureProfile(id, "America/New_York");
+  const setPlan = async (p: string) => {
+    const { error } = await admin.from("user_profile").update({ plan: p }).eq("user_id", id); // 결제 연결 없음: DB에서 수동 지정
+    if (error) throw new Error(`plan update failed: ${error.code}`);
+  };
+  await setPlan(plan);
+  for (const t of tickers) expect(await addMyStock(id, t)).toBe("ok");
+  if (then) await setPlan(then);
+  return id;
+}
+
+const days = (...d: string[]) => d.map(formatTradingDay);
+
+test("지난 카드: Plus 내 종목 = 오늘 포함 최근 90일(달력일) 최신순, 발행 중단 날·90일 밖은 없다. 세 번째 줄은 본문", async () => {
+  const view = (await getPastCards(await pastUser("plus", ["ZZWA"]), "ZZWA"))!;
+  expect(view.days.map((d) => d.day)).toEqual(days(DAY, EARLIER, "2099-10-03"));
+  expect([view.ticker, view.name, view.locked]).toEqual(["ZZWA", "Web Test A", false]);
+  expect(view.days[0].card!.lines[2]).toEqual({ text: "Up 5 days in a row", status: "checked_found" });
+  expect(view.days[2].card!.lines[2]).toEqual({ text: PAST_OLDEST, status: "checked_found" });
+  const all = JSON.stringify(view);
+  expect(all).not.toContain(PAST_OUTSIDE);
+  expect(all).not.toContain(PAST_SUSPENDED);
+});
+
+test("지난 카드: 무료 내 종목 = 오늘만 + 잠금 안내. 지난 날 문구는 화면 모델·HTML에 없다", async () => {
+  const view = (await getPastCards(await pastUser("free", ["ZZWA"]), "ZZWA"))!;
+  expect(view.days.map((d) => d.day)).toEqual(days(DAY));
+  expect(view.locked).toBe(true);
+  expect(view.days[0].card!.lines[2]).toEqual({ status: "locked" });
+  const html = renderToStaticMarkup(createElement(PastCards, { view }));
+  expect(html).toContain("Past 90 days in Plus");
+  for (const secret of [PAST_OLDEST, "Up 5 days in a row", "9.9%"]) {
+    expect(JSON.stringify(view), secret).not.toContain(secret);
+    expect(html, secret).not.toContain(secret);
+  }
+});
+
+test("지난 카드: 다른 유저의 종목·커버 범위 밖·형식이 깨진 티커·잠긴 내 종목은 모두 null(구분하지 않는다)", async () => {
+  const [a] = [await pastUser("free", ["ZZWA"]), await pastUser("plus", ["ZZWB"])]; // 둘째 유저의 ZZWB
+  for (const ticker of ["ZZWB", "ZZWC", "NOPE", "zzwa", " ZZWA", "ZZWA/", "../ZZWA", "ZZWA%00", "", "ZZWA,ZZWB", "*"]) {
+    expect(await getPastCards(a, ticker), JSON.stringify(ticker)).toBeNull();
+  }
+  // Plus로 넷 넣고 무료가 되면 넷째(ZZWD)는 잠긴다: 잠긴 종목은 지난 카드도 없음, 앞 셋은 무료 범위(오늘만)
+  const c = await pastUser("plus", ["ZZWA", "ZZWB", "ZZWC", "ZZWD"], "free");
+  expect(await getPastCards(c, "ZZWD")).toBeNull();
+  expect((await getPastCards(c, "ZZWA"))!.days.map((d) => d.day)).toEqual(days(DAY));
+});
+
+test("지난 카드: 가격 표시 off면 모든 날 카드에 가격 키가 없다(Plus 내 종목)", async () => {
+  vi.stubEnv("PRICE_DISPLAY", undefined);
+  const view = (await getPastCards(await pastUser("plus", ["ZZWA"]), "ZZWA"))!;
+  expect(view.days.map((d) => [Object.keys(d.card!).includes("change"), d.card!.lines.length])).toEqual([
+    [false, 2],
+    [false, 2],
+    [false, 2],
+  ]);
+  for (const price of ["+1.3%", "9.9%", "Up 5 days in a row", PAST_OLDEST, "Daily prices"]) expect(JSON.stringify(view), price).not.toContain(price);
 });

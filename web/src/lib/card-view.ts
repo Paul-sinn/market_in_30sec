@@ -23,6 +23,8 @@ export type GlanceView = { lines: TextLine[]; checked: string | null };
 export type DashboardView = { tradingDay: string | null; glance: GlanceView | null; cards: CardView[] }; // glance null = 카드도 없음
 
 export type Stock = { ticker: string; name: string };
+/** 지난 카드(#68). days는 최신순이고 첫 칸이 오늘(card null = 그날 카드 없음). locked = 무료(오늘만, 더 지난 건 Plus). days [] = DB에 카드가 없음 */
+export type PastCardsView = Stock & { days: { day: string; card: CardView | null }[]; locked: boolean };
 /** 로그인한 대시보드(#38). 위 내 종목, 아래 둘러보기, 고르기 목록 */
 export type MyDashboardView = {
   mine: (Stock & { card: CardView | null })[]; // 잠기지 않은 내 종목, 넣은 순서. card null = 그날 카드 없음
