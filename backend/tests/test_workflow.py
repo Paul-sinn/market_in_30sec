@@ -107,10 +107,11 @@ def test_분기_작업_예약은_일요일이라_평일_아침_실행과_겹치�
     assert "inputs." not in quarterly_text()  # 수동 실행 입력 없음
 
 
-def test_분기_작업_비밀값은_DB_주소와_SEC_연락처_둘뿐이고_실행_단계_env로만_넘긴다():
+def test_분기_작업_비밀값은_DB_주소·SEC_연락처·Anthropic_키_셋뿐이고_실행_단계_env로만_넘긴다():
     lines = quarterly_text().splitlines()
     secret_lines = [i for i, line in enumerate(lines) if "secrets." in line]
-    assert sorted(re.search(r"secrets\.([A-Z_]+)", lines[i]).group(1) for i in secret_lines) == ["SEC_USER_AGENT", "SUPABASE_DB_URL"]
+    assert sorted(re.search(r"secrets\.([A-Z_]+)", lines[i]).group(1) for i in secret_lines) == [
+        "ANTHROPIC_API_KEY", "SEC_USER_AGENT", "SUPABASE_DB_URL"]  # 각각 한 번씩. 키는 연관 종목(#64)
     (run,) = [i for i, line in enumerate(lines) if "--quarterly" in line]
     assert all(i > run for i in secret_lines)  # 실행 단계 env: 아래에만. 설치 단계에는 비밀값이 없다
     assert not [line for line in lines if line.strip().startswith(("run:", "- run:")) and "${{" in line]

@@ -189,3 +189,50 @@ class HoldItem:
     replacement_text: str | None  # 카드에 들어간 대체 줄. 정정 행은 None(카드를 고치지 않는다)
     state: HoldState = HoldState.PENDING
     edited_text: str | None = None  # 사람이 쓴 첫 번째 줄(꼬리표 포함 전체)
+
+
+class Relation(StrEnum):
+    """연관 종목 관계(GLOSSARY RelatedTicker, #64). 바꾸면 마이그레이션 CHECK도 같이."""
+
+    COMPETITOR = "competitor"
+    CUSTOMER = "customer"
+    SUPPLIER = "supplier"
+    PEER = "peer"  # 같은 업종(sic)만
+
+
+class RelationBasis(StrEnum):
+    """연관 종목을 정한 근거. 바꾸면 마이그레이션 CHECK도 같이."""
+
+    OWN_10K = "own_10k"  # 내 10-K가 그 회사 이름을 댐
+    REVERSE_10K = "reverse_10k"  # 그 회사 10-K가 내 이름을 댐(관계를 뒤집음)
+    SIC = "sic"  # 같은 업종 코드
+
+
+@dataclass(frozen=True)
+class RelatedTicker:
+    """stock_relation 한 행(GLOSSARY 연관 종목). updated_at은 저장소가 다루고 비교에 넣지 않는다."""
+
+    ticker: str
+    related_ticker: str  # 상대 회사의 대표 티커(그 CIK 주식 티커 중 정렬 첫 번째)
+    relation: Relation
+    basis: RelationBasis
+    rank: int  # 1..5
+    source_accession: str | None  # basis SIC면 None. own_10k = 내 10-K, reverse_10k = 상대 10-K
+    evidence: str | None  # 그 10-K의 문장 그대로. basis SIC면 None
+
+
+@dataclass(frozen=True)
+class Mention:
+    """10-K 하나의 회사 언급 하나(LLM이 뽑고 코드가 검증한 것, #64). relation은 PEER가 아니다. 화면에 나가지 않는다."""
+
+    name: str  # 10-K 문장에 쓰인 그대로(끝 괄호·따옴표 뗌)
+    relation: Relation
+    evidence: str  # 그 문장(코드가 발췌에서 가져옴, LLM이 준 글자가 아니다)
+
+
+@dataclass(frozen=True)
+class ReportMentions:
+    """annual_report_mentions 한 행."""
+
+    accession: str
+    mentions: tuple[Mention, ...]  # 문서 순서. () = 뽑았지만 없음

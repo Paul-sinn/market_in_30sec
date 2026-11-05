@@ -4,7 +4,6 @@
 import json
 import re
 import xml.etree.ElementTree as ET
-from collections.abc import Callable
 from datetime import date
 from decimal import Decimal, InvalidOperation
 from functools import cached_property
@@ -48,6 +47,15 @@ def fund_series(get: Get) -> dict[str, tuple[str, str]]:
     return {name: value for name, value in found.items() if name not in clashes}
 
 
+def issuer_words(name: str) -> list[str]:
+    """issuer_key의 정렬 전 토큰(원래 순서). 끝 법인 꼬리 제거까지 같다. 연관 종목의 앞 단어 맞추기(#64 D6)가 쓴다."""
+    text = _CLASS.sub(" ", _POSSESSIVE.sub("s", name.casefold().split("/", 1)[0]))
+    tokens = _INITIALS.sub(r"\1", " ".join(t for t in _TOKEN.findall(text) if t != "and")).split()
+    while tokens and tokens[-1] in LEGAL_TAIL:  # 꼬리는 끝 토큰으로 판단하므로 정렬보다 먼저
+        tokens.pop()
+    return tokens
+
+
 def issuer_key(name: str) -> str:
     """발행 회사 이름 → 비교 키(#58). casefold → 첫 '/' 앞만 → 소유격 "'s"는 's'로 붙임 → 'class x' 제거 → 영숫자 토큰
     (다른 아포스트로피·구두점·&는 버려짐) → 'and' 토큰 제거 → 이어진 한 글자 토큰은 붙임 → 끝의 법인 꼬리 토큰 제거 → 토큰 정렬.
@@ -55,11 +63,7 @@ def issuer_key(name: str) -> str:
     'Charles Schwab Corp/The' = 'SCHWAB CHARLES CORP' = 'charles schwab'(SEC 정형명은 성·이름 순서가 뒤집힌 회사가 있다),
     'DR Horton Inc' = 'HORTON D R INC /DE/' = 'dr horton', "McDonald's Corp" = 'MCDONALDS CORP', "O'Reilly" = 'O REILLY',
     'Air Products and Chemicals Inc' = 'Air Products & Chemicals, Inc.'. 혼자인 한 글자는 그대로('T Rowe Price' = 'PRICE T ROWE')."""
-    text = _CLASS.sub(" ", _POSSESSIVE.sub("s", name.casefold().split("/", 1)[0]))
-    tokens = _INITIALS.sub(r"\1", " ".join(t for t in _TOKEN.findall(text) if t != "and")).split()
-    while tokens and tokens[-1] in LEGAL_TAIL:  # 꼬리는 끝 토큰으로 판단하므로 정렬보다 먼저
-        tokens.pop()
-    return " ".join(sorted(tokens))
+    return " ".join(sorted(issuer_words(name)))
 
 
 def issuer_ciks(get: Get) -> dict[str, str]:

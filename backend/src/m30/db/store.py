@@ -29,8 +29,13 @@ from m30.models import (
     HoldState,
     LineStatus,
     MarketGlance,
+    Mention,
     NewsKind,
     Plan,
+    RelatedTicker,
+    Relation,
+    RelationBasis,
+    ReportMentions,
     StockCard,
     UnclassifiedReason,
 )
@@ -331,6 +336,48 @@ class CardStore:
             return None
         accession, cik, accepted_at, body = row
         return AnnualReport(accession, cik, accepted_at.astimezone(ET), body)
+
+    def latest_mentions(self) -> dict[str, ReportMentions]:
+        """CIK → 그 CIK의 10-K 중 언급 행이 있는 가장 늦은 것(접수 시각, 같으면 접수번호 큰 것) = 연관 종목이 지금 쓰는 언급(#64).
+        새 10-K를 아직 못 뽑았으면 지난 10-K의 언급이 나온다."""
+        rows = self._conn.execute(
+            "select distinct on (r.cik) r.cik, m.accession, m.mentions from public.annual_report_mentions m"
+            " join public.sec_annual_report r using (accession) order by r.cik, r.accepted_at desc, m.accession desc"
+        )
+        return {cik: ReportMentions(accession, tuple(Mention(e["name"], Relation(e["relation"]), e["evidence"]) for e in mentions))
+                for cik, accession, mentions in rows}
+
+    def save_mentions(self, accession: str, mentions: Sequence[Mention]) -> None:
+        """10-K 하나의 언급 한 행(순서 유지, 빈 목록 = 뽑았지만 없음). 이미 있으면 건드리지 않는다(on conflict do nothing)."""
+        self._conn.execute(
+            "insert into public.annual_report_mentions (accession, mentions) values (%s, %s) on conflict (accession) do nothing",
+            (accession, Jsonb([{"name": m.name, "relation": m.relation.value, "evidence": m.evidence} for m in mentions])),
+        )
+
+    def list_relations(self) -> dict[str, tuple[RelatedTicker, ...]]:
+        """티커 → 연관 종목(rank 순). 행이 없는 티커는 키가 없다."""
+        found: dict[str, list[RelatedTicker]] = {}
+        for ticker, related, relation, basis, rank, accession, evidence in self._conn.execute(
+            "select ticker, related_ticker, relation, basis, rank, source_accession, evidence from public.stock_relation"
+            " order by ticker, rank"
+        ):
+            found.setdefault(ticker, []).append(
+                RelatedTicker(ticker, related, Relation(relation), RelationBasis(basis), rank, accession, evidence))
+        return {ticker: tuple(rows) for ticker, rows in found.items()}
+
+    def replace_relations(self, relations: Mapping[str, Sequence[RelatedTicker]]) -> None:
+        """한 트랜잭션: 키 종목의 행을 전부 지우고 값의 행을 넣는다(빈 값 = 지우기만). 아침 실행이 반쯤 바뀐 표를 읽지 않게.
+        updated_at = 기본값 now(). 비면 아무것도 하지 않는다."""
+        if not relations:
+            return
+        with self._conn.transaction(), self._conn.cursor() as cur:
+            cur.execute("delete from public.stock_relation where ticker = any(%s)", (list(relations),))
+            cur.executemany(
+                "insert into public.stock_relation (ticker, related_ticker, relation, basis, rank, source_accession, evidence)"
+                " values (%s, %s, %s, %s, %s, %s, %s)",
+                [(r.ticker, r.related_ticker, r.relation.value, r.basis.value, r.rank, r.source_accession, r.evidence)
+                 for rows in relations.values() for r in rows],
+            )
 
     def earnings_filing_times(self, accessions: Iterable[str]) -> dict[str, datetime]:
         """넘긴 접수번호 중 earnings_filing에 있는 것 → 헤더 접수 시각(ET)(#57)."""
