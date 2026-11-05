@@ -1,5 +1,5 @@
 /** 화면 모델 타입과 표시 형식 순수 함수. 문장은 만들지 않는다: DB 문구 그대로 또는 copy.ts 고정 문구. */
-import { CHECKED_PREFIX, DAY_CLOSE, MY_STOCK_NOTICE, NOT_COVERED, PREV_CLOSE, UPDATE_DELAYED } from "./copy";
+import { CHECKED_PREFIX, DAY_CLOSE, MY_STOCK_NOTICE, NEW_FILINGS, NOT_COVERED, PREV_CLOSE, QUIET_DAY, UPDATE_DELAYED } from "./copy";
 
 export type LineStatus = "checked_found" | "checked_none" | "delayed" | "unsupported"; // DB enum line_status
 type TextLine = { text: string; status: LineStatus };
@@ -7,9 +7,12 @@ type TextLine = { text: string; status: LineStatus };
 export type LineView = TextLine | { status: "locked" };
 /** label = 등락률이 다루는 종가 날짜(#16). 등락률이 지연·미지원이어도 같은 날짜다 */
 export type ChangeView = { text: string; tone: "up" | "down" | "flat" | "delayed" | "unsupported"; label: string };
+/** 카드 헤더(#63). status = 첫 번째 줄 상태(색에만 쓴다) */
+export type CardHeaderView = { text: string; status: LineStatus };
 export type CardView = {
   ticker: string;
   name: string;
+  header: CardHeaderView | null; // 모든 viewer 같음. null = #63 전 확인함·있음 카드(건수 없음)
   change?: ChangeView; // 가격 표시 off면 키 자체가 없다(#56). 등락률·종가 날짜 라벨이 이 안에 있다
   lines: LineView[]; // on: 3개(세 번째 = 가격 사실 또는 잠금), off: 2개(첫 번째·두 번째 줄)
   leverageTag: string | null;
@@ -82,6 +85,18 @@ export function changeView(pct: number | null, status: LineStatus, previousTradi
   const abs = Math.abs(pct).toFixed(1);
   if (abs === "0.0") return { text: "0.0%", tone: "flat", label }; // -0도 보합
   return pct > 0 ? { text: `+${abs}%`, tone: "up", label } : { text: `−${abs}%`, tone: "down", label };
+}
+
+/** 조용한 날(GLOSSARY QuietDay) = 첫 번째 줄 checked_none. 다른 줄과 무관. 카드 헤더(#63)·알아두기(#66)가 이 값만 쓴다 */
+export const QUIET_DAY_STATUS = "checked_none" satisfies LineStatus;
+
+/** 카드 헤더(#63). status = 첫 번째 줄 상태(null = 축소판 → 지연, lineView와 같다), filings = DB news_line_filing_count.
+ * checked_found인데 건수가 없거나 1 미만이면(#63 전 카드) null: 건수를 지어내지 않는다 */
+export function cardHeaderView(status: LineStatus | null, filings: number | null): CardHeaderView | null {
+  if (status === QUIET_DAY_STATUS) return { text: QUIET_DAY, status };
+  if (status === "unsupported") return { text: NOT_COVERED, status };
+  if (status !== "checked_found") return { text: UPDATE_DELAYED, status: "delayed" };
+  return filings !== null && filings >= 1 ? { text: NEW_FILINGS(filings), status } : null;
 }
 
 /** 없는 줄(아직 안 만듦, 축소판의 첫 번째 줄)도 숨기지 않고 지연으로 그린다. */

@@ -230,22 +230,23 @@ class MorningPipeline:
             scope = _news_scope(funds.get(cov.ticker))
             ciks = groups[cov.ticker][1] if cov.ticker in groups else frozenset()
             if cov.ticker in kept:
-                text, accession = kept[cov.ticker]
+                text, accession, filing_count = kept[cov.ticker]
                 news_line, holds = CardLine(text, LineStatus.CHECKED_FOUND, checked_at, scope), None
             elif ciks & failed_ciks and old and old.news_line and old.news_line.status in CHECKED:
                 # 공시 기간은 고정이고 수집 실패는 새 정보가 아니다: 앞 실행이 확인한 줄(확인 시각 포함)을 그대로 둔다(D6).
                 # ETF는 편입 종목 CIK 중 하나라도 실패하면(#10 D5)
-                news_line, accession, holds = old.news_line, old.news_line_accession, None
+                news_line, accession, filing_count, holds = old.news_line, old.news_line_accession, old.news_line_filing_count, None
             elif cov.ticker in reviews:
                 review = reviews[cov.ticker]
                 accession = review.accession
+                filing_count = len(news[cov.ticker].candidates)  # 1등 + +N more(초안·대체 줄의 more와 같은 후보)
                 news_line = CardLine(review.line, LineStatus.CHECKED_FOUND, checked_at, scope)
                 # U1 = A: 대체 줄이 카드에 들어간 종목마다 보류함 행 하나
                 holds = [] if review.stage is None else [
                     HoldItem(cov.ticker, trading_day, review.accession, review.stage, review.draft_text, review.rules, review.line)
                 ]
             else:
-                accession, news_line, holds = None, news_template_line(news[cov.ticker], checked_at, scope), []
+                accession, news_line, holds, filing_count = None, news_template_line(news[cov.ticker], checked_at, scope), [], None
             card = StockCard(
                 ticker=cov.ticker,
                 trading_day=trading_day,
@@ -258,6 +259,7 @@ class MorningPipeline:
                 leverage_tag=leverage_tag(cov.leverage),
                 news_line_accession=accession,
                 previous_trading_day=previous_trading_day(trading_day),
+                news_line_filing_count=filing_count,
             )
             return card, holds
 

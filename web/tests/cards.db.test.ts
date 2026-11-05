@@ -22,7 +22,7 @@ import { admin, createTestUser, deleteTestUsers } from "./local-supabase";
 
 const DAY = "2099-12-31";
 const EARLIER = "2099-12-30";
-const TICKERS = ["ZZWA", "ZZWB", "ZZWC", "ZZWD", "ZZWE"];
+const TICKERS = ["ZZWA", "ZZWB", "ZZWC", "ZZWD", "ZZWE", "ZZWF", "ZZWG"];
 const SUSPENDED_TEXT = "Web Test E suspended line"; // 발행 중단 카드(ZZWE)에만 있는 문구
 const AT = "2099-12-31T12:30:00+00:00"; // 7:30 AM EST
 const HOLD = `canary-hold-${randomUUID()}`; // 시장 한눈에 보류 기록(검수 안 된 문장). 웹은 읽지 않는다
@@ -67,9 +67,10 @@ const cards = [
   {
     ticker: "ZZWD",
     trading_day: DAY,
-    status: "fallback",
+    status: "normal", // 첫 번째 줄이 있으면 normal(DB 제약 fallback_iff_no_news_line)
     change_pct: null,
     change_status: "unsupported",
+    ...line("news_line", "Not covered yet", "unsupported", null),
     ...line("event_line", "Not covered yet", "unsupported", null),
     ...line("price_fact_line", "Not covered yet", "unsupported", null),
     leverage_tag: "−3x inverse · resets daily",
@@ -82,6 +83,7 @@ const cards = [
     change_pct: 1.3,
     change_status: "checked_found",
     ...line("news_line", "Web Test A reported Q3 results (SEC filing)", "checked_found", "SEC filings"),
+    news_line_filing_count: 3, // 카드 헤더(#63): 문장에 +N more가 없어도 저장 건수 그대로(웹은 문장을 파싱하지 않는다)
     ...line("event_line", "Earnings Thu 1/7 after close (D-7)", "checked_found", "Earnings and dividend calendar"),
     ...line("price_fact_line", "Up 5 days in a row", "checked_found", "Daily prices"),
     leverage_tag: null,
@@ -120,6 +122,26 @@ const cards = [
     ...line("news_line", SUSPENDED_TEXT, "checked_found", "SEC filings"),
     ...line("event_line", "No confirmed events found", "checked_none", "Earnings and dividend calendar"),
     ...line("price_fact_line", "No additional price highlights", "checked_none", "Daily prices"),
+    leverage_tag: null,
+  },
+  // 카드 헤더(#63): 첫 번째 줄 지연(수집 실패), 공시 1건
+  {
+    ticker: "ZZWF",
+    trading_day: DAY,
+    status: "normal",
+    change_pct: null,
+    change_status: "delayed",
+    ...line("news_line", "Update delayed", "delayed", "SEC filings"),
+    leverage_tag: null,
+  },
+  {
+    ticker: "ZZWG",
+    trading_day: DAY,
+    status: "normal",
+    change_pct: null,
+    change_status: "delayed",
+    ...line("news_line", "Web Test G named a new CFO (SEC filing)", "checked_found", "SEC filings"),
+    news_line_filing_count: 1,
     leverage_tag: null,
   },
   // 이전 거래일 카드는 화면에 나오지 않는다
@@ -164,17 +186,21 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
   const data = await getDashboard();
   expect(data.tradingDay).toBe("Thu, Dec 31, 2099");
   // 발행 중단은 읽기에서 거르지 않고 suspended로 담는다: 거르는 곳은 exposeCards 한 곳(#16 D7)
-  expect(data.cards.map((c) => [c.ticker, c.suspended])).toEqual([
-    ["ZZWA", false],
-    ["ZZWB", false],
-    ["ZZWC", false],
-    ["ZZWD", false],
-    ["ZZWE", true],
+  // 공시 수(#63)는 DB 값 그대로 담는다. 헤더는 exposeCards가 만든다
+  expect(data.cards.map((c) => [c.ticker, c.suspended, c.newsFilingCount])).toEqual([
+    ["ZZWA", false, 3],
+    ["ZZWB", false, null],
+    ["ZZWC", false, null],
+    ["ZZWD", false, null],
+    ["ZZWE", true, null],
+    ["ZZWF", false, null],
+    ["ZZWG", false, 1],
   ]);
   expect(exposeCards(data.cards, PLUS_ALL)).toEqual([
     {
       ticker: "ZZWA",
       name: "Web Test A",
+      header: { text: "3 new filings", status: "checked_found" },
       change: { text: "+1.3%", tone: "up", label: "Wed 12/30 close" },
       lines: [
         { text: "Web Test A reported Q3 results (SEC filing)", status: "checked_found" },
@@ -187,6 +213,7 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
     {
       ticker: "ZZWB",
       name: "Web Test B",
+      header: { text: "Quiet day", status: "checked_none" },
       change: { text: "−2.0%", tone: "down", label: "prev close" }, // previous_trading_day null = #16 전 카드
       lines: [
         { text: "No new SEC filings found", status: "checked_none" },
@@ -199,6 +226,7 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
     {
       ticker: "ZZWC",
       name: "Web Test C",
+      header: { text: "Update delayed", status: "delayed" }, // 축소판
       change: { text: "Update delayed", tone: "delayed", label: "Wed 12/30 close" },
       lines: [
         { text: "Update delayed", status: "delayed" }, // 축소판: 첫 번째 줄 없음
@@ -211,15 +239,76 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
     {
       ticker: "ZZWD",
       name: "Web Test D",
+      header: { text: "Not covered yet", status: "unsupported" },
       change: { text: "Not covered yet", tone: "unsupported", label: "prev close" },
       lines: [
-        { text: "Update delayed", status: "delayed" },
+        { text: "Not covered yet", status: "unsupported" },
         { text: "Not covered yet", status: "unsupported" },
         { text: "Not covered yet", status: "unsupported" },
       ],
       leverageTag: "−3x inverse · resets daily",
       checked: null, // 확인된 줄이 없으면 하단 없음
     },
+    {
+      ticker: "ZZWF",
+      name: "Web Test F",
+      header: { text: "Update delayed", status: "delayed" },
+      change: { text: "Update delayed", tone: "delayed", label: "prev close" },
+      lines: [
+        { text: "Update delayed", status: "delayed" },
+        { text: "Update delayed", status: "delayed" },
+        { text: "Update delayed", status: "delayed" },
+      ],
+      leverageTag: null,
+      checked: null,
+    },
+    {
+      ticker: "ZZWG",
+      name: "Web Test G",
+      header: { text: "1 new filing", status: "checked_found" },
+      change: { text: "Update delayed", tone: "delayed", label: "prev close" },
+      lines: [
+        { text: "Web Test G named a new CFO (SEC filing)", status: "checked_found" },
+        { text: "Update delayed", status: "delayed" },
+        { text: "Update delayed", status: "delayed" },
+      ],
+      leverageTag: null,
+      checked: "Checked 7:30 AM ET · SEC filings",
+    },
+  ]);
+});
+
+test("카드 헤더 4종(#63): DB 건수 열로 N new filing(s), 없음 Quiet day, 지연·축소판 Update delayed, 미지원 Not covered yet. 로그인 전·무료·Plus 모두 같고 하단은 그대로", async () => {
+  const { cards } = await getDashboard();
+  const FREE = { plan: "free" as const, stocks: PLUS_ALL.stocks };
+  const views = [PLUS_ALL, FREE, null].map((viewer) => exposeCards(cards, viewer));
+  for (const v of views) {
+    expect(v.map((c) => [c.ticker, c.header])).toEqual([
+      ["ZZWA", { text: "3 new filings", status: "checked_found" }],
+      ["ZZWB", { text: "Quiet day", status: "checked_none" }],
+      ["ZZWC", { text: "Update delayed", status: "delayed" }], // 축소판(첫 번째 줄 없음)
+      ["ZZWD", { text: "Not covered yet", status: "unsupported" }],
+      ["ZZWF", { text: "Update delayed", status: "delayed" }],
+      ["ZZWG", { text: "1 new filing", status: "checked_found" }],
+    ]);
+  }
+  // 무료 범위 하단은 헤더와 관계없이 전과 같다(첫·두 번째 줄의 확인 시각·범위)
+  expect(views[2].map((c) => c.checked)).toEqual([
+    "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar",
+    "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar",
+    "Checked 7:30 AM ET · Earnings and dividend calendar",
+    null,
+    null,
+    "Checked 7:30 AM ET · SEC filings",
+  ]);
+  const html = renderToStaticMarkup(createElement(Dashboard, { data: { tradingDay: "Thu, Dec 31, 2099", glance: null, cards: views[2] } }));
+  expect([...html.matchAll(/data-header-status="([^"]+)"[^>]*>(.*?)<\//g)].map((m) => m[2])).toEqual([
+    "3 new filings",
+    "Quiet day",
+    "Update delayed",
+    "Not covered yet",
+    "Update delayed",
+    "1 new filing",
   ]);
 });
 
@@ -264,8 +353,15 @@ test("로그인 전 = 무료 범위: 세 번째 줄은 잠금만, 하단에서�
     [
       "ZZWD",
       "Not covered yet",
-      [{ text: "Update delayed", status: "delayed" }, { text: "Not covered yet", status: "unsupported" }, { status: "locked" }],
+      [{ text: "Not covered yet", status: "unsupported" }, { text: "Not covered yet", status: "unsupported" }, { status: "locked" }],
       null,
+    ],
+    ["ZZWF", "Update delayed", [{ text: "Update delayed", status: "delayed" }, { text: "Update delayed", status: "delayed" }, { status: "locked" }], null],
+    [
+      "ZZWG",
+      "Update delayed",
+      [{ text: "Web Test G named a new CFO (SEC filing)", status: "checked_found" }, { text: "Update delayed", status: "delayed" }, { status: "locked" }],
+      "Checked 7:30 AM ET · SEC filings",
     ],
   ]);
 });
@@ -306,7 +402,7 @@ test("같은 카드를 Plus 유저와 무료 유저가 볼 때 세 번째 줄이
 
   // 발행 중단 카드는 내 종목에서도 빠지고, 그 자리는 카드 없음과 같다(#16)
   for (const d of [f, p]) {
-    expect(d.data.cards.map((c) => c.ticker)).toEqual(["ZZWA", "ZZWB", "ZZWC", "ZZWD"]);
+    expect(d.data.cards.map((c) => c.ticker)).toEqual(["ZZWA", "ZZWB", "ZZWC", "ZZWD", "ZZWF", "ZZWG"]);
     expect(d.html).toContain("Summary arrives tomorrow morning");
     expect(d.html).not.toContain(SUSPENDED_TEXT);
   }
@@ -326,7 +422,7 @@ test("가격 표시 off(#56)면 DB에 등락률·가격 사실·어제 마감 �
   for (const viewer of [PLUS_ALL, null]) {
     const data = { tradingDay, glance, cards: exposeCards(cards, viewer) };
     expect(data.cards.map((c) => [c.ticker, Object.keys(c).sort(), c.lines.length])).toEqual(
-      ["ZZWA", "ZZWB", "ZZWC", "ZZWD"].map((t) => [t, ["checked", "leverageTag", "lines", "name", "ticker"], 2]),
+      ["ZZWA", "ZZWB", "ZZWC", "ZZWD", "ZZWF", "ZZWG"].map((t) => [t, ["checked", "header", "leverageTag", "lines", "name", "ticker"], 2]),
     );
     const props = JSON.stringify(data);
     const html = renderToStaticMarkup(createElement(Dashboard, { data }));
@@ -342,7 +438,7 @@ test("고르기 검색(#58): 로컬 커버 범위(티커순)를 서버 메모리
   const coverage = await getCoverage(); // 검색어를 받지 않는 조회: SQL·PostgREST 필터에 들어갈 길이 없다
   const my = { stocks: [{ ticker: "ZZWA", name: "Web Test A", locked: false }], swapsLeft: 3 };
   const pick = (q: unknown) => myDashboardView([], coverage, my, undefined, q).pickable.map((s) => s.ticker);
-  expect(pick("zzw")).toEqual(["ZZWB", "ZZWC", "ZZWD", "ZZWE"]); // 티커로 시작, 티커순, 내 종목 ZZWA 빠짐
+  expect(pick("zzw")).toEqual(["ZZWB", "ZZWC", "ZZWD", "ZZWE", "ZZWF", "ZZWG"]); // 티커로 시작, 티커순, 내 종목 ZZWA 빠짐
   expect(pick("ZZWC")).toEqual(["ZZWC"]);
   expect(pick("web-test e")).toEqual(["ZZWE"]); // 이름 정규화
   for (const q of ["%", "*", "'; DROP TABLE coverage;--", "or(ticker.eq.ZZWB)", "name.ilike.*"]) expect(pick(q), q).toEqual([]);

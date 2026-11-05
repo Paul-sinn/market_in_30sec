@@ -68,6 +68,21 @@ def test_공시가_없거나_실패했거나_출처가_없으면_LLM_없이_데�
     assert ran.summary.drafts == {}
 
 
+def test_첫_번째_줄이_없음·지연·미지원이면_공시_수를_비운다(store):
+    nvda = Coverage("NVDA", "NVIDIA Corporation", cik="0001045810")
+    failing = {(Source.SEC_FILINGS, MSFT_CIK): FailurePlan("error")}
+    ran = run(store, scenario([AAPL, MSFT, nvda, SPY], [filing(1, exhibit99="Apple named a new CFO.")],
+                              [reply(label(1, opinion=True))], failures=failing))  # AAPL: 의견글만
+
+    assert ran.summary.ticker_errors == ()  # 종목 예외 대체 카드가 아니라 데이터 상태 문구 줄
+    assert {t: (c.news_line.status, c.news_line_filing_count) for t, c in cards(store).items()} == {
+        "AAPL": (LineStatus.DELAYED, None),
+        "MSFT": (LineStatus.DELAYED, None),
+        "NVDA": (LineStatus.CHECKED_NONE, None),
+        "SPY": (LineStatus.UNSUPPORTED, None),
+    }
+
+
 def test_분류에_실패한_공시만_있으면_LLM_없이_지연_문구를_쓴다(store):
     ran = run(store, scenario([AAPL], [filing(1, exhibit99="Apple named a new CFO.")], ["x", "x"]))
 
@@ -314,12 +329,25 @@ def test_소식이_여러_개면_가장_중요한_하나만_LLM에_넘기고_N_m
     assert draft.line == "Apple named a new CFO +2 more (SEC filing)"
 
 
+def test_소식이_여러_개면_카드에_1등과_N_more를_합한_공시_수를_저장한다(store):
+    filings = [filing(n, body=text) for n, text in enumerate(["Lead text", "Second", "Third", "Column", "Missing"], 1)]
+    labels = [label(1, importance=5), label(2, importance=3), label(3, importance=2), label(4, opinion=True)]  # 5는 응답에서 빠짐
+    run(store, scenario([AAPL], filings, [reply(*labels), sentence(CFO), FACT]))
+
+    card = cards(store)["AAPL"]
+    assert card.news_line.text == "Apple named a new CFO +2 more (SEC filing)"
+    assert card.news_line_filing_count == 3  # 의견글·미분류는 세지 않는다
+
+
 def test_한_회사의_여러_티커는_같은_공시로_LLM을_한_번만_부르고_같은_줄을_쓴다(store, filings_day):
     ran = run(store, filings_day)
 
     assert [news_block(r)["company"] for r in line_requests(ran)].count("Alphabet Inc.") == 1
     assert ran.summary.drafts["GOOG"] == ran.summary.drafts["GOOGL"]
     assert ran.summary.llm_calls == 5  # 분류 1 + 초안 AAPL·GOOG 2 + 판정 AAPL·GOOG 2
+    assert {t: c.news_line_filing_count for t, c in cards(store).items()} == {
+        "AAPL": 1, "GOOG": 1, "GOOGL": 1, "MSFT": 1, "SPY": None,  # 같은 공시를 쓴 티커도 카드마다 자기 수
+    }
 
 
 def test_본문을_못_읽은_공시는_LLM을_부르지_않는다(store, filings_day):

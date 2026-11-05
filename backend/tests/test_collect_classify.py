@@ -956,15 +956,15 @@ def test_CLI_요약은_건너뛴_카드를_티커로만_찍는다(store, first_c
 
 # 재실행에서 CIK 수집이 실패하면(#16 D6, #5 R-5): 앞 실행이 확인한 첫 번째 줄은 그대로 둔다. 수집 실패는 새 정보가 아니다
 @pytest.mark.parametrize(
-    "filings, replies, line",
+    "filings, replies, line, count",
     [
-        ([filing(1, body="Apple named a new CFO.")], [reply(label(1)), LINE, FACT], LineStatus.CHECKED_FOUND),
-        ([filing(1, body="Apple agreed to acquire a startup.")], [reply(label(1)), BUY, BUY], LineStatus.CHECKED_FOUND),
-        ([], [], LineStatus.CHECKED_NONE),
+        ([filing(1, body="Apple named a new CFO.")], [reply(label(1)), LINE, FACT], LineStatus.CHECKED_FOUND, 1),
+        ([filing(1, body="Apple agreed to acquire a startup.")], [reply(label(1)), BUY, BUY], LineStatus.CHECKED_FOUND, 1),
+        ([], [], LineStatus.CHECKED_NONE, None),
     ],
     ids=["통과한_줄", "대체_줄과_대기_보류함_행", "공시_없음"],
 )
-def test_재실행에서_CIK_수집이_실패하면_앞_실행이_확인한_첫_번째_줄·분류·보류함이_그대로다(store, admin, filings, replies, line):
+def test_재실행에서_CIK_수집이_실패하면_앞_실행이_확인한_첫_번째_줄·분류·보류함이_그대로다(store, admin, filings, replies, line, count):
     run(store, scenario([AAPL], filings, replies))
     before = aapl_rows(store)
     assert before[0].news_line.status is line
@@ -973,6 +973,7 @@ def test_재실행에서_CIK_수집이_실패하면_앞_실행이_확인한_첫_
 
     card, holds, classifications = aapl_rows(store)
     assert (card.news_line, card.news_line_accession) == (before[0].news_line, before[0].news_line_accession)  # 확인 시각까지
+    assert card.news_line_filing_count == before[0].news_line_filing_count == count  # 공시 수도 앞 실행 값
     assert (holds, classifications) == before[1:]
     assert admin.execute("select count(*) from public.stock_card_revision").fetchone()[0] == 0  # 내용이 바뀌지 않았다
     assert ran.summary.failures == (SourceFailure(Source.SEC_FILINGS, AAPL_CIK, FailureReason.ERROR),)

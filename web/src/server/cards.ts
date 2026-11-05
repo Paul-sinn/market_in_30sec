@@ -15,6 +15,7 @@ const COLUMNS = [
   "previous_trading_day",
   "publish_suspended",
   ...LINES.flatMap(lineColumns),
+  "news_line_filing_count", // 카드 헤더 N new filing(s)(#63). 웹은 문장의 +N more를 파싱하지 않는다
   "leverage_tag",
   "coverage(name)",
 ].join(",");
@@ -29,6 +30,7 @@ type Row = {
   change_status: LineStatus;
   previous_trading_day: string | null;
   publish_suspended: boolean;
+  news_line_filing_count: number | null;
   leverage_tag: string | null;
   coverage: { name: string };
 } & Record<`${Line}_status`, LineStatus | null> &
@@ -48,6 +50,7 @@ export type StoredCard = {
   lines: (StoredLine | null)[]; // 항상 3개. null = 그 줄이 없음(축소판의 첫 번째 줄 등)
   leverageTag: string | null;
   suspended: boolean; // 발행 중단(#16). 읽기에서 거르지 않는다: 노출 판단은 exposeCards 한 곳
+  newsFilingCount: number | null; // 첫 번째 줄이 다룬 공시 수(DB 값 그대로, #63). 헤더는 exposeCards가 만든다
 };
 
 /** 가장 최근 거래일의 카드 전부(종목순)와 같은 날 시장 한눈에. 카드가 없으면 tradingDay·glance null.
@@ -105,5 +108,6 @@ function toStoredCard(r: Row): StoredCard {
     }),
     leverageTag: r.leverage_tag,
     suspended: r.publish_suspended,
+    newsFilingCount: r.news_line_filing_count,
   };
 }

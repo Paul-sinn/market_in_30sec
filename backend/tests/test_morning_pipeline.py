@@ -647,6 +647,22 @@ def test_편입_데이터가_없으면_ETF_첫_번째_줄은_Not_covered_yet이�
     assert ran.summary.failures == ()  # 미지원은 실패가 아니다
 
 
+@pytest.mark.parametrize(
+    "scenario, counts",
+    [
+        (SCENARIOS / "etf_lite.json", {"AAPL": 1, "MSFT": 1, "QQQ": 2, "SPY": 2, "TQQQ": 2}),  # ETF 줄은 모두 +1 more
+        (quiet_etf(), dict.fromkeys(ETF_DEFAULTS)),  # 편입 종목 공시 없음: No new SEC filings found
+        (quiet_etf(holdings={}), dict.fromkeys(ETF_DEFAULTS)),  # 편입 데이터 없음: ETF는 Not covered yet
+    ],
+    ids=["편입_종목_공시_있음", "편입_종목_공시_없음", "편입_데이터_없음"],
+)
+def test_ETF_카드는_편입_종목_공시_중_첫_번째_줄이_다룬_수를_저장하고_편입_데이터가_없으면_비운다(store, scenario, counts):
+    ran = run_etf(store, scenario)
+
+    assert {t: c.news_line_filing_count for t, c in ran.cards.items()} == counts
+    assert ran.summary.ticker_errors == ()
+
+
 HOLDINGS_DELAYED = ("Update delayed", LineStatus.DELAYED, "SEC filings of top holdings", None)
 HOLDING_ERRORS = {  # 실패 종류 → (QQQ 호출 수, SPY도 막혔나, 실패 사유)
     "transient": (4, False, FailureReason.RETRIES_EXHAUSTED),
@@ -686,7 +702,7 @@ def test_재실행에서_편입_종목_CIK_수집이_실패하면_앞_실행이_
 
     for ticker in ("QQQ", "SPY", "TQQQ"):  # 확인 시각까지 그대로(공시 기간은 고정이고 수집 실패는 새 정보가 아니다)
         assert ran.cards[ticker].news_line == before[ticker], ticker
-    assert ran.cards["SPY"].news_line_accession == AAPL_8K
+    assert (ran.cards["SPY"].news_line_accession, ran.cards["SPY"].news_line_filing_count) == (AAPL_8K, 2)
 
 
 def test_같은_거래일을_다시_돌리면_저장한_편입_보고를_쓰고_출처를_부르지_않는다(store, admin, etf_lite):
@@ -1030,6 +1046,7 @@ def test_카드_만들기에서_종목_하나가_예외를_내면_그_카드만_
     run(store, dataclasses.replace(first, llm_replies=first.llm_replies[:4] + [still_buy]))  # MSFT 재생성도 걸림 → 보류함 행
     holds = store.list_hold_items(FRI)
     assert [h.ticker for h in holds] == ["MSFT"]
+    assert cards_by_ticker(store, FRI)["MSFT"].news_line_filing_count == 1
     real = morning.change_pct
 
     def change_pct(bars):
@@ -1043,8 +1060,8 @@ def test_카드_만들기에서_종목_하나가_예외를_내면_그_카드만_
 
     cards = cards_by_ticker(store, FRI)
     msft = cards["MSFT"]
-    assert (msft.status, msft.change_pct, msft.change_status, msft.news_line_accession) == (
-        CardStatus.NORMAL, None, LineStatus.DELAYED, None)
+    assert (msft.status, msft.change_pct, msft.change_status, msft.news_line_accession, msft.news_line_filing_count) == (
+        CardStatus.NORMAL, None, LineStatus.DELAYED, None, None)
     assert card_lines(msft) == ALL_DELAYED
     assert msft.previous_trading_day == THU
     assert store.list_hold_items(FRI) == holds  # 대체 카드는 보류함을 건드리지 않는다

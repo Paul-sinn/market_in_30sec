@@ -43,7 +43,7 @@ CARD_COLUMNS = [
     "news_line_text", "news_line_status", "news_line_checked_at", "news_line_source_scope",
     "event_line_text", "event_line_status", "event_line_checked_at", "event_line_source_scope",
     "price_fact_line_text", "price_fact_line_status", "price_fact_line_checked_at", "price_fact_line_source_scope",
-    "updated_at", "leverage_tag", "news_line_accession", "previous_trading_day", "publish_suspended",
+    "updated_at", "leverage_tag", "news_line_accession", "previous_trading_day", "publish_suspended", "news_line_filing_count",
 ]
 
 
@@ -59,7 +59,7 @@ def test_카드_컬럼은_정해진_목록뿐이고_방향_의견_필드가_없�
         "select column_name from information_schema.columns"
         " where table_schema = 'public' and table_name = 'stock_card' order by ordinal_position")]
     assert columns == CARD_COLUMNS  # 콜·토크·방향·판정 컬럼은 영원히 없다 (ADR-0001). 출처 공시 열은 방향 의견이 아니다
-    assert len(columns) == 22
+    assert len(columns) == 23
     assert enum_values(admin, "card_status") == ["normal", "fallback"]
     assert enum_values(admin, "line_status") == ["checked_found", "checked_none", "delayed", "unsupported"]
 
@@ -353,7 +353,7 @@ def test_고친_문장_없이_수정됨이나_재발행으로_바꿀_수_없다(
 
 def test_공시_줄이_없는_카드는_재발행이_실패한다(admin, held):
     admin.execute("update public.stock_card set news_line_text = 'No new SEC filings found', news_line_status = 'checked_none',"
-                  " news_line_accession = null where ticker = 'AAPL'")
+                  " news_line_accession = null, news_line_filing_count = null where ticker = 'AAPL'")
     with pytest.raises(errors.RaiseException):
         as_service_role(admin, "update public.hold_queue set edited_text = %s, state = 'republished'", (HUMAN,))
 
@@ -373,6 +373,40 @@ def test_새_카드는_발행_중단이_꺼져_있다(aapl):
     aapl.execute(CARD_SQL)
 
     assert aapl.execute("select publish_suspended from public.stock_card").fetchall() == [(False,)]
+
+
+NEWS_COLS = f"{CARD_COLS}, news_line_text, news_line_status, news_line_checked_at, news_line_source_scope"
+FOUND = "'Apple named a new CFO +2 more (SEC filing)', 'checked_found', now(), 'SEC filings'"
+
+
+def insert_filing_count(conn, news, count):
+    """news = 첫 번째 줄 값 4개(SQL), None = 축소판(첫 번째 줄 없음)."""
+    columns, values = (CARD_COLS, "'AAPL', '2026-10-16', 'fallback', 1.3, 'checked_found'") if news is None else (
+        NEWS_COLS, f"'AAPL', '2026-10-16', 'normal', 1.3, 'checked_found', {news}")
+    conn.execute(f"insert into public.stock_card ({columns}, news_line_filing_count) values ({values}, %s)", (count,))
+
+
+@pytest.mark.parametrize(
+    "news, count",
+    [
+        ("'No new SEC filings found', 'checked_none', now(), 'SEC filings'", 1),
+        ("'Update delayed', 'delayed', now(), 'SEC filings'", 1),
+        ("'Not covered yet', 'unsupported', now(), null", 1),
+        (None, 1),
+        (FOUND, 0),
+    ],
+    ids=["확인함·없음", "지연", "미지원", "축소판", "확인함·있음인데_0"],
+)
+def test_첫_번째_줄_공시_수는_확인함·있음_줄에만_1_이상으로_둘_수_있다(aapl, news, count):
+    with pytest.raises(errors.CheckViolation):
+        insert_filing_count(aapl, news, count)
+
+
+@pytest.mark.parametrize("count", [None, 1, 3], ids=["#63_전_카드", "1건", "3건"])
+def test_확인함·있음_줄은_공시_수가_비었거나_1_이상이면_받는다(aapl, count):
+    insert_filing_count(aapl, FOUND, count)
+
+    assert aapl.execute("select news_line_filing_count from public.stock_card").fetchall() == [(count,)]
 
 
 def test_종가_날짜가_카드_거래일과_같거나_뒤면_DB가_거부한다(aapl):
