@@ -243,6 +243,22 @@ def test_보유_종목을_SEC_회사로_못_찾으면_넣지_않고_수만_센�
     assert (refresh.stocks, refresh.added, refresh.unmatched) == (8, 8, 4)
 
 
+def test_갱신은_저장된_CIK가_아니라_SPY_보유_회사_이름을_지금_규칙으로_SEC_목록에_다시_맞춘다(store):
+    # 원격 SPY 보고(2026-06-30)는 #58 전 이름 규칙으로 받아 40개 회사 cik가 null로 저장됐다. 반대로 저장된 cik가 있어도
+    # 이름이 지금 SEC 목록과 안 맞으면 못 찾음이다(저장된 cik로 되돌아가지 않는다)
+    renamed = Holding("Bristol-Myers Squibb Old Name", "0000014272", Decimal("0.4"), "EC")  # 녹화 목록에서 이 CIK의 티커는 BMY
+    save_report(store, dataclasses.replace(SPY_REPORT, holdings=(
+        *(dataclasses.replace(h, cik=None) for h in SPY_REPORT.holdings), renamed)))
+    get = sec_day()
+
+    refresh = refresh_coverage(store, get)
+
+    assert stocks(store) == SP500_STOCKS
+    assert refresh == CoverageRefresh(None, etfs=4, stocks=12, added=12, unmatched=1, sp500_period_end=date(2026, 6, 30))
+    assert get.urls == [TICKERS_URL]  # 티커·이름 두 규칙이 같은 응답 하나를 쓴다
+    assert store.latest_holdings("SPY").holdings[0].cik is None  # 저장된 보고는 고치지 않는다
+
+
 SQQQ = '\n[[etf]]\nticker = "SQQQ"\nname = "ProShares UltraPro Short QQQ"\nholdings = "QQQ"\nleverage = "-3"\n'
 
 

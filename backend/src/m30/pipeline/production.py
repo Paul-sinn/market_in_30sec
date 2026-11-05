@@ -1,8 +1,9 @@
 """운영 모드(#26): 실제 출처(EDGAR·정부 기관·Anthropic·시세) + 미연결 출처. 원격 DB로 가는 길은 CLI --production(이 모듈)과 --quarterly(분기 작업) 둘뿐이다.
 가짜 어댑터·시나리오를 import하지 않는다(테스트가 sys.modules로 확인)."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date
+from functools import cache
 from importlib.resources.abc import Traversable
 from pathlib import Path
 
@@ -10,7 +11,7 @@ from m30.adapters import SourceError
 from m30.adapters.edgar import EdgarEarningsFilingSource, EdgarFilingSource, Get, ticker_ciks
 from m30.adapters.gov import GovIndicatorSource
 from m30.adapters.gov_news import GovNewsSource
-from m30.adapters.nport import EdgarHoldingsSource
+from m30.adapters.nport import EdgarHoldingsSource, issuer_ciks, issuer_key
 from m30.adapters.prices import PriceSource
 from m30.adapters.unavailable import NoEventSource
 from m30.db.store import CardStore
@@ -31,6 +32,8 @@ class CoverageRefresh:
 
 def refresh_coverage(store: CardStore, get: Get, etf_list: Traversable | Path = ETF_LIST) -> CoverageRefresh:
     """커버 범위 갱신(#58 D6). ETF 목록 읽기 → SEC 티커 목록(요청 1회) → ETF 행 upsert → 저장된 SPY 최신 보고 → 주식 행 추가만.
+    보고의 보유 회사 CIK는 저장된 값을 쓰지 않고 같은 티커 목록에서 이름(issuer_key)으로 다시 맞춘다: 저장 시점의 이름 규칙과
+    무관하게 지금 규칙 한 벌. 못 맞추면 CIK 없음(못 찾음). 저장된 보고 행은 고치지 않는다.
     ETF 목록이 틀리면(ValueError·OSError) etf_list_invalid, 티커 목록 SourceError면 sec_tickers_failed: 둘 다 아무 행도 쓰지 않고
     다시 시도하지 않는다(#19 U2). 주식 티커가 ETF 목록 티커와 같으면 ETF가 이긴다. 거래일과 무관하다(같은 입력이면 같은 행).
     DB 오류는 잡지 않는다."""
@@ -38,14 +41,16 @@ def refresh_coverage(store: CardStore, get: Get, etf_list: Traversable | Path = 
         etfs = load_etfs(etf_list)
     except (ValueError, OSError):
         return CoverageRefresh("etf_list_invalid")
+    listing = cache(get)  # 티커·이름 두 규칙이 응답 하나를 같이 쓴다
     try:
-        ciks = ticker_ciks(get)
+        ciks, issuers = ticker_ciks(listing), issuer_ciks(listing)
     except SourceError:
         return CoverageRefresh("sec_tickers_failed")
     store.upsert_coverage(etfs)
     if (report := store.latest_holdings(SP500_FUND)) is None:  # 빈 DB 첫 실행: 파이프라인 편입 단계가 저장한 뒤 다음 실행부터
         return CoverageRefresh(etfs=len(etfs))
-    found, unmatched = sp500_stocks(report, ciks)
+    holdings = tuple(replace(h, cik=issuers.get(issuer_key(h.name))) for h in report.holdings)
+    found, unmatched = sp500_stocks(replace(report, holdings=holdings), ciks)
     etf_tickers = {e.ticker for e in etfs}
     stocks = [s for s in found if s.ticker not in etf_tickers]
     return CoverageRefresh(None, len(etfs), len(stocks), store.add_coverage(stocks), unmatched, report.period_end)
