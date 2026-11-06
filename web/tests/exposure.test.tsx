@@ -39,6 +39,7 @@ const stored = (third: StoredLine | null, over: Partial<StoredCard> = {}): Store
   suspended: false,
   newsFilingCount: 1, // 첫 번째 줄이 다룬 공시 수(#63)
   firstQuietFact: null, // 알아두기 1번(#66). 첫 번째 줄이 확인함·있음이라 있어도 안 보인다
+  lockedSlot: null, // 잠긴 자리(#69). null = ETF·지난 카드(키 없음)
   ...over,
 });
 
@@ -493,5 +494,36 @@ describe("지난 카드(#68): 한 종목의 날짜별 카드. Plus = 받은 날 
         expect(Object.keys(d.card!).sort(), plan).toEqual(KEYS);
       }
     }
+  });
+});
+
+describe("잠긴 자리(#69): 공용 카드 속성이라 모든 viewer·가격 플래그에 같고, 값이 있을 때만 키가 생긴다", () => {
+  const SLOTS = ["earnings_summary", "big_holders"] as const;
+
+  test("비 ETF 카드: 로그인 전·무료·Plus·내 종목·둘러보기 모두 같은 lockedSlot, 키 = 기존 + lockedSlot", () => {
+    for (const lockedSlot of SLOTS) {
+      for (const [who, viewer] of VIEWERS) {
+        const [view] = exposeCards([stored(THIRD["사실 있음"], { lockedSlot })], viewer);
+        expect(view.lockedSlot, who).toBe(lockedSlot);
+        expect(Object.keys(view).sort(), who).toEqual(["change", "checked", "header", "leverageTag", "lines", "lockedSlot", "name", "ticker"]);
+      }
+    }
+  });
+
+  test("가격 표시 off여도 그대로(가격 키가 아니다)", () => {
+    vi.stubEnv("PRICE_DISPLAY", undefined);
+    for (const [who, viewer] of VIEWERS) {
+      const [view] = exposeCards([stored(THIRD["사실 있음"], { lockedSlot: "big_holders" })], viewer);
+      expect(view.lockedSlot, who).toBe("big_holders");
+      expect("change" in view, who).toBe(false);
+    }
+  });
+
+  test("ETF(lockedSlot null)는 키 자체가 없다(undefined 키도 아니다)", () => {
+    for (const [who, viewer] of VIEWERS) expect("lockedSlot" in exposeCards([stored(THIRD["사실 있음"])], viewer)[0], who).toBe(false);
+  });
+
+  test("발행 중단 카드는 잠긴 자리가 있어도 빠진다", () => {
+    expect(exposeCards([stored(THIRD["사실 있음"], { suspended: true, lockedSlot: "earnings_summary" })], null)).toEqual([]);
   });
 });

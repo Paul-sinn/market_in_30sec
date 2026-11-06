@@ -2,11 +2,12 @@
 
 import dataclasses
 import json
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 from psycopg import errors
 
+from m30.config import ET
 from m30.models import IMPORTANCE_MAX, Coverage, HoldStage, HoldState, NewsKind, Relation, RelationBasis
 from test_collect_classify import AAPL, FRI, MSFT, filing, label, reply, run, scenario
 
@@ -117,7 +118,8 @@ def test_RLS가_꺼진_테이블이_없다(admin):
     tables = {"coverage", "stock_card", "sec_filing", "indicator_release", "filing_classification", "hold_queue",
               "stock_card_revision", "user_profile", "my_stock", "my_stock_history", "default_ticker", "pipeline_run",
               "fund_holdings", "morning_notice", "market_glance", "market_news_item", "earnings_filing", "earnings_estimate",
-              "sec_annual_report", "annual_report_mentions", "stock_relation", "quiet_fact"}
+              "sec_annual_report", "annual_report_mentions", "stock_relation", "quiet_fact",
+              "locked_slot_tap"}
     assert tables <= set(public_tables(admin))  # 검사 대상이 비어서 통과하는 것을 막는다
     assert rls_off == []
 
@@ -209,7 +211,7 @@ def test_anon·authenticated는_public_함수를_실행할_수_없다(admin, rol
         "select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'")]
     assert {"keep_card_revision", "republish_from_hold_queue", "user_local_date", "user_profile_timezone",
             "lock_my_stocks_on_plan_change", "my_stock_rules", "log_my_stock_change", "dispatch_morning_workflow",
-            "my_quiet_facts"} <= set(functions)  # 검사 대상이 비어서 통과하지 않게
+            "my_quiet_facts", "count_locked_slot_tap"} <= set(functions)  # 검사 대상이 비어서 통과하지 않게
     assert executable == []
 
 
@@ -1005,3 +1007,90 @@ def test_알아두기_진도는_그_유저의_잠기지_않은_내_종목만_그
     # NVDA는 풀이 없다(ETF처럼). KO는 잠겼다. 다른 유저의 늦은 이력은 섞이지 않는다
     assert quiet_facts(quiet, uid, 1) == {"AAPL": "AAPL fact 2", "MSFT": "MSFT fact 2"}
     assert quiet_facts(quiet, other, 1) == {"AAPL": "AAPL fact 1", "MSFT": "MSFT fact 2"}
+
+
+# 잠긴 자리·대기 등록(#69): 프로필의 대기 등록 시각 + 잠긴 자리 탭 일별 합계(유저 값 없음)
+def service_role_columns(conn, table, privilege):
+    return [r[0] for r in conn.execute(
+        "select column_name from information_schema.columns where table_schema = 'public' and table_name = %s"
+        " and has_column_privilege('service_role', 'public.' || table_name, column_name, %s) order by column_name",
+        (table, privilege))]
+
+
+def test_대기_등록_시각은_비어_있는_채로_프로필이_생기고_서버는_그_열을_고칠_수만_있다(admin, make_user):
+    uid = make_user()
+
+    assert admin.execute("select data_type, is_nullable from information_schema.columns where table_schema = 'public'"
+                         " and table_name = 'user_profile' and column_name = 'waitlisted_at'").fetchone() == (
+        "timestamp with time zone", "YES")
+    assert admin.execute("select waitlisted_at from public.user_profile where user_id = %s", (uid,)).fetchone() == (None,)
+    assert service_role_columns(admin, "user_profile", "UPDATE") == ["morning_push_time", "plan", "timezone", "waitlisted_at"]
+    assert service_role_columns(admin, "user_profile", "INSERT") == ["morning_push_time", "plan", "timezone", "user_id"]
+    as_service_role(admin, "update public.user_profile set waitlisted_at = now() where user_id = %s and waitlisted_at is null",
+                    (uid,))
+
+
+def test_잠긴_자리_탭_집계는_날짜·자리·합계_열뿐이고_유저를_알_수_있는_열이_없다(admin):
+    columns = [r[0] for r in admin.execute(
+        "select column_name from information_schema.columns"
+        " where table_schema = 'public' and table_name = 'locked_slot_tap' order by ordinal_position")]
+    assert columns == ["day", "slot", "taps"]  # 유저 id·IP·시각 열은 영원히 없다(개인정보처리방침 "not linked to you")
+
+
+TAP_SQL = "insert into public.locked_slot_tap (day, slot, taps) values ('2026-11-05', %s, %s)"
+
+
+@pytest.mark.parametrize(
+    "slot, taps, error",
+    [
+        ("earnings", 1, errors.CheckViolation),
+        ("Big_holders", 1, errors.CheckViolation),
+        ("", 1, errors.CheckViolation),
+        (None, 1, errors.NotNullViolation),
+        ("related_lock", 0, errors.CheckViolation),
+        ("big_holders", 1, errors.UniqueViolation),  # 그날 big_holders 행은 이미 있다
+    ],
+    ids=["모르는_자리", "대소문자_다름", "빈_자리", "자리_없음", "합계_0", "같은_날·자리"],
+)
+def test_잠긴_자리_탭은_세_자리_종류만_하루_한_행씩_1_이상으로_받는다(admin, slot, taps, error):
+    for ok in ("earnings_summary", "big_holders", "related_lock"):  # 웹 TAP_SLOTS와 같다
+        admin.execute(TAP_SQL, (ok, 1))
+    with pytest.raises(error):
+        admin.execute(TAP_SQL, (slot, taps))
+
+
+def test_잠긴_자리_탭_집계는_서버가_넣고_올릴_수만_있고_지울_수_없다(admin):
+    as_service_role(admin, TAP_SQL, ("big_holders", 1))
+    as_service_role(admin, "update public.locked_slot_tap set taps = taps + 1")
+
+    assert service_role_privileges(admin, "locked_slot_tap") == ["SELECT", "INSERT", "UPDATE"]  # 증가 함수가 서버 권한으로 쓴다
+    with pytest.raises(errors.InsufficientPrivilege):
+        as_service_role(admin, "delete from public.locked_slot_tap")
+
+
+def tap(conn, slot, timezone="UTC"):
+    """service_role로 count_locked_slot_tap(slot)을 부른다. timezone = 연결 세션 시간대."""
+    with conn.transaction():
+        conn.execute("set local role service_role")
+        conn.execute(f"set local timezone = '{timezone}'")
+        conn.execute("select public.count_locked_slot_tap(%s)", (slot,))
+
+
+def test_탭을_세면_오늘_동부_날짜의_그_자리_합계가_1씩_오르고_다른_자리는_따로_센다(admin):
+    tap(admin, "earnings_summary", "Pacific/Kiritimati")  # UTC+14
+    tap(admin, "earnings_summary", "Etc/GMT+12")  # UTC-12: 세션 날짜를 쓰면 위와 늘 다른 날이 된다
+    tap(admin, "related_lock")
+
+    today = datetime.now(ET).date()
+    assert admin.execute("select day, slot, taps from public.locked_slot_tap order by slot").fetchall() == [
+        (today, "earnings_summary", 2), (today, "related_lock", 1)]
+
+
+def test_탭_세기_함수는_서버만_부를_수_있고_모르는_자리는_세지_않는다(admin):
+    # public·anon·authenticated 실행 불가와 security definer 아님은 위 함수 전체 검사가 본다(anon은 public 권한을 물려받는다)
+    assert admin.execute("select has_function_privilege('service_role', 'public.count_locked_slot_tap(text)', 'EXECUTE')"
+                         ).fetchone() == (True,)
+    for slot in ("earnings", "", None):
+        with pytest.raises((errors.CheckViolation, errors.NotNullViolation)):
+            tap(admin, slot)
+    assert admin.execute("select count(*) from public.locked_slot_tap").fetchone() == (0,)

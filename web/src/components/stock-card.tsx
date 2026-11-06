@@ -1,5 +1,5 @@
-import type { CardView, ChangeView, LineView } from "@/lib/card-view";
-import { PRICE_FACTS_IN_PLUS, QUIET_FACT, SUMMARY_TOMORROW } from "@/lib/copy";
+import type { CardView, ChangeView, LineView, TapSlot } from "@/lib/card-view";
+import { LOCKED_SLOT, PRICE_FACTS_IN_PLUS, QUIET_FACT, SUMMARY_TOMORROW } from "@/lib/copy";
 
 // 상태는 표시 방식에만 쓴다(색). 문구는 card.lines의 text 그대로. 모양은 사용자 시안의 샘플 카드(#27)
 const CHANGE_TONE: Record<ChangeView["tone"], string> = {
@@ -16,6 +16,20 @@ export const LINE_TONE: Record<LineView["status"], string> = {
   unsupported: "text-muted",
   locked: "text-muted", // 무료 범위의 세 번째 줄(#9). 문구가 잠금을 말한다
 };
+
+/** 잠긴 자리·세 번째 줄 잠금 누르기(#69): POST /waitlist가 그날 그 자리 합계를 1 올리고 /plus 설명으로 보낸다.
+ *  일반 폼이라 JS 없이 돌고, 유저 값을 싣지 않는다(카드는 모든 viewer에게 같다). 터치 영역 44px, 누를 수 있다는 표시는 테두리·밑줄(hover 없는 폰) */
+function TapForm({ slot, className, children }: { slot: TapSlot; className: string; children: React.ReactNode }) {
+  return (
+    <form method="post" action="/waitlist">
+      <input type="hidden" name="intent" value="tap" />
+      <input type="hidden" name="slot" value={slot} />
+      <button type="submit" className={`flex min-h-11 w-full cursor-pointer items-center text-left hover:text-foreground ${className}`}>
+        {children}
+      </button>
+    </form>
+  );
+}
 
 export function StockCard({ card }: { card: CardView }) {
   return (
@@ -48,9 +62,16 @@ export function StockCard({ card }: { card: CardView }) {
           <li
             key={i}
             data-status={line.status}
-            className={`border-t border-border py-3 wrap-break-word last:pb-0 ${LINE_TONE[line.status]}`}
+            // 잠긴 줄은 버튼(44px)이 줄 높이를 채운다
+            className={`border-t border-border wrap-break-word ${line.status === "locked" ? "" : "py-3 last:pb-0"} ${LINE_TONE[line.status]}`}
           >
-            {line.status === "locked" ? PRICE_FACTS_IN_PLUS : line.text}
+            {line.status === "locked" ? (
+              <TapForm slot="related_lock" className="py-1 underline underline-offset-4">
+                {PRICE_FACTS_IN_PLUS}
+              </TapForm>
+            ) : (
+              line.text
+            )}
             {/* 알아두기(#66): 조용한 날 첫 번째 줄 아래 보조 문장. 줄 수에 세지 않는다 */}
             {i === 0 && card.quietFact && (
               <p data-quiet-fact className="mt-1 text-sm text-muted">
@@ -60,6 +81,14 @@ export function StockCard({ card }: { card: CardView }) {
           </li>
         ))}
       </ul>
+      {/* 잠긴 자리(#69): 줄 수에 세지 않는다. ETF·지난 카드에는 없다 */}
+      {card.lockedSlot && (
+        <div className="mt-4">
+          <TapForm slot={card.lockedSlot} className="border border-muted px-4 py-2 text-muted">
+            {LOCKED_SLOT[card.lockedSlot]}
+          </TapForm>
+        </div>
+      )}
       {card.checked && <p className="mt-auto pt-4 text-xs text-muted">{card.checked}</p>}
     </article>
   );

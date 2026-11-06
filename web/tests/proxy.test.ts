@@ -96,8 +96,8 @@ test("형식이 깨진 헤더 → 401", async () => {
   }
 });
 
-test("랜딩(/)과 카드 대시보드(/cards), 로그인 라우트(#37), 내 종목 쓰기(#38), 이용약관·개인정보처리방침(#62) 모두 인증 없으면 401(#27)", async () => {
-  for (const path of ["/", "/cards", "/cards/", "/auth/sign-in", "/auth/callback?code=x", "/my-stocks", "/terms", "/privacy"]) {
+test("랜딩(/)과 카드 대시보드(/cards), 로그인 라우트(#37), 내 종목 쓰기(#38), 이용약관·개인정보처리방침(#62), 잠긴 자리 화면·쓰기(#69) 모두 인증 없으면 401(#27)", async () => {
+  for (const path of ["/", "/cards", "/cards/", "/auth/sign-in", "/auth/callback?code=x", "/my-stocks", "/terms", "/privacy", "/plus", "/waitlist"]) {
     await expectDenied(mod.proxy(new NextRequest(`https://example.test${path}`)));
     expect((await mod.proxy(new NextRequest(`https://example.test${path}`, { headers: { authorization: basic(`${USER}:${PASSWORD}`) } }))).status).toBe(200);
   }
@@ -285,9 +285,18 @@ describe("카드 조회 요청 제한(#62)", () => {
     expect((await read("/cards", ip)).status).toBe(429);
   });
 
-  test("카드 조회가 아닌 경로(/, /terms, /privacy, /auth/sign-in, /my-stocks, /_next/static/…, /cardsx)는 세지 않는다", async () => {
+  test("잠긴 자리 설명 화면(/plus)·탭·대기 등록(/waitlist, 로그인 없는 쓰기, #69)도 카드 조회와 같은 IP 창에서 센다", async () => {
+    const ip = { "x-real-ip": "192.0.2.10" };
+    await burst(20, "/cards", ip);
+    await burst(20, "/plus", ip);
+    await burst(20, "/waitlist", ip);
+    expect((await read("/waitlist", ip)).status).toBe(429);
+    expect((await read("/plus", ip)).status).toBe(429);
+  });
+
+  test("카드 조회가 아닌 경로(/, /terms, /privacy, /auth/sign-in, /my-stocks, /_next/static/…, /cardsx, /plusx, /waitlist/x)는 세지 않는다", async () => {
     const ip = { "x-real-ip": "192.0.2.8" };
-    for (const path of ["/", "/terms", "/privacy", "/auth/sign-in", "/my-stocks", "/_next/static/chunks/a.js", "/cardsx"]) {
+    for (const path of ["/", "/terms", "/privacy", "/auth/sign-in", "/my-stocks", "/_next/static/chunks/a.js", "/cardsx", "/plusx", "/waitlist/x"]) {
       expect(await burst(70, path, ip), path).toEqual(Array(70).fill(401));
     }
     expect((await read("/cards", ip)).status).toBe(401); // 위 요청이 카드 조회 한도를 쓰지 않았다

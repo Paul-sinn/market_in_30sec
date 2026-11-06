@@ -9,11 +9,13 @@ import {
   formatTradingDay,
   glanceView,
   lineView,
+  lockedSlotOf,
   myDashboardView,
   QUERY_MAX,
   QUIET_DAY_STATUS,
   SEARCH_MAX,
   searchStocks,
+  TAP_SLOTS,
   type CardView,
   type LineStatus,
 } from "@/lib/card-view";
@@ -322,5 +324,39 @@ describe("searchStocks: 서버가 고르기 후보를 거른다(#58 D10)", () =>
     for (const q of ["%", "*", "_", "'", '"', ".", "-", "&", "\\", "' OR 1=1 --", "'; DROP TABLE coverage;--", "or(ticker.eq.AAPL)", "name.ilike.*", "a,b", "<script>", "%00", "\u0000", "🙂"]) {
       expect(tickers(q), q).toEqual([]);
     }
+  });
+});
+
+describe("잠긴 자리 고르기 lockedSlotOf(#69)", () => {
+  const slot = (estimateDay: string | null, day = "2026-10-16", over: { etf?: boolean; topFilingEarnings?: boolean } = {}) =>
+    lockedSlotOf({ etf: false, topFilingEarnings: false, estimateDay, ...over }, day);
+
+  test("1등 공시가 실적이면 실적 요약, 추정일과 무관", () => {
+    for (const estimateDay of [null, "2026-12-31", "2026-10-01"]) expect(slot(estimateDay, "2026-10-16", { topFilingEarnings: true })).toBe("earnings_summary");
+  });
+
+  test("추정일까지 0~7 달력일이면 실적 요약, 8일·지난 날·없음은 큰손 움직임(두 번째 줄 D-N과 같은 기준)", () => {
+    expect(slot("2026-10-16")).toBe("earnings_summary"); // D-0
+    expect(slot("2026-10-23")).toBe("earnings_summary"); // D-7
+    expect(slot("2026-10-24")).toBe("big_holders"); // D-8
+    expect(slot("2026-10-15")).toBe("big_holders"); // 지난 추정일(D-−1)은 실적 날이 아니다
+    expect(slot(null)).toBe("big_holders");
+  });
+
+  test("월말·연말·윤년을 넘는 D-7도 달력일로 센다", () => {
+    expect(slot("2026-11-07", "2026-10-31")).toBe("earnings_summary");
+    expect(slot("2027-01-07", "2026-12-31")).toBe("earnings_summary");
+    expect(slot("2027-01-08", "2026-12-31")).toBe("big_holders");
+    expect(slot("2028-03-07", "2028-02-29")).toBe("earnings_summary");
+    expect(slot("2028-03-08", "2028-02-29")).toBe("big_holders");
+  });
+
+  test("ETF는 실적 날이어도 자리 없음(null)", () => {
+    expect(slot("2026-10-16", "2026-10-16", { etf: true, topFilingEarnings: true })).toBeNull();
+    expect(slot(null, "2026-10-16", { etf: true })).toBeNull();
+  });
+
+  test("탭 자리 종류는 DB check(locked_slot_tap.slot)와 같은 셋", () => {
+    expect([...TAP_SLOTS]).toEqual(["earnings_summary", "big_holders", "related_lock"]);
   });
 });

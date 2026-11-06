@@ -15,6 +15,7 @@ import { priceDisplayOn } from "./price-display";
  * 카드 헤더(#63)는 모든 viewer·플래그에 같다: 첫 번째 줄은 늘 무료 범위라 새로 열리는 정보가 없다.
  * 알아두기(#66)는 조용한 날(첫 번째 줄 checked_none)에만: 잠기지 않은 내 종목은 myQuietFacts(그 유저 진도, 없으면 없음 — 1번으로 돌아가지 않는다),
  * 그 밖(로그인 전, 모든 플랜의 둘러보기, 잠긴 내 종목)은 공용 1번. 무료·Plus 같고 가격 플래그와 무관. 줄(lines)에 넣지 않는 보조 문장이다.
+ * 잠긴 자리(#69)는 읽기(getDashboard)가 고른 공용 카드 속성: 모든 viewer·플래그에 같다(Plus도 기능이 아직 없어 잠김). ETF·지난 카드는 키 없음.
  * 화면 모델은 허용한 키만 하나씩 옮긴다(펼치기 금지, tests/exposure.test.tsx 화이트리스트).
  */
 type Viewer = { plan: Plan; stocks: { ticker: string; locked: boolean }[] };
@@ -46,6 +47,7 @@ export function exposeCards(
       const fact = own.has(c.ticker) ? myQuietFacts.get(c.ticker) : c.firstQuietFact;
       if (fact) view.quietFact = fact; // 없으면 키 자체를 만들지 않는다
     }
+    if (c.lockedSlot) view.lockedSlot = c.lockedSlot; // null(ETF·지난 카드)이면 키 자체를 만들지 않는다
     return view;
   });
 }
