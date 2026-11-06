@@ -1,6 +1,6 @@
 import "server-only";
 
-import { cardHeaderView, checkedFooter, formatTradingDay, lineView, QUIET_DAY_STATUS, type CardView, type PastCardsView, type Stock } from "@/lib/card-view";
+import { cardHeaderView, checkedFooter, formatTradingDay, lineView, QUIET_DAY_STATUS, type CardView, type LineView, type PastCardsView, type Stock } from "@/lib/card-view";
 
 import type { CardHistory, StoredCard } from "./cards";
 import type { Plan } from "./my-stocks";
@@ -8,10 +8,11 @@ import { priceDisplayOn } from "./price-display";
 
 /**
  * 줄 노출 판단은 여기 한 곳(#9, HANDOFF 3-2). 카드에는 세 줄이 다 저장돼 있고, 컴포넌트로 넘기기 전에 이 함수를 거친다.
- * 세 줄 전부 = Plus 유저의 잠기지 않은 내 종목 카드뿐. 나머지(로그인 전 viewer null, 무료 유저, 모든 플랜의 둘러보기)는 무료 범위:
- * 등락률·첫·두 번째 줄은 저장된 그대로, 세 번째 줄은 사실·지연과 관계없이 잠금 상태만(글자·상태·확인 시각·출처 없음).
+ * 세 번째 줄(연관 소식, #67) 본문 = Plus 유저의 잠기지 않은 내 종목 카드뿐. 나머지(로그인 전 viewer null, 무료 유저, 모든 플랜의 둘러보기, 잠긴 내 종목)는 무료 범위:
+ * 등락률·첫·두 번째 줄은 저장된 그대로, 세 번째 줄은 건수만(확인함·있음 {status:"locked", count}, 없음·지연 {status:"locked"}. 본문·상태·확인 시각·출처 없음).
+ * 미지원(ETF·연관 종목 없음)은 모든 viewer에게 Not covered yet(Plus에도 없는 것을 잠그지 않는다). #67 전 카드(세 번째 줄 없음)는 두 줄, 잠금도 없다.
  * 발행 중단 카드(#16)는 어느 viewer에게도 내보내지 않는다. 내 종목이면 그 자리는 카드 없음과 같다(myDashboardView).
- * 가격 표시 플래그 off(#56)면 모든 viewer에게 change 키 없음, 두 줄(세 번째 줄 = 가격 사실은 원문도 잠금도 없다).
+ * 가격 표시 플래그 off(#56)면 모든 viewer에게 change 키 없음. 줄은 플래그와 무관하다(가격 사실은 읽지 않는다, #67 U1).
  * 카드 헤더(#63)는 모든 viewer·플래그에 같다: 첫 번째 줄은 늘 무료 범위라 새로 열리는 정보가 없다.
  * 알아두기(#66)는 조용한 날(첫 번째 줄 checked_none)에만: 잠기지 않은 내 종목은 myQuietFacts(그 유저 진도, 없으면 없음 — 1번으로 돌아가지 않는다),
  * 그 밖(로그인 전, 모든 플랜의 둘러보기, 잠긴 내 종목)은 공용 1번. 무료·Plus 같고 가격 플래그와 무관. 줄(lines)에 넣지 않는 보조 문장이다.
@@ -29,21 +30,21 @@ export function exposeCards(
   const plus = viewer?.plan === "plus";
   const prices = priceDisplayOn();
   return cards.filter((c) => !c.suspended).map((c) => {
-    const open = plus && own.has(c.ticker);
-    const kept = prices ? c.lines : c.lines.slice(0, 2);
-    const shown = open ? kept : kept.slice(0, 2);
-    const lines = shown.map((l) => lineView(l && { text: l.text, status: l.status }));
+    const [news, event, related] = c.lines;
+    const relatedOpen = related && ((plus && own.has(c.ticker)) || related.status === "unsupported");
+    const count = related?.status === "checked_found" && c.relatedFilingCount && c.relatedFilingCount >= 1 ? c.relatedFilingCount : null;
+    const third: LineView[] = !related ? [] : relatedOpen ? [{ text: related.text, status: related.status }] : [count ? { status: "locked", count } : { status: "locked" }];
     const view: CardView = {
       ticker: c.ticker,
       name: c.name,
-      header: cardHeaderView(c.lines[0]?.status ?? null, c.newsFilingCount), // 새 객체: 허용한 키(text·status)만
-      lines: open || !prices ? lines : [...lines, { status: "locked" }],
+      header: cardHeaderView(news?.status ?? null, c.newsFilingCount), // 새 객체: 허용한 키(text·status)만
+      lines: [lineView(news && { text: news.text, status: news.status }), lineView(event && { text: event.text, status: event.status }), ...third],
       leverageTag: c.leverageTag,
-      checked: checkedFooter(shown.filter((l) => l !== null)), // 잠긴 줄·빠진 가격 줄의 확인 시각·출처도 하단에 넣지 않는다
+      checked: checkedFooter([news, event, relatedOpen ? related : null].filter((l) => l !== null)), // 잠긴 줄의 확인 시각·출처는 하단에 넣지 않는다
     };
     // off면 키 자체를 만들지 않는다(undefined도 아니다): 등락률·종가 날짜 라벨이 이 안에 있다
     if (prices) view.change = { text: c.change.text, tone: c.change.tone, label: c.change.label };
-    if (c.lines[0]?.status === QUIET_DAY_STATUS) {
+    if (news?.status === QUIET_DAY_STATUS) {
       const fact = own.has(c.ticker) ? myQuietFacts.get(c.ticker) : c.firstQuietFact;
       if (fact) view.quietFact = fact; // 없으면 키 자체를 만들지 않는다
     }

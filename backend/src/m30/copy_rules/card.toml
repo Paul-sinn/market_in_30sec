@@ -26,6 +26,20 @@ quiet_fact_banned = [
   "million", "billion", "trillion", "thousand", "hundred", "dozen",
   "larger", "bigger", "better", "faster", "smaller", "superior",
 ]
+# 세 번째 줄 맨 앞 관계 단어(#67). 코드가 붙이고 검사기는 단어 수에서 뺀다. pipeline/lines.py RELATION_WORDS 값과 같게(test_units)
+related_labels = ["Competitor", "Customer", "Supplier", "Peer"]
+# 연관 소식(#67) 전용 영향·방향 표현(ADR-0005). 어미는 끝 단어에만 붙어 앞 단어 변화형은 따로 적는다. 첫 번째 줄에는 쓰지 않는다
+related_banned = [
+  "could affect", "impact on", "impacts on", "good for", "bad for", "pressure on", "pressures on",
+  "benefit from", "benefits from", "benefited from", "benefitted from", "benefiting from", "threat to", "threats to",
+  "may affect", "might affect", "will affect", "would affect",
+  "may impact", "might impact", "could impact", "will impact", "would impact",
+  "could hurt", "may hurt", "might hurt", "will hurt", "would hurt",
+  "good news for", "bad news for", "positive for", "negative for", "win for", "blow to", "risk to", "risks to",
+  "boost for", "headwind for", "headwinds for", "tailwind for", "tailwinds for",
+  "weigh on", "weighs on", "weighed on", "weighing on",
+]
+# 맨 affect·affects·impact는 넣지 않는다: 정정 공시 "affected periods"처럼 회사 자신의 사실에 나온다(related_pass.txt)
 # 숫자 단어(#14). 숫자판(3%, $94B)과 합쳐 "숫자는 줄당 하나"로 센다. 대소문자 무시, 단어 경계.
 # 서수(first, second)·a/an/single·double/twice·단위(million, billion)는 값이 아니라 넣지 않는다. one-time·one-off는 코드가 빼고 센다
 # 순서를 지킨다: 앞 아홉 개(one…nine)가 twenty-five 같은 십 단위 복합의 뒷자리다

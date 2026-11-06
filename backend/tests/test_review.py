@@ -436,7 +436,8 @@ def card_contents(store, day=FRI):
         return line and dataclasses.replace(line, checked_at=CHECKED)
 
     return {c.ticker: dataclasses.replace(c, updated_at=None, news_line=same_time(c.news_line),
-                                          event_line=same_time(c.event_line), price_fact_line=same_time(c.price_fact_line))
+                                          event_line=same_time(c.event_line), price_fact_line=same_time(c.price_fact_line),
+                                          related_line=same_time(c.related_line))
             for c in store.list_cards(day)}
 
 

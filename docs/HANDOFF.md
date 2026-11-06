@@ -75,7 +75,7 @@
   - (2026-11-03 피봇) 실적일 출처 = EDGAR 추정(실적 추정일): 작년 같은 분기 8-K Item 2.02 접수일 + 364일. 시점은 지난 4개 분기 접수 시각이 모두 장 전(동부 9:30 전)이면 `before open`, 모두 장 후(16:00 후)면 `after close`, 아니면·이력 4개 분기 미만이면 날짜만. 항상 `(est.)`. 추정일이 지났는데 Item 2.02 공시가 없으면 `No confirmed events found`. 배당은 출처가 없어 `Not covered yet`
   - (2026-10-18, #4) 기간 제한 없이 출처가 주는 가장 가까운 일정 하나(조회는 1년 앞까지). 실적·배당이 같은 날이면 실적. D-N은 달력일. 주당 금액은 발표값 그대로, 최소 2자리·최대 4자리(`$0.2475`). 0보다 크고 $0.0001 미만이면 `<$0.0001/share`로 표시(원래 값은 그대로 저장, 작다는 이유로 지연하지 않음). 0 이하는 잘못된 값
 - ✅ **데이터 상태** (codex 리뷰 1): "확인 못 함"을 "아무 일 없음"으로 보여주지 않는다. 줄마다 상태를 저장하고 문구를 나눈다
-  - 확인함·없음: 첫 번째 줄 `No new SEC filings found` / 두 번째 줄 `No confirmed events found` / 세 번째 줄 `No related filings found`(2026-11-03) (확인한 출처 범위만 말함. "No major news today"처럼 단정하지 않음)
+  - 확인함·없음: 첫 번째 줄 `No new SEC filings found` / 두 번째 줄 `No confirmed events found` / 세 번째 줄 `No major related filings found`(2026-11-03, #67에서 `major` 추가 — 후보가 중요도 4 이상만) (확인한 출처 범위만 말함. "No major news today"처럼 단정하지 않음)
   - 지연·실패: `Update delayed` (수집 실패·데이터 날짜 불일치. 조용한 날로 처리하지 않음)
   - 미지원: `Not covered yet` (그 종목·정보를 지원하는 출처가 아직 없음)
   - 카드 하단에 확인 시각·출처 범위 표시: 예 `Checked 7:30 AM ET · SEC filings`
@@ -84,7 +84,7 @@
 - ✅ 금지어: buy, sell, should, bullish, bearish, likely to rise, upside, downside, opportunity, undervalued, overvalued, momentum, breakout, rally ahead (+ 감정 동사 soars, plunges, skyrockets, crashes, tanks, surges, plummets, rockets, tumbles, slumps, spikes, jumps, rallies, sinks, sank, dives, collapses, explodes, nosedives — 2026-10-20 확대). 어디서든 차단(카드·아레나): you should, you must, guaranteed, risk-free, can't lose, cant lose, cannot lose, sure thing, easy money, get rich, double your money, 한국어 권유(목록 기준은 `backend/src/m30/copy_rules/arena.toml` `always_banned`)
 - ✅ **(2026-11-03 피봇) 세 번째 줄 = 연관 소식**: 연관 종목(종목당 최대 5개)의 그날 공시 중 분류 중요도 4 이상에서 1등 하나 + `+N more`. 1등은 중요도 → 관계 순서(competitor → customer → supplier → peer) → 접수 시각. 관계 단어(`Competitor` · `Customer` · `Supplier` · `Peer`)로 시작, 관계와 사실만, 내 종목에 대한 영향·방향 금지(ADR-0005). 첫 번째 줄 규칙과 검수(#7) 그대로. 금지 표현 추가: `could affect`, `impact on`, `good for`, `bad for`, `pressure on`, `benefit from`, `threat to`. 후보 없음 `No related filings found`, 수집 실패 `Update delayed`. 무료는 본문 없이 건수만(`2 related updates in Plus`, 0건이면 `Related news in Plus`). LLM 문장은 (공시, 관계 단어) 조합마다 한 번
   - 연관 종목 찾는 순서: 내 10-K에 이름이 나온 회사 → 역방향(다른 회사 10-K에 내 종목이 나온 경우, 관계를 뒤집음. 예: Qualcomm 10-K "Apple이 주요 고객" → Apple 카드에 Qualcomm `Supplier`) → 1·2번으로 3개 미만이면 같은 `sic` 업종 `peer`. 근거 문장 저장. 이름→티커 매칭은 코드가, 커버 범위 밖은 버림. ETF는 매핑 없음
-- ⏸ 가격 사실 (가격 표시 플래그 on일 때만, 2026-11-03. 원래 세 번째 줄, 아래 규칙 보존) = 코드 템플릿, OHLC로만 계산: 예 "Up 5 days in a row", "8.0% below 52-week high". 가장 눈에 띄는 과거 사실 하나, 중립 표현. 줄은 숨기지 않음: Plus는 가격 데이터가 정상인데 표시 조건에 맞는 사실이 없으면 "No additional price highlights"(2026-10-18 변경, 옛 문구 "No notable price moves"는 맨 위 큰 등락률과 모순돼 보여 폐기. 데이터 누락·오류는 "Update delayed"), 무료는 "Price facts in Plus" 잠금 표시. 거래량 비교("Volume 2x the 30-day average")는 벤더 권한 확인 후 추가. SEC Form 4 내부자 거래는 v2
+- ⏸ 가격 사실 (가격 표시 플래그 on일 때만 계산·저장, 2026-11-03. 원래 세 번째 줄, 아래 규칙 보존. #67부터 웹은 보여 주지 않음 — 세 번째 줄은 늘 연관 소식, 화면 자리는 라이선스를 살 때 정함) = 코드 템플릿, OHLC로만 계산: 예 "Up 5 days in a row", "8.0% below 52-week high". 가장 눈에 띄는 과거 사실 하나, 중립 표현. 줄은 숨기지 않음: Plus는 가격 데이터가 정상인데 표시 조건에 맞는 사실이 없으면 "No additional price highlights"(2026-10-18 변경, 옛 문구 "No notable price moves"는 맨 위 큰 등락률과 모순돼 보여 폐기. 데이터 누락·오류는 "Update delayed"), 무료는 "Price facts in Plus" 잠금 표시. 거래량 비교("Volume 2x the 30-day average")는 벤더 권한 확인 후 추가. SEC Form 4 내부자 거래는 v2
   - (2026-10-18, #4) 사실 기준: 연속 상승·하락 3일 이상(보합 0.0%인 날 끊김), 52주 고점·저점(장중 고가·저가) 10% 이내. 우선순위: 52주 고점·저점과 같음(`At 52-week high`) → 연속 → 52주 근처. %는 소수 첫째 자리(`8.0% below 52-week high`). 큰 하루 변동(예: `Largest daily drop since 3/12`) 후보는 별도 개선(#15)
 - ✅ 큰 금액 표기 (2026-10-18, #4): `$94B`, `$1.2M`, `$1.2T`, `$950K`. 단위로 나눈 값을 소수 첫째 자리로 반올림, `.0`은 뺌
 - ✅ 증권사 의견 줄은 MVP 제외. Benzinga 계약되면 다시 검토 (그때 Plus 잠금 대상)
@@ -174,7 +174,7 @@
 ### 3-10. 엣지 케이스·에러 처리 (2026-10-18)
 - ✅ 원칙: 내용은 닫힌 쪽으로 실패(검증 못 한 LLM 문장은 발행 X, 판정 단계 실패도 템플릿 + 보류함) / 가용성은 열린 쪽으로 실패(소스·종목 하나가 실패해도 나머지 카드는 나감, 그 줄은 "지연") / 같은 입력이면 같은 결과(재실행해도 중복·누락 없음, 변경 이력 남음)
 - ✅ 재시도: 타임아웃·429·5xx·529는 지수 백오프 최대 3회. 401·403(키 오류, SEC 차단)은 재시도하지 않고 실행 요약 맨 위에 표시
-- ✅ 실행당 LLM 호출 상한: 생성 대상 종목 수 × 4 + 분류 묶음 수. 넘으면 남은 종목은 템플릿. 시장 전체 소식 입력이 있으면 +4(#11). 연관 소식 문장은 (공시, 관계 단어) 조합당 1회를 더한다(2026-11-03 피봇)
+- ✅ 실행당 LLM 호출 상한: 생성 대상 종목 수 × 4 + 분류 묶음 수. 넘으면 남은 종목은 템플릿. 시장 전체 소식 입력이 있으면 +4(#11). 연관 소식은 1등 공시 수 × 4를 더한다(공시당 문장 1회 + 판정 몫, 관계 단어는 코드가 붙임. 2026-11-03 피봇, #67에서 구체화)
 - ✅ 같은 공시는 접수번호로 중복 제거. 8-K/A(정정 공시)는 다음 카드의 새 소식("amended"). 원래 공시를 쓴 발행 카드는 자동 수정하지 않고 보류함에 "정정 공시 있음"으로 올림
 - ✅ 한 회사 여러 티커(GOOGL/GOOG 등)는 CIK↔티커 매핑으로 티커별 카드
 - ✅ 분할일 등락률은 조정가로 계산. 조정가가 없으면 그 종목은 "지연". 봉 날짜가 직전 거래일이 아니면 "지연". 전일 종가 0·누락이면 계산하지 않음. 상장 1년 미만은 52주 사실 제외

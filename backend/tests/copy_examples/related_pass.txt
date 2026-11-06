@@ -1,0 +1,21 @@
+# 통과해야 하는 세 번째 줄 연관 소식 (related 모드, #67). 맨 앞 관계 단어는 코드가 붙인다(단어 수에서 뺀다)
+# 검사기는 종목명을 가리지 않는다: 이름에 금지어·숫자가 든 종목(Best Buy, 3M)은 test_related_line이 이름을 가려 본다
+Competitor AMD reported Q3 revenue of $7.7B (SEC filing)
+Competitor AMD reported Q3 revenue of $7.7B +1 more (SEC filing)
+Supplier TSMC named a new chief financial officer (SEC filing)
+Customer Apple agreed to acquire a data center operator for $2.1B (SEC filing)
+Peer Intel raised its full-year revenue forecast +2 more (SEC filing)
+# 맨 affect·impact는 회사 자신의 사실(정정 공시)이라 통과
+Peer Intel restated results for the affected periods (SEC filing)
+# 대체 줄(검수 실패, 첫 번째 줄 대체 줄 + 관계 단어)
+Competitor Advanced Micro Devices reported quarterly results (SEC filing)
+Supplier Taiwan Semiconductor Manufacturing announced a leadership update +1 more (SEC filing)
+Customer Apple filed a company update (SEC filing)
+Peer Intel updated an earlier report (SEC filing)
+# 데이터 상태 문구(세 번째 줄)
+No major related filings found
+Update delayed
+Not covered yet
+# ---- 카드 문장이 아닌 검사기 경계 예시 ----
+# 관계 단어 + 15단어
+Competitor AMD announced its board of directors elected a new chair at the annual shareholder meeting (SEC filing)

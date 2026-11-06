@@ -915,9 +915,12 @@ def test_끝난_실행은_실행_기록_한_행에_단계별_건수·LLM_호출�
     assert run_rows(admin) == [(True, False, {
         "counts": {"cards_saved": 3, "resumed": 0, "change_delayed": 1, "funds": 0, "filings": 2, "unclassified": 0,
                    "classify_batches": 1, "skipped_batches": 0, "drafts": 2, "draft_problems": 0,
-                   "review_pass_first": 1, "review_pass_retry": 1, "review_replaced": 0},
+                   "review_pass_first": 1, "review_pass_retry": 1, "review_replaced": 0,
+                   "filing_ciks": 2, "related_ciks": 0, "related_drafts": 0, "related_review_pass_first": 0,
+                   "related_review_pass_retry": 0, "related_review_replaced": 0},
         "lines": {"change": statuses(checked_found=2, delayed=1), "news": statuses(checked_found=2, unsupported=1),
-                  "event": statuses(unsupported=3), "price": statuses(checked_none=2, delayed=1)},
+                  "event": statuses(unsupported=3), "price": statuses(checked_none=2, delayed=1),
+                  "related": statuses(unsupported=3)},  # 연관 종목 행 없음(#67)
         "failures": [], "access_denied": [], "rate_limited": [],
         # 토큰 = FakeLLM 응답 6개 × (10, 2, 5, 1)
         "llm": {"calls": 6, "limit": 13, "input_tokens": 60, "output_tokens": 12, "cache_read_tokens": 30,
@@ -1084,11 +1087,11 @@ def fail_msft_saves(store, monkeypatch, times):
     """store.save_card가 MSFT 카드에서 times번 Unsaved를 낸다."""
     real, left = store.save_card, [times]
 
-    def save_card(card, holds):
+    def save_card(card, holds, related_holds=None):
         if card.ticker == "MSFT" and left[0]:
             left[0] -= 1
             raise Unsaved
-        real(card, holds)
+        real(card, holds, related_holds)
 
     monkeypatch.setattr(store, "save_card", save_card)
 

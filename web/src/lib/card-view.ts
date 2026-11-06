@@ -3,8 +3,8 @@ import { CHECKED_PREFIX, DAY_CLOSE, MY_STOCK_NOTICE, NEW_FILINGS, NOT_COVERED, P
 
 export type LineStatus = "checked_found" | "checked_none" | "delayed" | "unsupported"; // DB enum line_status
 type TextLine = { text: string; status: LineStatus };
-/** locked = 무료 범위의 세 번째 줄(#9): 글자 없이 상태만 온다. 화면은 copy.ts의 PRICE_FACTS_IN_PLUS */
-export type LineView = TextLine | { status: "locked" };
+/** locked = 무료 범위의 세 번째 줄(연관 소식, #9·#67): 본문·상태·확인 시각 없이 건수만. count는 확인함·있음이고 1 이상일 때만 키가 있다. 화면은 copy.ts RELATED_IN_PLUS */
+export type LineView = TextLine | { status: "locked"; count?: number };
 /** label = 등락률이 다루는 종가 날짜(#16). 등락률이 지연·미지원이어도 같은 날짜다 */
 export type ChangeView = { text: string; tone: "up" | "down" | "flat" | "delayed" | "unsupported"; label: string };
 /** 잠긴 자리(GLOSSARY LockedSlot, #69): 실적 요약 / 큰손 움직임. 화면 글자는 copy.ts LOCKED_SLOT */
@@ -19,7 +19,7 @@ export type CardView = {
   name: string;
   header: CardHeaderView | null; // 모든 viewer 같음. null = #63 전 확인함·있음 카드(건수 없음)
   change?: ChangeView; // 가격 표시 off면 키 자체가 없다(#56). 등락률·종가 날짜 라벨이 이 안에 있다
-  lines: LineView[]; // on: 3개(세 번째 = 가격 사실 또는 잠금), off: 2개(첫 번째·두 번째 줄)
+  lines: LineView[]; // 3개(첫 번째·두 번째·세 번째 = 연관 소식 또는 잠금). #67 전 카드는 2개. 가격 표시 플래그와 무관
   leverageTag: string | null;
   checked: string | null; // "Checked 7:30 AM ET · SEC filings"
   quietFact?: string; // 알아두기 사실 문장(#66). 조용한 날에만, 없으면 키 자체가 없다. 화면은 copy.ts QUIET_FACT(줄 수에 세지 않는 보조 문장)

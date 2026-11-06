@@ -2,7 +2,7 @@
 import { createClient } from "@supabase/supabase-js";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 
-import { getDashboard } from "@/server/cards";
+import { getCardHistory, getDashboard } from "@/server/cards";
 
 vi.mock("@supabase/supabase-js", () => ({ createClient: vi.fn() }));
 
@@ -37,8 +37,9 @@ const row = (i: number) => ({
   leverage_tag: null,
   coverage: { name: `T${i}`, holdings_ticker: null },
   news_filing: null, // 1등 공시 분류(#69). 첫 번째 줄이 없으면 null
+  related_line_filing_count: null, // 세 번째 줄 건수(#67)
   ...Object.fromEntries(
-    ["news_line", "event_line", "price_fact_line"].flatMap((l) => ["text", "status", "checked_at", "source_scope"].map((a) => [`${l}_${a}`, null])),
+    ["news_line", "event_line", "related_line"].flatMap((l) => ["text", "status", "checked_at", "source_scope"].map((a) => [`${l}_${a}`, null])),
   ),
 });
 const latest = { data: { trading_day: "2026-10-16" }, error: null };
@@ -204,6 +205,35 @@ test("실적 추정 읽기 실패·max_rows(1000)도 에러(잠긴 자리가 큰
   await expect(getDashboard()).rejects.toThrow("earnings_estimate read failed: permission denied");
   respond(latest, noCards, noGlance, noQuiet, { data: Array.from({ length: 1000 }, (_, i) => ({ ticker: `T${i}`, estimate_day: "2026-10-16" })), error: null });
   await expect(getDashboard()).rejects.toThrow("earnings_estimate has 1000+ rows");
+});
+
+test("세 번째 줄(#67): 카드 select에 연관 소식 열 4개 + 건수, 가격 사실 열은 없다(가격 표시 on이어도, U1). 건수는 relatedFilingCount로", async () => {
+  const RELATED = ["related_line_text", "related_line_status", "related_line_checked_at", "related_line_source_scope", "related_line_filing_count"];
+  const found = {
+    ...row(0),
+    related_line_text: "Competitor T9 reported Q3 revenue of $1.0B +1 more (SEC filing)",
+    related_line_status: "checked_found",
+    related_line_checked_at: "2026-10-16T11:10:00Z",
+    related_line_source_scope: "SEC filings",
+    related_line_filing_count: 2,
+    price_fact_line_text: "Up 5 days in a row", // 모의 응답이 select와 상관없이 돌려줘도 저장 카드에 담지 않는다
+    price_fact_line_status: "checked_found",
+  };
+  respond(latest, { data: [found, row(1)], error: null }, noGlance, noQuiet, noEstimates);
+  const { cards } = await getDashboard();
+  for (const c of RELATED) expect(selects.stock_card.split(","), c).toContain(c);
+  expect(selects.stock_card).not.toContain("price_fact");
+  expect(cards.map((c) => [c.lines.length, c.lines[2], c.relatedFilingCount])).toEqual([
+    [3, { text: found.related_line_text, status: "checked_found", checked_at: "2026-10-16T11:10:00Z", source_scope: "SEC filings" }, 2],
+    [3, null, null], // #67 전 카드: 세 번째 줄 없음
+  ]);
+  expect(JSON.stringify(cards)).not.toContain("Up 5 days in a row");
+  // 지난 카드(#68)도 같은 열
+  respond(latest, { data: [{ ...found, trading_day: "2026-10-16" }], error: null });
+  const history = await getCardHistory("T0", 90);
+  for (const c of RELATED) expect(selects.stock_card.split(","), c).toContain(c);
+  expect(selects.stock_card).not.toContain("price_fact");
+  expect(history.cards[0].card.relatedFilingCount).toBe(2);
 });
 
 test("환경 변수가 없으면 이름만 말하는 에러(값 없음)", async () => {

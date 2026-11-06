@@ -62,6 +62,7 @@ function stored(ticker: string, kind: Kind, firstQuietFact: string | null): Stor
     leverageTag: null,
     suspended: kind === "suspended",
     newsFilingCount: kind === "found" ? 1 : null,
+    relatedFilingCount: null, // 세 번째 줄(#67)은 이 테스트 밖
     firstQuietFact,
     lockedSlot: null, // 잠긴 자리(#69)는 이 테스트 밖(cards.db.test)
   };

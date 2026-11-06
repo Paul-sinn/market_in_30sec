@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from m30.copy_rules import check_arena, check_card, check_quiet_fact
+from m30.copy_rules import check_arena, check_card, check_quiet_fact, check_related
 
 EXAMPLES = Path(__file__).resolve().parent / "copy_examples"
 SKILL_RUNNER = Path(__file__).resolve().parents[2] / ".claude/skills/card-copy-rules/scripts/check_copy.py"
@@ -271,5 +271,104 @@ def test_알아두기_꼬리표는_카드_줄_단어_수에서도_빠진다():
 )
 def test_스킬_실행기의_quiet_fact_모드는_외부_패키지_없이_알아두기_규칙으로_검사한다(line, code, expected):
     r = subprocess.run([sys.executable, "-I", "-S", str(SKILL_RUNNER), "--mode", "quiet-fact", "-"],
+                       input=line + "\n", capture_output=True, text=True, timeout=30)
+    assert (r.returncode, expected in r.stdout) == (code, True), r.stdout + r.stderr
+
+
+# 세 번째 줄 연관 소식(#67): 카드 규칙 전부 + 영향·방향 표현(ADR-0005). 맨 앞 관계 단어는 코드가 붙여 단어 수에서 뺀다
+
+@pytest.mark.parametrize(
+    "line, banned",
+    [
+        ("Competitor AMD reported results that could affect Nvidia (SEC filing)", "could affect"),
+        ("Competitor AMD reported a big impact on the chip market (SEC filing)", "impact on"),
+        ("Supplier TSMC announced a plant that is good for customers (SEC filing)", "good for"),
+        ("Customer Apple filed results that are bad for suppliers (SEC filing)", "bad for"),
+        ("Competitor AMD announced prices that put pressure on rivals (SEC filing)", "pressure on"),
+        ("Peer Intel said it will benefit from new rules (SEC filing)", "benefit from"),
+        ("Competitor AMD named a chip seen as a threat to rivals (SEC filing)", "threat to"),
+        ("Peer Intel said it benefited from new rules (SEC filing)", "benefited from"),
+        # 조동사만 바꾼 영향 문장(#67 copy-reviewer 항목 3)
+        ("Competitor AMD reported results that may affect Nvidia (SEC filing)", "may affect"),
+        ("Competitor AMD reported results that might affect rivals (SEC filing)", "might affect"),
+        ("Competitor AMD reported results that will affect rivals (SEC filing)", "will affect"),
+        ("Competitor AMD said the deal would affect rivals (SEC filing)", "would affect"),
+        ("Customer Apple said lower orders may impact suppliers (SEC filing)", "may impact"),
+        ("Customer Apple said lower orders might impact suppliers (SEC filing)", "might impact"),
+        ("Customer Apple said lower orders could impact suppliers (SEC filing)", "could impact"),
+        ("Customer Apple said lower orders will impact suppliers (SEC filing)", "will impact"),
+        ("Customer Apple said lower orders would impact suppliers (SEC filing)", "would impact"),
+        ("Competitor AMD cut prices in a move that could hurt rivals (SEC filing)", "could hurt"),
+        ("Competitor AMD cut prices in a move that may hurt rivals (SEC filing)", "may hurt"),
+        ("Competitor AMD cut prices in a move that might hurt rivals (SEC filing)", "might hurt"),
+        ("Competitor AMD cut prices in a move that will hurt rivals (SEC filing)", "will hurt"),
+        ("Competitor AMD cut prices in a move that would hurt rivals (SEC filing)", "would hurt"),
+        # 방향 표현
+        ("Supplier TSMC opened a new plant in good news for chip buyers (SEC filing)", "good news for"),
+        ("Customer Apple cut orders in bad news for suppliers (SEC filing)", "bad news for"),
+        ("Supplier TSMC raised capacity, positive for chip buyers (SEC filing)", "positive for"),
+        ("Customer Apple cut orders, negative for suppliers (SEC filing)", "negative for"),
+        ("Supplier TSMC opened a new plant in a win for chip buyers (SEC filing)", "win for"),
+        ("Customer Apple cut orders in a blow to suppliers (SEC filing)", "blow to"),
+        ("Competitor AMD launched a chip seen as a risk to rivals (SEC filing)", "risk to"),
+        ("Competitor AMD launched a chip seen among the risks to rivals (SEC filing)", "risks to"),
+        ("Supplier TSMC opened a new plant in a boost for chip buyers (SEC filing)", "boost for"),
+        ("Customer Apple cut orders, a headwind for suppliers (SEC filing)", "headwind for"),
+        ("Customer Apple cut orders, among the headwinds for suppliers (SEC filing)", "headwinds for"),
+        ("Supplier TSMC raised capacity, a tailwind for chip buyers (SEC filing)", "tailwind for"),
+        ("Supplier TSMC raised capacity, among the tailwinds for chip buyers (SEC filing)", "tailwinds for"),
+        ("Customer Apple said lower orders could weigh on suppliers (SEC filing)", "weigh on"),
+        ("Customer Apple said lower orders weigh on suppliers (SEC filing)", "weigh on"),
+        ("Customer Apple said lower orders weighs on suppliers (SEC filing)", "weighs on"),
+        ("Customer Apple said lower orders weighed on suppliers (SEC filing)", "weighed on"),
+        ("Customer Apple said lower orders are weighing on suppliers (SEC filing)", "weighing on"),
+    ],
+    ids=["could_affect", "impact_on", "good_for", "bad_for", "pressure_on", "benefit_from", "threat_to", "benefited_from",
+         "may_affect", "might_affect", "will_affect", "would_affect",
+         "may_impact", "might_impact", "could_impact", "will_impact", "would_impact",
+         "could_hurt", "may_hurt", "might_hurt", "will_hurt", "would_hurt",
+         "good_news_for", "bad_news_for", "positive_for", "negative_for", "win_for", "blow_to", "risk_to", "risks_to",
+         "boost_for", "headwind_for", "headwinds_for", "tailwind_for", "tailwinds_for",
+         "could_weigh_on", "weigh_on", "weighs_on", "weighed_on", "weighing_on"],
+)
+def test_연관_소식은_영향·방향_표현을_금지어로_잡는다(line, banned):
+    assert f"금지어 '{banned}'" in check_related(line)
+
+
+FIFTEEN = "AMD announced its board of directors elected a new chair at the annual shareholder meeting"  # 15단어
+
+
+@pytest.mark.parametrize("line, issues", [
+    (f"Competitor {FIFTEEN} (SEC filing)", []),
+    (f"Competitor {FIFTEEN} today (SEC filing)", ["16단어 — 최대 15"]),
+    (f"Rival {FIFTEEN} (SEC filing)", ["16단어 — 최대 15"]),
+], ids=["관계_단어_더하기_15단어", "관계_단어_더하기_16단어", "목록_밖_단어는_센다"])
+def test_연관_소식은_맨_앞_관계_단어만_단어_수에서_뺀다(line, issues):
+    assert check_related(line) == issues
+
+
+def test_연관_소식_금지_표현은_첫_번째_줄_검사에는_넣지_않는다():
+    assert check_card("Apple reported a one-time impact on Q3 revenue of $1B (SEC filing)") == []
+
+
+def test_통과_예시_문장은_연관_소식_문구_규칙에_걸리지_않는다():
+    caught = {line: issues for line in example_lines("related_pass.txt") if (issues := check_related(line))}
+    assert caught == {}
+
+
+def test_차단_예시_문장은_하나도_빠짐없이_연관_소식_문구_규칙에_걸린다():
+    assert [line for line in example_lines("related_block.txt") if not check_related(line)] == []
+
+
+@pytest.mark.parametrize(
+    "line, code, expected",
+    [
+        ("Competitor AMD reported Q3 revenue of $7.7B +1 more (SEC filing)", 0, "위반 0줄"),
+        ("Competitor AMD reported results that could affect Nvidia (SEC filing)", 1, "→ 금지어 'could affect'"),
+    ],
+    ids=["통과", "위반"],
+)
+def test_스킬_실행기의_related_모드는_외부_패키지_없이_연관_소식_규칙으로_검사한다(line, code, expected):
+    r = subprocess.run([sys.executable, "-I", "-S", str(SKILL_RUNNER), "--mode", "related", "-"],
                        input=line + "\n", capture_output=True, text=True, timeout=30)
     assert (r.returncode, expected in r.stdout) == (code, True), r.stdout + r.stderr

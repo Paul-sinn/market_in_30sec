@@ -4,7 +4,7 @@
 
 ## Consequences
 
-- 연관 소식 금지 표현(`could affect`, `impact on`, `good for`, `bad for`, `pressure on`, `benefit from`, `threat to`)은 `card.toml`에 두고 검수가 막는다.
+- 연관 소식 금지 표현(`could affect`, `impact on`, `good for`, `bad for`, `pressure on`, `benefit from`, `threat to`, 그리고 #67 검수에서 더한 조동사형·방향 표현)은 `card.toml` `related_banned`에 두고 검수가 막는다.
 - 관계는 공시 안 근거(내 10-K, 다른 회사 10-K)나 같은 업종으로만 정한다. LLM이 관계를 추론해 붙이지 않는다.
 - 기사는 링크·언론사 이름까지만, 플래그(`NEWS_LINKS`) 뒤에서만 나간다. 기사 요약·제목·인용·숫자는 어떤 단계에서도 내지 않는다.
 - "Why it moved"처럼 원인을 약속하는 기능이나 문구, 연관 소식에 영향 라벨을 붙이는 기능을 제안하려면 이 ADR을 먼저 다시 열어야 한다.

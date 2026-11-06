@@ -1,7 +1,7 @@
 """아침 파이프라인. 바깥 인터페이스는 run 하나."""
 
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
@@ -13,6 +13,7 @@ from m30.adapters.indicators import IndicatorSource
 from m30.adapters.market_news import MarketNewsItem, MarketNewsSource
 from m30.adapters.prices import PriceSource
 from m30.config import ET
+from m30.copy_rules import check_related
 from m30.db.store import CardStore
 from m30.llm import LLM, LLMBudget, LLMRequest
 from m30.models import (
@@ -23,9 +24,12 @@ from m30.models import (
     EarningsEstimate,
     FundHoldings,
     HoldItem,
+    HoldLine,
     LineStatus,
     MarketGlance,
     NewsCandidate,
+    RelatedNews,
+    RelatedTicker,
     StockCard,
     TickerNews,
 )
@@ -55,8 +59,10 @@ from m30.pipeline.lines import (
     HOLDINGS_SCOPE,
     INDICATOR_SCOPE,
     NEWS_SCOPE,
+    NO_RELATED,
     NOT_COVERED,
     PRICE_SCOPE,
+    RELATED_SCOPE,
     close_line,
     delayed_line,
     event_line,
@@ -65,10 +71,12 @@ from m30.pipeline.lines import (
     leverage_tag,
     news_template_line,
     price_fact_line,
+    related_text,
 )
 from m30.pipeline.glance import GLANCE_CALLS, market_news_line
 from m30.pipeline.newsline import NewsDraft, write_news_drafts
 from m30.pipeline.notice import morning_notice
+from m30.pipeline.relations import RELATION_ORDER
 from m30.pipeline.review import NewsReview, review_drafts
 from m30.trading_day import is_trading_day, previous_trading_day
 
@@ -77,6 +85,8 @@ LOOKBACK = timedelta(weeks=53)  # 52주 이력 + 52주 전 날이 휴장일이�
 # N-PORT는 분기 말 보고를 60일 뒤 공개한다(#10 D4). 다음 공개 예정은 기준일 약 152일 뒤
 HOLDINGS_REFRESH_AFTER = timedelta(days=140)  # 저장분 기준일 + 이 기간 전에는 출처를 부르지 않는다
 HOLDINGS_MAX_AGE = timedelta(days=270)  # 쓸 보고의 기준일 + 이 기간을 넘으면 지연(한 분기를 놓친 여유)
+RELATED_MIN_IMPORTANCE = 4  # 세 번째 줄 후보 = 분류 중요도 이 값 이상(HANDOFF 3-3, #67)
+RELATED_CALLS = 4  # 연관 1등 공시 하나의 LLM 상한 몫: 초안·판정·재생성·판정(첫 번째 줄 종목당 4와 같다, #67 D4)
 
 
 @dataclass(frozen=True, order=True)
@@ -107,10 +117,15 @@ class RunSummary:
     funds: dict[str, FundHoldings]  # ETF 생성 대상(holdings_ticker 있음) → 상위 편입 종목
     llm_tokens: dict[str, int]  # TOKEN_FIELDS → 이번 실행 합계(LLMBudget.tokens)
     notices: int  # 저장한 아침 알림 문구 수(잠기지 않은 내 종목이 있는 유저 수)
-    # "change"|"news"|"event"|"price" → LineStatus 값 4개 → 이번에 저장한 카드 수(0 포함). 첫 번째 줄이 None인 카드는 news에서 빠진다
+    # "change"|"news"|"event"|"price"|"related" → LineStatus 값 4개 → 이번에 저장한 카드 수(0 포함). 줄이 None인 카드는 그 줄에서 빠진다
     line_counts: dict[str, dict[str, int]]
     glance: MarketGlance | None  # 이번에 저장한 시장 한눈에(#11). None = 죽은 앞 실행이 저장해서 건너뜀
     glance_review: str  # 소식 줄 검수: "-"(LLM 안 부름) | "pass" | "pass+retry" | "hold:<단계>" | "hold:<단계>+retry"
+    related: dict[str, RelatedNews]  # 생성 대상 티커 → 세 번째 줄 상태·후보(#67)
+    related_drafts: dict[str, NewsDraft]  # 후보 있는 종목 → 세 번째 줄 초안(검수 전)
+    related_reviews: dict[str, NewsReview]  # 후보 있는 종목 → 검수 결과. line에는 관계 단어가 없다(build가 붙인다)
+    filing_ciks: int  # 8-K 단계에서 공시를 받은 CIK 수(EDGAR 측정, #67 D9)
+    related_ciks: int  # 그중 연관 종목 때문에만 더한 CIK 수
 
 
 class MorningPipeline:
@@ -175,8 +190,18 @@ class MorningPipeline:
             elif funds[cov.ticker].status is LineStatus.CHECKED_FOUND:
                 tickers = frozenset(funds[cov.ticker].tickers)
                 groups[cov.ticker] = (tickers, frozenset(coverage[t].cik for t in tickers))
-        # 공시 수집·분류 대상 = 묶음의 티커 전부(생성 대상이 아닌 편입 종목 포함, 카드는 만들지 않는다). 편입 경로가 있는 ETF 자신의 CIK는 받지 않는다
-        collected = [coverage[t] for t in sorted(set().union(*(tickers for tickers, _ in groups.values())))]
+        # 세 번째 줄(#67): 주식 생성 대상의 연관 종목(rank 순) 중 CIK가 있는 것. ETF(편입 종목을 읽음)는 키가 없다 → 미지원
+        relations = self._store.list_relations()
+        related_of = {
+            cov.ticker: tuple(r for r in relations.get(cov.ticker, ()) if coverage[r.related_ticker].cik is not None)
+            for cov in targets if cov.holdings_ticker is None
+        }
+        own = set().union(*(tickers for tickers, _ in groups.values()))
+        # 공시 수집·분류 대상 = 묶음의 티커 전부(생성 대상이 아닌 편입 종목 포함) ∪ 연관 종목. 둘 다 카드는 만들지 않는다.
+        # 편입 경로가 있는 ETF 자신의 CIK는 받지 않는다
+        collected = [coverage[t] for t in sorted(own | {r.related_ticker for rs in related_of.values() for r in rs})]
+        own_ciks = {coverage[t].cik for t in own} - {None}
+        filing_ciks = {c.cik for c in collected} - {None}
         items, failed_ciks = self._collect_filings(collected, trading_day, calls)
         # 카드 루프 전: 카드가 하나라도 저장됐으면 정정 공시 행은 이미 있다(이어 하기가 그 CIK를 다시 받지 않아도)
         self._store.flag_amended_cards(trading_day, [i.filing for i in items if i.filing.form is FilingForm.EIGHT_K_A])
@@ -200,13 +225,27 @@ class MorningPipeline:
             else TickerNews(funds[cov.ticker].status)
             for cov in targets
         }
+        related_ciks_of = {t: frozenset(coverage[r.related_ticker].cik for r in rs) for t, rs in related_of.items()}
+        related = {
+            cov.ticker: _related_news(groups[cov.ticker][0], related_of[cov.ticker], related_ciks_of[cov.ticker], failed_ciks,
+                                      items, outcomes) if related_of.get(cov.ticker) else RelatedNews(LineStatus.UNSUPPORTED)
+            for cov in targets
+        }
+        # 연관 1등 공시마다 문장 하나(초안·판정·재생성·판정). 같은 공시가 여러 카드의 연관 소식이어도 한 번(#67 D4)
+        budget.limit += RELATED_CALLS * len({n.candidates[0].accession for n in related.values() if n.candidates})
         by_accession = {i.filing.accession: i for i in items}
+        names = {c.ticker: c.name for c in collected}
         drafts = write_news_drafts(news, by_accession, trading_day, send)
-        reviews = review_drafts(drafts, news, by_accession, {c.ticker: c.name for c in collected}, trading_day, send)
+        reviews = review_drafts(drafts, news, by_accession, names, trading_day, send)
+        # 세 번째 줄: 첫 번째 줄과 같은 공시 요청(관계·카드 종목을 넣지 않는다, ADR-0005), 관계 단어는 build가 붙인다
+        # shortcut: 첫 번째 줄 1등과 같은 공시도 초안을 다시 받는다, 비용이 보이면 write_news_drafts 캐시를 공유
+        related_drafts = write_news_drafts(related, by_accession, trading_day, send)
+        related_reviews = review_drafts(related_drafts, related, by_accession, names, trading_day, send, copy_check=check_related)
         kept = self._store.republished_news(trading_day)  # 사람이 재발행한 첫 번째 줄은 재실행이 덮지 않는다
+        kept_related = self._store.republished_related(trading_day)  # 세 번째 줄도 같다
 
-        def build(cov: Coverage) -> tuple[StockCard, list[HoldItem] | None]:
-            """종목 하나의 카드와 보류함 행(None = 보류함 행을 건드리지 않는다)."""
+        def build(cov: Coverage) -> tuple[StockCard, list[HoldItem] | None, list[HoldItem] | None]:
+            """종목 하나의 카드와 보류함 행(첫 번째 줄, 세 번째 줄. None = 그 줄의 보류함 행을 건드리지 않는다)."""
             if self._prices is None:  # 가격 표시 off(#56): 시세를 부르지 않는다
                 pct, change_status, price_fact = None, LineStatus.UNSUPPORTED, None
             else:
@@ -247,6 +286,25 @@ class MorningPipeline:
                 ]
             else:
                 accession, news_line, holds, filing_count = None, news_template_line(news[cov.ticker], checked_at, scope), [], None
+            # 세 번째 줄의 출처도 넷(#67 D6): 사람이 재발행한 줄, 앞 실행이 확인한 줄(연관 CIK 실패), 검수 결과, 데이터 상태 문구
+            note = related[cov.ticker]
+            if cov.ticker in kept_related:
+                text, related_count = kept_related[cov.ticker]
+                related_line, related_holds = CardLine(text, LineStatus.CHECKED_FOUND, checked_at, RELATED_SCOPE), None
+            elif related_ciks_of.get(cov.ticker, frozenset()) & failed_ciks and old and old.related_line \
+                    and old.related_line.status in CHECKED:
+                related_line, related_count, related_holds = old.related_line, old.related_line_filing_count, None
+            elif cov.ticker in related_reviews:
+                review = related_reviews[cov.ticker]
+                related_line = CardLine(related_text(note.relation, review.line), LineStatus.CHECKED_FOUND, checked_at, RELATED_SCOPE)
+                related_count = len(note.candidates)
+                related_holds = [] if review.stage is None else [HoldItem(
+                    cov.ticker, trading_day, review.accession, review.stage, review.draft_text, review.rules, related_line.text,
+                    line=HoldLine.RELATED,
+                )]
+            else:
+                related_line = news_template_line(note, checked_at, RELATED_SCOPE, NO_RELATED)
+                related_count, related_holds = None, []
             card = StockCard(
                 ticker=cov.ticker,
                 trading_day=trading_day,
@@ -260,15 +318,18 @@ class MorningPipeline:
                 news_line_accession=accession,
                 previous_trading_day=previous_trading_day(trading_day),
                 news_line_filing_count=filing_count,
+                related_line=related_line,
+                related_line_filing_count=related_count,
             )
-            return card, holds
+            return card, holds, related_holds
 
         cards, ticker_errors = [], []
         for cov in targets:
             error = None
             try:
-                card, holds = build(cov)
-                self._store.save_card(card, holds)  # 카드와 한 트랜잭션: 중간에 죽어도 카드만 남고 보류함 행이 빠지는 일이 없다
+                card, holds, related_holds = build(cov)
+                # 카드와 한 트랜잭션: 중간에 죽어도 카드만 남고 보류함 행이 빠지는 일이 없다
+                self._store.save_card(card, holds, related_holds)
             except AssertionError:  # 테스트 대역의 "불리면 안 됨" 신호. 운영 코드는 assert로 흐름을 정하지 않는다
                 raise
             except Exception as e:  # 종목 예외(#17 D5 층 2): 그 종목만 전 줄 지연. BaseException(프로세스 종료)은 그대로
@@ -332,6 +393,11 @@ class MorningPipeline:
             line_counts=_line_counts(cards),
             glance=glance,
             glance_review=glance_review,
+            related=related,
+            related_drafts=related_drafts,
+            related_reviews=related_reviews,
+            filing_ciks=len(filing_ciks),
+            related_ciks=len(filing_ciks - own_ciks),
         )
         self._store.finish_run(run_id, run_failed(summary), run_record(summary))
         return summary
@@ -499,7 +565,7 @@ def run_failed(summary: RunSummary) -> bool:
 
 def run_record(summary: RunSummary) -> dict:
     """pipeline_run.summary(#17 D1). 코드·건수·티커만: 카드 문장·가격·예외 메시지를 넣지 않는다. 키를 바꾸면 조회도 바꾼다."""
-    reviews = summary.reviews.values()
+    reviews, related = summary.reviews.values(), summary.related_reviews.values()
     return {
         "counts": {
             "cards_saved": summary.cards_saved,
@@ -515,6 +581,12 @@ def run_record(summary: RunSummary) -> dict:
             "review_pass_first": sum(r.stage is None and not r.retried for r in reviews),
             "review_pass_retry": sum(r.stage is None and r.retried for r in reviews),
             "review_replaced": sum(r.stage is not None for r in reviews),
+            "filing_ciks": summary.filing_ciks,
+            "related_ciks": summary.related_ciks,
+            "related_drafts": len(summary.related_drafts),
+            "related_review_pass_first": sum(r.stage is None and not r.retried for r in related),
+            "related_review_pass_retry": sum(r.stage is None and r.retried for r in related),
+            "related_review_replaced": sum(r.stage is not None for r in related),
         },
         "lines": summary.line_counts,
         "failures": [
@@ -533,29 +605,32 @@ def run_record(summary: RunSummary) -> dict:
 
 
 def _error_card(cov: Coverage, trading_day: date, checked_at: datetime, *, price_display: bool) -> StockCard:
-    """종목 예외(층 2) 대체 카드: 등락률과 세 줄 모두 지연. 첫 번째 줄 범위는 ETF(편입 종목을 읽음)면 편입 고정 문구.
-    가격 표시 off(#56)면 등락률 미지원, 가격 사실 줄 없음(정상 카드와 같다)."""
+    """종목 예외(층 2) 대체 카드: 등락률과 줄 모두 지연. 첫 번째 줄 범위는 ETF(편입 종목을 읽음)면 편입 고정 문구.
+    가격 표시 off(#56)면 등락률 미지원, 가격 사실 줄 없음(정상 카드와 같다). 세 번째 줄은 ETF면 미지원(#67 D6: 무료 화면에 잠금이 생기지 않게)."""
+    etf = cov.holdings_ticker is not None
     return StockCard(
         ticker=cov.ticker,
         trading_day=trading_day,
         status=CardStatus.NORMAL,
         change_pct=None,
         change_status=LineStatus.DELAYED if price_display else LineStatus.UNSUPPORTED,
-        news_line=delayed_line(NEWS_SCOPE if cov.holdings_ticker is None else HOLDINGS_SCOPE, checked_at),
+        news_line=delayed_line(HOLDINGS_SCOPE if etf else NEWS_SCOPE, checked_at),
         event_line=delayed_line(EVENT_SCOPE, checked_at),
         price_fact_line=delayed_line(PRICE_SCOPE, checked_at) if price_display else None,
         leverage_tag=leverage_tag(cov.leverage),
         news_line_accession=None,
         previous_trading_day=previous_trading_day(trading_day),
+        related_line=CardLine(NOT_COVERED, LineStatus.UNSUPPORTED, checked_at, None) if etf else delayed_line(RELATED_SCOPE, checked_at),
     )
 
 
 def _line_counts(cards: list[StockCard]) -> dict[str, dict[str, int]]:
-    """줄 이름 → 상태 값 4개 → 카드 수(0 포함). 첫 번째 줄이 None인 카드(축소판)는 news에서 빠진다."""
-    counts = {name: dict.fromkeys(map(str, LineStatus), 0) for name in ("change", "news", "event", "price")}
+    """줄 이름 → 상태 값 4개 → 카드 수(0 포함). 줄이 None인 카드(축소판의 첫 번째 줄, 가격 표시 off의 가격 사실)는 그 줄에서 빠진다."""
+    counts = {name: dict.fromkeys(map(str, LineStatus), 0) for name in ("change", "news", "event", "price", "related")}
     for card in cards:
         counts["change"][card.change_status] += 1
-        for name, line in (("news", card.news_line), ("event", card.event_line), ("price", card.price_fact_line)):
+        for name, line in (("news", card.news_line), ("event", card.event_line), ("price", card.price_fact_line),
+                           ("related", card.related_line)):
             if line is not None:
                 counts[name][line.status] += 1
     return counts
@@ -602,3 +677,38 @@ def _ticker_news(
     if not candidates and any(not isinstance(outcomes[i.filing.accession], Classified) for i in mine):
         return TickerNews(LineStatus.DELAYED)  # 공시는 있는데 분류를 못 했다. "없음"으로 쓰지 않는다
     return TickerNews(LineStatus.CHECKED_FOUND, candidates)
+
+
+def _related_news(
+    own: frozenset[str],
+    relations: Sequence[RelatedTicker],
+    ciks: frozenset[str],
+    failed_ciks: set[str],
+    items: list[FilingItem],
+    outcomes: dict,
+) -> RelatedNews:
+    """세 번째 줄 상태와 후보(#67 D2 표, 위에서부터). own = 카드 종목 묶음 티커(이 티커가 걸린 공시는 첫 번째 줄 몫이라 뺀다),
+    relations = CIK 있는 연관 종목(rank 순, 비면 미지원), ciks = 그 CIK들. 연관 CIK 하나라도 수집 실패면 지연(첫 번째 줄과 같은 이유).
+    후보 = 분류됨 + 의견글 아님 + 중요도 RELATED_MIN_IMPORTANCE 이상. 정렬 = 중요도 → 관계 순서 → 접수 시각 늦은 순 → 접수번호."""
+    if not relations:
+        return RelatedNews(LineStatus.UNSUPPORTED)
+    if ciks & failed_ciks:
+        return RelatedNews(LineStatus.DELAYED)
+    relation_of = {r.related_ticker: r.relation for r in relations}
+    # 공시의 관계 = 연결 티커 중 연관 종목인 것의 관계(둘 이상이면 관계 순서 앞)
+    mine = [
+        (i, min((relation_of[t] for t in i.tickers if t in relation_of), key=RELATION_ORDER.index))
+        for i in items if own.isdisjoint(i.tickers) and not relation_of.keys().isdisjoint(i.tickers)
+    ]
+    ranked = sorted(
+        ((i, o, relation) for i, relation in mine
+         if isinstance(o := outcomes[i.filing.accession], Classified) and not o.opinion and o.importance >= RELATED_MIN_IMPORTANCE),
+        key=lambda p: (-p[1].importance, RELATION_ORDER.index(p[2]), -p[0].filing.accepted_at.timestamp(), p[0].filing.accession),
+    )
+    if not ranked:
+        unclassified = any(not isinstance(outcomes[i.filing.accession], Classified) for i, _ in mine)
+        return RelatedNews(LineStatus.DELAYED if unclassified else LineStatus.CHECKED_NONE)  # 분류 못 했으면 "없음"이 아니다
+    candidates = tuple(
+        NewsCandidate(i.filing.accession, o.kind, o.importance, i.filing.form is FilingForm.EIGHT_K_A) for i, o, _ in ranked
+    )
+    return RelatedNews(LineStatus.CHECKED_FOUND, candidates, ranked[0][2])
