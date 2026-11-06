@@ -59,6 +59,16 @@ export async function getMyStocks(userId: VerifiedUserId): Promise<MyStocks> {
   return { plan, stocks: stocks.data!.map((s) => ({ ticker: s.ticker, name: s.coverage.name, locked: s.locked })), swapsLeft };
 }
 
+/** 알아두기 진도(#66). 잠기지 않은 내 종목마다 오늘(day = 대시보드 거래일 "YYYY-MM-DD") 보일 사실 문장. 진도는 저장하지 않고 DB 함수가 센다
+ *  (마지막으로 넣은 날부터 조용한 날 수 = 번호). 키 없음 = 오늘 보일 사실 없음(조용한 날 0일·풀 끝·풀 없음).
+ *  오늘 카드가 조용한 날인지는 함수가 보지 않는다(exposeCards가 거른다). 유저마다 달라 공용 캐시 밖에서 요청마다 부른다. 오류는 코드만 담아 throw */
+export async function getMyQuietFacts(userId: VerifiedUserId, day: string): Promise<Map<string, string>> {
+  const { data, error } = await db().rpc("my_quiet_facts", { uid: userId, day });
+  if (error) throw new Error(`my_quiet_facts read failed: ${error.code}`);
+  // returns table(...) = 행 배열. 생성된 DB 타입이 없어 rpc 결과는 배열로 덮어쓸 수 없다(overrideTypes가 거절)
+  return new Map((data as { ticker: string; fact: string }[]).map((r) => [r.ticker, r.fact]));
+}
+
 /** 이미 내 종목이면 아무 일 없음(DB가 건너뜀, 이력 없음). 커버 범위 밖 티커는 FK가 막아 throw */
 export function addMyStock(userId: VerifiedUserId, ticker: string): Promise<MyStockWrite> {
   return write(() =>

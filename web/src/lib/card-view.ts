@@ -17,6 +17,7 @@ export type CardView = {
   lines: LineView[]; // on: 3개(세 번째 = 가격 사실 또는 잠금), off: 2개(첫 번째·두 번째 줄)
   leverageTag: string | null;
   checked: string | null; // "Checked 7:30 AM ET · SEC filings"
+  quietFact?: string; // 알아두기 사실 문장(#66). 조용한 날에만, 없으면 키 자체가 없다. 화면은 copy.ts QUIET_FACT(줄 수에 세지 않는 보조 문장)
 };
 /** 시장 한눈에(#11). on: 3줄(어제 마감, 오늘 지표 일정, 시장 전체 소식), off: 2줄(어제 마감 없음, #56). 모든 플랜·로그인 전이 같다 */
 export type GlanceView = { lines: TextLine[]; checked: string | null };

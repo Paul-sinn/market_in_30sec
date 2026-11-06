@@ -4,6 +4,7 @@
 Usage:
     python3 check_copy.py --mode card  FILE   # 카드 줄, 시장 한눈에, 아침 알림
     python3 check_copy.py --mode arena FILE   # 아레나 토크
+    python3 check_copy.py --mode quiet-fact FILE   # 알아두기 사실 문장(앞 'Did you know:' 없이)
     echo "Apple rose 3%." | python3 check_copy.py --mode card -
 
 Exit code: 0 = 위반 없음, 1 = 위반 있음. 스크립트가 못 잡는 규칙(사실/예측 구분,
@@ -18,17 +19,17 @@ from pathlib import Path
 
 # 레포의 서버 패키지를 직접 불러 쓴다. copy_rules는 표준 라이브러리만 쓰므로 uv 없이 돈다
 sys.path.insert(0, str(Path(__file__).resolve().parents[4] / "backend" / "src"))
-from m30.copy_rules import check_arena, check_card  # noqa: E402
+from m30.copy_rules import check_arena, check_card, check_quiet_fact  # noqa: E402
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=["card", "arena"], required=True)
+    parser.add_argument("--mode", choices=["card", "arena", "quiet-fact"], required=True)
     parser.add_argument("file", help="검사할 파일. '-'이면 표준 입력")
     args = parser.parse_args()
 
     stream = sys.stdin if args.file == "-" else open(args.file, encoding="utf-8")
-    check = check_card if args.mode == "card" else check_arena
+    check = {"card": check_card, "arena": check_arena, "quiet-fact": check_quiet_fact}[args.mode]
 
     violations = 0
     for num, raw in enumerate(stream, 1):

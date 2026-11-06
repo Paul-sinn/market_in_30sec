@@ -1,6 +1,6 @@
 name: quarterly-job
 
-# 분기 작업(#60·#64): 커버 범위 회사의 새 10-K 원문 + 업종 코드 + 연관 종목(Sonnet). 아침 실행(morning.yml)과 따로 돈다: DB 잠금·실행 기록·concurrency 그룹이 다르다.
+# 분기 작업(#60·#64·#66): 커버 범위 회사의 새 10-K 원문 + 업종 코드 + 연관 종목(Sonnet) + 알아두기(Sonnet 생성 + 판정). 아침 실행(morning.yml)과 따로 돈다: DB 잠금·실행 기록·concurrency 그룹이 다르다.
 # 레포가 공개라 이 로그도 공개다. CLI는 결과 코드·건수·CIK만 찍는다. run:은 한 줄, secrets는 env:로만 넘긴다(주입 방지)
 on:
   schedule:
@@ -18,7 +18,7 @@ jobs:
   quarterly:
     runs-on: ubuntu-24.04
     environment: production  # secrets는 main 브랜치 실행에만
-    timeout-minutes: 120  # 첫 실행(약 500개 회사) 추정 30~50분. 끊겨도 받은 10-K는 남고 다음 실행이 나머지를 받는다
+    timeout-minutes: 180  # 첫 실행 추정: 10-K 30~50분 + 연관 종목 200회 약 35분 + 알아두기 약 200개 회사 약 35분. 끊겨도 받은 10-K·만든 것은 남고 다음 실행이 나머지를 한다
     defaults:
       run:
         working-directory: backend

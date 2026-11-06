@@ -1,5 +1,5 @@
 import type { CardView, ChangeView, LineView } from "@/lib/card-view";
-import { PRICE_FACTS_IN_PLUS, SUMMARY_TOMORROW } from "@/lib/copy";
+import { PRICE_FACTS_IN_PLUS, QUIET_FACT, SUMMARY_TOMORROW } from "@/lib/copy";
 
 // 상태는 표시 방식에만 쓴다(색). 문구는 card.lines의 text 그대로. 모양은 사용자 시안의 샘플 카드(#27)
 const CHANGE_TONE: Record<ChangeView["tone"], string> = {
@@ -51,6 +51,12 @@ export function StockCard({ card }: { card: CardView }) {
             className={`border-t border-border py-3 wrap-break-word last:pb-0 ${LINE_TONE[line.status]}`}
           >
             {line.status === "locked" ? PRICE_FACTS_IN_PLUS : line.text}
+            {/* 알아두기(#66): 조용한 날 첫 번째 줄 아래 보조 문장. 줄 수에 세지 않는다 */}
+            {i === 0 && card.quietFact && (
+              <p data-quiet-fact className="mt-1 text-sm text-muted">
+                {QUIET_FACT(card.quietFact)}
+              </p>
+            )}
           </li>
         ))}
       </ul>

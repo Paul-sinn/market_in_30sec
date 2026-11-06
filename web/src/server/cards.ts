@@ -51,6 +51,7 @@ export type StoredCard = {
   leverageTag: string | null;
   suspended: boolean; // 발행 중단(#16). 읽기에서 거르지 않는다: 노출 판단은 exposeCards 한 곳
   newsFilingCount: number | null; // 첫 번째 줄이 다룬 공시 수(DB 값 그대로, #63). 헤더는 exposeCards가 만든다
+  firstQuietFact: string | null; // 알아두기 1번(#66, 둘러보기·로그인 전). 모든 viewer에게 같은 공용 데이터. 노출은 exposeCards
 };
 
 /** 카드가 있는 가장 최근 거래일("2099-12-31") = 대시보드·지난 카드의 오늘. 카드가 없으면 null */
@@ -65,31 +66,38 @@ async function latestTradingDay(client: ReturnType<typeof db>): Promise<string |
   return latest.data?.trading_day ?? null;
 }
 
-/** 가장 최근 거래일의 카드 전부(종목순)와 같은 날 시장 한눈에. 카드가 없으면 tradingDay·glance null.
+/** 가장 최근 거래일의 카드 전부(종목순)와 같은 날 시장 한눈에. 카드가 없으면 tradingDay·day·glance null.
+ * day = 원래 거래일("2099-12-31"): 알아두기 진도(getMyQuietFacts)의 기준. 컴포넌트로 넘기지 않는다.
  * 카드는 줄 노출 판단 전이다(exposeCards). 시장 한눈에는 모든 플랜·로그인 전에 같아서 여기서 화면 모델로 바꾼다 */
-export async function getDashboard(): Promise<{ tradingDay: string | null; glance: GlanceView | null; cards: StoredCard[] }> {
+export async function getDashboard(): Promise<{ tradingDay: string | null; day: string | null; glance: GlanceView | null; cards: StoredCard[] }> {
   const client = db();
   const day = await latestTradingDay(client);
-  if (!day) return { tradingDay: null, glance: null, cards: [] };
+  if (!day) return { tradingDay: null, day: null, glance: null, cards: [] };
 
   // 가격 표시 off(#56): 어제 마감 열은 읽지도 않는다(DB에 옛 값이 있어도 서버 메모리에 올라오지 않는다). 카드의 가격 키는 exposeCards가 뺀다
   const glanceLines = priceDisplayOn() ? GLANCE_LINES : GLANCE_LINES.filter((l) => l !== "close_line");
-  const [{ data, error }, glance] = await Promise.all([
+  const [{ data, error }, glance, quiet] = await Promise.all([
     client.from("stock_card").select(COLUMNS).eq("trading_day", day).order("ticker").overrideTypes<Row[], { merge: false }>(),
     client.from("market_glance").select(glanceLines.flatMap(lineColumns).join(",")).eq("trading_day", day).maybeSingle<GlanceRow>(),
+    // 알아두기 1번(#66)만: 모든 viewer에게 같아 이 공용 캐시 안에서 읽는다. 2번부터는 유저 진도라 캐시 밖(getMyQuietFacts)
+    client.from("quiet_fact").select("ticker, text").eq("seq", 1).overrideTypes<{ ticker: string; text: string }[], { merge: false }>(),
   ]);
   if (error) throw new Error(`stock_card read failed: ${error.message}`);
   if (data.length >= MAX_ROWS) throw new Error(`stock_card has ${MAX_ROWS}+ rows for ${day}; paginate the read`);
   if (glance.error) throw new Error(`market_glance read failed: ${glance.error.message}`);
+  if (quiet.error) throw new Error(`quiet_fact read failed: ${quiet.error.message}`);
+  if (quiet.data.length >= MAX_ROWS) throw new Error(`quiet_fact has ${MAX_ROWS}+ rows for seq 1; paginate the read`);
+  const first = new Map(quiet.data.map((f) => [f.ticker, f.text]));
   const g = glance.data;
   return {
     tradingDay: formatTradingDay(day),
+    day,
     // 행 없음(null) = 줄마다 지연(glanceView)
     glance: glanceView(
       g && glanceLines.map((l) => ({ text: g[`${l}_text`], status: g[`${l}_status`], checked_at: g[`${l}_checked_at`], source_scope: g[`${l}_source_scope`] })),
       glanceLines.length,
     ),
-    cards: data.map(toStoredCard),
+    cards: data.map((r) => toStoredCard(r, first.get(r.ticker) ?? null)),
   };
 }
 
@@ -113,7 +121,7 @@ export async function getCardHistory(ticker: string, days: number): Promise<Card
     .order("trading_day", { ascending: false })
     .overrideTypes<(Row & { trading_day: string })[], { merge: false }>(); // 90일 = 최대 90행(MAX_ROWS 아래)
   if (error) throw new Error(`stock_card read failed: ${error.message}`);
-  return { today, cards: data.map((r) => ({ day: r.trading_day, card: toStoredCard(r) })) };
+  return { today, cards: data.map((r) => ({ day: r.trading_day, card: toStoredCard(r, null) })) }; // 알아두기는 지난 카드에 없다(#66)
 }
 
 /** 커버 범위 전부, 종목순(내 종목 고르기 검색의 후보, #38·#58). 검색어는 이 조회에 넣지 않는다(메모리에서 searchStocks) */
@@ -124,7 +132,7 @@ export async function getCoverage(): Promise<Stock[]> {
   return data;
 }
 
-function toStoredCard(r: Row): StoredCard {
+function toStoredCard(r: Row, firstQuietFact: string | null): StoredCard {
   return {
     ticker: r.ticker,
     name: r.coverage.name,
@@ -137,5 +145,6 @@ function toStoredCard(r: Row): StoredCard {
     leverageTag: r.leverage_tag,
     suspended: r.publish_suspended,
     newsFilingCount: r.news_line_filing_count,
+    firstQuietFact,
   };
 }

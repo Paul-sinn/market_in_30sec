@@ -379,6 +379,23 @@ class CardStore:
                  for rows in relations.values() for r in rows],
             )
 
+    def quiet_fact_sources(self) -> dict[str, str]:
+        """티커 → 그 종목 알아두기 풀의 근거 접수번호(#66). 풀이 없는 티커는 키가 없다. 다시 만들 회사 고르기·pools."""
+        return dict(self._conn.execute(
+            "select distinct on (ticker) ticker, source_accession from public.quiet_fact order by ticker, seq"
+        ).fetchall())
+
+    def replace_quiet_facts(self, tickers: Sequence[str], accession: str, facts: Sequence[str]) -> None:
+        """한 트랜잭션: tickers의 알아두기 행을 전부 지우고 티커마다 facts를 seq 1부터 넣는다(같은 CIK 티커는 같은 풀).
+        웹은 옛 풀이나 새 풀 하나만 본다. 15개 상한은 DB check(seq 1~15)가 막는다."""
+        assert tickers and facts  # 빈 풀로 옛 풀을 지우는 길이 없게(통과 0개면 옛 풀을 그대로 둔다)
+        with self._conn.transaction(), self._conn.cursor() as cur:
+            cur.execute("delete from public.quiet_fact where ticker = any(%s)", (list(tickers),))
+            cur.executemany(
+                "insert into public.quiet_fact (ticker, seq, text, source_accession) values (%s, %s, %s, %s)",
+                [(ticker, seq, text, accession) for ticker in tickers for seq, text in enumerate(facts, 1)],
+            )
+
     def earnings_filing_times(self, accessions: Iterable[str]) -> dict[str, datetime]:
         """넘긴 접수번호 중 earnings_filing에 있는 것 → 헤더 접수 시각(ET)(#57)."""
         rows = self._conn.execute(

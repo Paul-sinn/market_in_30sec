@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from m30.copy_rules import check_arena, check_card
+from m30.copy_rules import check_arena, check_card, check_quiet_fact
 
 EXAMPLES = Path(__file__).resolve().parent / "copy_examples"
 SKILL_RUNNER = Path(__file__).resolve().parents[2] / ".claude/skills/card-copy-rules/scripts/check_copy.py"
@@ -86,10 +86,22 @@ REQUIRED_EXAMPLES = {
         # 티켓 #12: 아침 알림 티커 자리의 금지어
         "BUY: Apple named a new CFO",
     ],
+    # 티켓 #66: 알아두기 금지 표현 8개(각각 차단), 피봇 예시를 U1 동사로 고친 문장(통과)
+    "quiet_fact_pass.txt": ["NVIDIA makes chips for data centers and gaming (Annual report)"],
+    "quiet_fact_block.txt": [
+        "Apple is the largest maker of smartphones",
+        "Apple is the second-largest maker of smartphones",
+        "Apple is a top maker of smartphones",
+        "Apple is a leading maker of smartphones",
+        "Apple is the biggest maker of smartphones",
+        "Apple earns most of its revenue from phones",
+        "Apple offers more than phones and computers",
+        "Apple is the fastest growing phone maker",
+    ],
 }
 
 
-@pytest.mark.parametrize("name", REQUIRED_EXAMPLES, ids=["통과_예시", "차단_예시"])
+@pytest.mark.parametrize("name", REQUIRED_EXAMPLES, ids=["통과_예시", "차단_예시", "알아두기_통과_예시", "알아두기_차단_예시"])
 def test_완료_기준이_이름_붙인_예시_문장은_예시_파일에서_빠지지_않는다(name):
     lines = example_lines(name)
     assert [s for s in REQUIRED_EXAMPLES[name] if s not in lines] == []
@@ -208,3 +220,56 @@ def test_카드_줄은_맨_앞_티커도_단어로_센다():
 ], ids=["대문자_티커는_뺀다", "대문자_티커가_아닌_접두는_센다"])
 def test_아침_알림은_맨_앞_대문자_티커만_단어_수에서_뺀다(line, issues):
     assert check_card(line, notice=True) == issues
+
+
+# 알아두기(#66): 카드 규칙 전부 + 숫자 0개 + 순위·비교 표현 + 괄호 없음
+
+def test_통과_예시_문장은_알아두기_문구_규칙에_걸리지_않는다():
+    caught = {line: issues for line in example_lines("quiet_fact_pass.txt") if (issues := check_quiet_fact(line))}
+    assert caught == {}
+
+
+def test_차단_예시_문장은_하나도_빠짐없이_알아두기_문구_규칙에_걸린다():
+    assert [line for line in example_lines("quiet_fact_block.txt") if not check_quiet_fact(line)] == []
+
+
+@pytest.mark.parametrize(
+    "line, issue",
+    [
+        ("Apple was founded in 1976", "숫자 — 알아두기는 숫자·연도 없음"),
+        ("Apple operates in three regions", "숫자 — 알아두기는 숫자·연도 없음"),
+        ("Apple is the second-largest maker of smartphones", "순위·비교·수량 'second'"),
+        ("Apple is larger than its rivals", "순위·비교·수량 'than'"),
+        ("Apple makes phones (iPhone) and computers", "괄호 — 출처 꼬리표는 웹이 붙인다"),
+        ("NVIDIA sells chips for data centers and gaming (Annual report)", "금지어 'sell'"),
+        ("Apple serves millions of customers worldwide", "순위·비교·수량 'million'"),
+        ("Apple has hundreds of stores", "순위·비교·수량 'hundred'"),
+        ("Apple makes better chips", "순위·비교·수량 'better'"),
+    ],
+    ids=["연도", "숫자_단어", "하이픈_순위", "비교급", "괄호", "카드_금지어", "수량_어림_복수형", "숫자_단어_목록_밖_복수형", "than_없는_비교급"],
+)
+def test_알아두기는_이유를_코드로_남긴다(line, issue):
+    assert issue in check_quiet_fact(line)
+
+
+def test_알아두기는_one_time처럼_값이_아닌_숫자_단어는_세지_않는다():
+    assert check_quiet_fact("Apple offers one-time repair services") == []
+
+
+def test_알아두기_꼬리표는_카드_줄_단어_수에서도_빠진다():
+    fifteen = "Apple announced its board of directors elected a new chair at the annual shareholder meeting"
+    assert (check_card(f"{fifteen} (Annual report)"), check_quiet_fact(f"{fifteen} (Annual report)")) == ([], [])
+
+
+@pytest.mark.parametrize(
+    "line, code, expected",
+    [
+        ("NVIDIA makes chips for data centers and gaming (Annual report)", 0, "위반 0줄"),
+        ("Apple is the largest maker of smartphones", 1, "[위반] 1: Apple is the largest maker of smartphones\n        → 순위·비교·수량 'largest'"),
+    ],
+    ids=["통과", "위반"],
+)
+def test_스킬_실행기의_quiet_fact_모드는_외부_패키지_없이_알아두기_규칙으로_검사한다(line, code, expected):
+    r = subprocess.run([sys.executable, "-I", "-S", str(SKILL_RUNNER), "--mode", "quiet-fact", "-"],
+                       input=line + "\n", capture_output=True, text=True, timeout=30)
+    assert (r.returncode, expected in r.stdout) == (code, True), r.stdout + r.stderr

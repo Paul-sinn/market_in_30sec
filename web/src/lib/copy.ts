@@ -10,6 +10,8 @@ export const NOT_COVERED = "Not covered yet"; // 등락률 미지원
 // 카드 헤더(#63, GLOSSARY CardHeader, copy-reviewer 검수 대상). 지연·미지원은 위 UPDATE_DELAYED·NOT_COVERED를 쓴다
 export const NEW_FILINGS = (n: number) => `${n} new filing${n === 1 ? "" : "s"}`; // 첫 번째 줄 확인함·있음, n = 1등 + +N more
 export const QUIET_DAY = "Quiet day"; // 조용한 날 = 첫 번째 줄 확인함·없음
+// 알아두기(#66, GLOSSARY QuietFact, copy-reviewer 검수 대상). 사실 문장은 DB quiet_fact.text 그대로, 꼬리표는 backend card.toml source_tags와 같은 값
+export const QUIET_FACT = (fact: string) => `Did you know: ${fact} (Annual report)`;
 
 // HANDOFF 3-2·GLOSSARY: 무료 범위의 세 번째 줄 자리(#9). 서버는 잠금 상태만 보내고 글자는 이 문구뿐이다
 export const PRICE_FACTS_IN_PLUS = "Price facts in Plus";

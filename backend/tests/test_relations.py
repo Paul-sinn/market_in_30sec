@@ -105,8 +105,9 @@ def sent(request):
 
 
 def run(store, reports, llm, limit=QUARTERLY_LLM_CALL_LIMIT, coverage=COVERAGE):
+    """알아두기(#66) 상한 0: 그 단계는 LLM을 부르지 않는다(test_quiet_facts가 본다)."""
     store.upsert_coverage(coverage)
-    return run_quarterly(store, reports=reports, llm=llm, sleep=lambda _: None, llm_call_limit=limit)
+    return run_quarterly(store, reports=reports, llm=llm, sleep=lambda _: None, llm_call_limit=limit, quiet_fact_call_limit=0)
 
 
 # 완료 기준 1: Item 1 경쟁·고객·공급 부분 → Sonnet JSON

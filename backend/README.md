@@ -91,23 +91,24 @@ uv run python -m m30.pipeline --production 2026-10-16   # 지난 거래일 다�
   - `NOT REFRESHED reason=sec_tickers_failed`: SEC 티커 목록을 못 받았다. `SEC_USER_AGENT` 값·SEC 차단 여부(같은 실행의 `ACCESS DENIED`)를 본다. 다시 시도하지 않고 지난 행을 쓴다(빈 DB면 카드 0장 = 실패한 실행)
 - live 게이트(원격 아침 실행 전에 사람이 돌린다. 요청 수·시간은 `-s` 출력): `SEC_USER_AGENT="<이름> <연락 이메일>" uv run pytest -q -s -m live tests/test_holdings_live.py`(값은 명령 줄 안에서만). 실제 SPY 보고 + 티커 목록으로 회사 495개 이상, 못 찾은 회사 15개 이하, `GOOGL`·`GOOG`·`BRK-B` 있음, `GOOGN`·`GOOGM`·`CELG-RI`·`BRK-A` 없음을 확인한다. 못 찾은 이름·한 회사 여러 티커는 로컬 출력에만 찍힌다
 
-## 분기 작업 (10-K·업종 코드·연관 종목, #60·#64)
+## 분기 작업 (10-K·업종 코드·연관 종목·알아두기, #60·#64·#66)
 
 ```bash
 uv run python -m m30.pipeline --quarterly   # 실제 SEC. 원격 DB 허용. 거래일·--quality는 받지 않는다
 ```
 
-- `.github/workflows/quarterly.yml`이 매주 일요일 06:00 UTC에 돌린다(새 10-K가 나온 회사만 받으므로 매주 확인한다). Actions → `quarterly-job` → Run workflow로 수동 실행(입력 없음). 수동 실행은 평일 09:00~10:30 UTC(아침 실행 시간)를 피한다. **main 병합 뒤 첫 실행은 수동으로**(약 500개 회사, 추정 30~50분, 한도 120분).
+- `.github/workflows/quarterly.yml`이 매주 일요일 06:00 UTC에 돌린다(새 10-K가 나온 회사만 받으므로 매주 확인한다). Actions → `quarterly-job` → Run workflow로 수동 실행(입력 없음). 수동 실행은 평일 09:00~10:30 UTC(아침 실행 시간)를 피한다. **main 병합 뒤 첫 실행은 수동으로**(약 500개 회사, 10-K 추정 30~50분 + 연관 종목·알아두기 각 약 35분, 한도 180분).
 - 하는 일: 커버 범위 회사(CIK가 있고 ETF가 아닌 행의 서로 다른 CIK)마다 submissions 1회 → `coverage.sic` 채움(4자리 숫자일 때만, 아니면 지난 값 유지) → recent에서 form이 정확히 `10-K`인 첫 행(10-K/A·10-KT 제외)이 저장된 최신 접수번호와 다르면 전체 제출 파일 1회 → 주 문서(TYPE 10-K) 글자만 `sec_annual_report`에 한 행(태그를 뗀 원문, 블록마다 줄, 앞 1,000,000자, 추가만). 첨부·그림·XBRL은 저장하지 않는다. SEC 요청 간격 1초(아침 실행과 겹쳐도 합이 초당 9회).
 - 아침 실행과 섞이지 않는다: 잠금(`classid = 16`)·`pipeline_run`·Discord를 쓰지 않고 concurrency 그룹도 다르다(`quarterly-job`). 실행 기록은 Actions 로그와 exit 코드뿐이다.
-- 환경 변수 셋: `SUPABASE_DB_URL`, `SEC_USER_AGENT`, `ANTHROPIC_API_KEY`(연관 종목, #64. production environment secret에 이미 있다). 하나라도 없으면 DB·SEC·LLM에 닿기 전에 이름만 알리고 exit 2. DB 연결 가드·`(reason=…)`은 위 운영 모드와 같다.
-- exit 코드: 0 = 정상, 2 = 인자 오류·설정 누락·트랜잭션 풀러(6543), 1 = DB 연결 실패·`RUN FAILED: <예외 이름>`·회사 실패(10-K 또는 LLM 전송)가 하나라도 있음·대상 회사 0개(빈·잘못된 DB). 끊겨도 저장한 10-K·10-K 언급은 남고 다음 실행이 나머지를 이어 한다.
-- 출력 줄(코드·건수·CIK만. 10-K 글자·회사 이름·URL·연락처는 찍지 않는다):
-  - `!!! FAILED: failures=<회사 실패 수> companies=<대상 회사 수> !!!` + `failed: annual_report/<CIK>=<이유 코드>, …`(실패한 실행만)
+- 환경 변수 셋: `SUPABASE_DB_URL`, `SEC_USER_AGENT`, `ANTHROPIC_API_KEY`(연관 종목 #64·알아두기 #66. production environment secret에 이미 있다). 하나라도 없으면 DB·SEC·LLM에 닿기 전에 이름만 알리고 exit 2. DB 연결 가드·`(reason=…)`은 위 운영 모드와 같다.
+- exit 코드: 0 = 정상, 2 = 인자 오류·설정 누락·트랜잭션 풀러(6543), 1 = DB 연결 실패·`RUN FAILED: <예외 이름>`·회사 실패(10-K 또는 LLM 전송)가 하나라도 있음·대상 회사 0개(빈·잘못된 DB). 끊겨도 저장한 10-K·10-K 언급·알아두기 풀은 남고 다음 실행이 나머지를 이어 한다.
+- 출력 줄(코드·건수·CIK만. 10-K 글자·회사 이름·알아두기 문장·URL·연락처는 찍지 않는다):
+  - `!!! FAILED: failures=<회사 실패 수> companies=<대상 회사 수> !!!` + `failed: annual_report/<CIK>=<이유 코드>, …`(실패한 실행만). LLM 실패는 단계(연관 종목 → 알아두기)마다 따로 `llm/<CIK>=…`로 남아, 키 오류면 같은 CIK가 두 번 나온다
   - `ACCESS DENIED (not retried): annual_report` / `RATE LIMITED (429, retried): annual_report`
   - `quarterly companies=<n> new=<n> unchanged=<n> no_annual_report=<n> sic=<n> sic_missing=<n>`(늘 `companies = new + unchanged + no_annual_report + 10-K 실패 수`)
   - `relations: extracted=<n> deferred=<n> json_invalid=<CIK,…|-> no_item1=<n> no_section=<n> truncated=<n> invalid_mentions=<n> llm_calls=<n>/<상한> tokens=in:<n>,out:<n>,cache_read:<n>,cache_write:<n>` — 이번 실행의 10-K 언급 뽑기(아래)
   - `relations: tickers=<n> changed=<n> rows=<n> own_10k=<n>(<%>) reverse_10k=<n>(<%>) sic=<n>(<%>) under3=<n> mentions=<n> matched=<n> unmatched=<n> ambiguous=<n> self=<n>` — 쓴 뒤 `stock_relation` 표 전체와 지금 쓰는 언급 전체(행 0이면 `(-)`)
+  - `quiet_facts: made=<n> facts=<n> deferred=<n> json_invalid=<CIK,…|-> no_item1=<n> empty=<n> dropped=format:<n>,rules:<n>,check:<n> llm_calls=<n>/<상한> tokens=in:<n>,out:<n>,cache_read:<n>,cache_write:<n> pools=<풀 있는 주식 티커>/<주식 티커>` — 알아두기(아래)
 - 이유 코드와 확인할 것: `access_denied` SEC가 401·403(그 뒤 회사는 요청 없이 같은 코드) → `SEC_USER_AGENT`에 연락 이메일이 있는지, SEC 차단 여부 / `retries_exhausted` 타임아웃·429·5xx 4번 → 다음 주 실행이 다시 받는다, 계속되면 SEC 상태 / `error` 응답 모양·헤더·주 문서 없음·404 → 그 회사 submissions·전체 제출 파일을 로컬에서 열어 본다 / `invalid_data` 어댑터가 계약 밖 값(형식 밖 sic·접수번호, 빈·상한 초과 본문) / `too_large` 전체 제출 파일이 100MB(받은 바이트 또는 gzip을 푼 바이트) 초과, 다시 시도하지 않음 → 그 회사 크기를 확인하고 `ANNUAL_REPORT_FILE_MAX`를 올릴지 정한다 / `unexpected:<예외 이름>` 어댑터 버그.
 - `no_annual_report`(recent에 10-K 없음, 상장 1년 미만 등)와 `sic_missing`(펀드·SEC가 업종을 주지 않음)은 실패가 아니다.
 - 연관 종목(#64): 10-K 수집 뒤 같은 실행에서 돈다(10-K 실패가 있어도 저장된 것으로). ETF는 하지 않는다.
@@ -120,9 +121,21 @@ uv run python -m m30.pipeline --quarterly   # 실제 SEC. 원격 DB 허용. 거�
   - `failed: llm/<CIK>=<이유 코드>`: Anthropic 전송 실패. `access_denied`(401·403, 그 뒤 회사는 요청 없이 같은 코드) → `ANTHROPIC_API_KEY` secret 값 / `retries_exhausted`(타임아웃·429·5xx·529 4번) → 다음 주 실행이 다시 부른다
   - `unmatched`가 큰 것은 정상이다(범위 밖 회사, 상표 이름 `Google`·`Facebook`은 맞추지 않는다). `ambiguous`는 이름이 여러 커버 범위 회사에 맞아 버린 것
   - 행 점검(읽기 조회): `select ticker, related_ticker, relation, basis, rank, evidence from public.stock_relation order by ticker, rank`
+- 알아두기(#66): 연관 종목 다음, 같은 실행에서 돈다(저장된 10-K로). ETF는 하지 않는다.
+  1. 풀이 최신 10-K가 아닌 회사(CIK 순)마다 Item 1 앞 12,000자를 Sonnet(`QUIET_FACT_MODEL`)에 보내 사실 최대 15개(종류 products·revenue·markets)를 받는다 → 코드 검사(`check_quiet_fact`: 카드 규칙 + 숫자 0개 + 순위·비교 표현 + 괄호 없음, 종목명은 가리고 본다. 형식: 회사 이름으로 시작, 한 문장, 중복 없음) → 판정 1회(`REVIEW_MODEL`, 회사당 1회) → `fact`만 남겨 1부터 번호를 매기고 그 회사의 모든 티커에 같은 풀을 한 트랜잭션으로 바꾼다(`quiet_fact`). 순서는 코드가 정한다: 뭘 만드는지 → 어디서 돈을 버는지 → 어떤 시장
+  2. 유저 진도는 저장하지 않는다. 웹이 DB 함수 `my_quiet_facts(uid, day)`로 센다(마지막으로 넣은 날부터 그 거래일까지 조용한 날 수 = 번호)
+  - 실행당 LLM 호출 상한 400(`QUIET_FACT_LLM_CALL_LIMIT`, 연관 종목 200과 따로, 재시도 포함). 회사당 보통 2회 → 약 200개 회사. 첫 채우기는 실행 3번
+  - `deferred > 0`: 상한에 닿아 남은 회사. 실패가 아니다. 다시 실행하면 CIK 순으로 이어 한다. 그동안 그 회사는 옛 풀(또는 없음)
+  - `empty > 0`: 생성은 됐지만 통과 0개. 옛 풀을 그대로 두고 다음 실행이 다시 부른다(매주 호출이 나간다). 같은 회사가 계속 `empty`면 로컬에서 live 테스트로 그 회사 탈락 이유를 본다
+  - `json_invalid=<CIK>`: 생성이나 판정 응답이 두 번 다 JSON이 아니었다. 실패가 아니고 다음 실행이 다시 부른다
+  - `dropped=format:…,rules:…,check:…`: 형식(종류 값 밖·이름으로 시작 안 함·두 문장·중복·15개 초과), 문구 규칙, 판정에서 빠진 사실 수. `rules`가 사실 수보다 크면 생성 지시문을 본다
+  - `pools`: 실행 뒤 풀이 있는 주식 티커 수. 첫 채우기가 끝나면 `no_item1`·`empty`만큼 모자란다
+  - 행 점검(읽기 조회): `select ticker, seq, text from public.quiet_fact order by ticker, seq`
 - DB 크기 확인(읽기 조회): `select count(*), pg_size_pretty(pg_total_relation_size('public.sec_annual_report')) from public.sec_annual_report`. 무료 한도 500MB, 연 약 60~100MB 추정. 한도에 가까우면 Item 1만 남기는 방식이나 유료 플랜으로(남긴 행을 줄이는 건 데이터 수정이라 사용자 확인 뒤).
 - live 확인(선택, 값은 명령 줄 안에서만): `SEC_USER_AGENT="<이름> <연락 이메일>" uv run pytest -q -s -m live tests/test_quarterly_live.py`. 실험 회사 6개의 실제 10-K를 받아 모양을 확인하고 CIK·글자 수·잘림·시간만 찍는다(본문은 찍지 않는다).
 - 연관 종목 live 확인(main 병합 전, 값은 명령 줄 안에서만, 약 $0.3): `SEC_USER_AGENT="<이름> <연락 이메일>" ANTHROPIC_API_KEY="<키>" uv run pytest -q -s -m live tests/test_relations_live.py`. 실험 회사 8개의 실제 10-K → 발췌 → 실제 Sonnet → 작은 커버 범위로 맞추기. 티커·CIK·글자 수·건수·초·토큰만 찍는다(회사 이름·문장은 찍지 않는다). 호출당 초·토큰으로 상한 200회가 timeout 안에 드는지, 비용을 본다.
+
+- 알아두기 live 확인(main 병합 전, 값은 명령 줄 안에서만, 약 $0.2): `SEC_USER_AGENT="<이름> <연락 이메일>" ANTHROPIC_API_KEY="<키>" uv run pytest -q -s -m live tests/test_quiet_facts_live.py`. 실험 회사 8개의 실제 10-K → Item 1 → 실제 생성·판정. 로컬 전용 출력이라 통과·탈락 문장과 이유를 찍는다(copy-reviewer 표본). Actions에서는 돌지 않는다.
 
 ## 가격 표시 플래그 (`PRICE_DISPLAY`, #56)
 
