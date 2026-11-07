@@ -7,4 +7,4 @@ from m30.llm.anthropic import AnthropicLLM
 
 def test_닫힌_로컬_포트로_Anthropic을_부른다():
     llm = AnthropicLLM(load_llm_settings(), url="https://127.0.0.1:9/v1/messages", timeout=2.0)  # 접속 거부 → 일시 실패
-    llm.complete(LLMRequest("m", "s", "u", 1))
+    llm.complete(LLMRequest("claude-haiku-5-5", "s", "u", 1))  # 사고 끄기 표에 있는 모델이라야 접속까지 간다
