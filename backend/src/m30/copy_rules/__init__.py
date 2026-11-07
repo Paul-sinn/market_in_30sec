@@ -34,6 +34,8 @@ ONE_OFF = re.compile(r"\bone-(time|off)\b", re.I)  # 값이 아닌 형용사. �
 QUIET_FACT_BANNED = _card["quiet_fact_banned"]
 QUIET_FACT_TAG = re.compile(r"\s*\(Annual report\)$")  # 알아두기 줄 끝 꼬리표(웹이 붙인다). 검사 전에 뗀다
 DIGIT = re.compile(r"\d")
+RELATED_BANNED = _card["related_banned"]
+RELATED_LABEL = re.compile(r"^(" + "|".join(map(re.escape, _card["related_labels"])) + r") ")  # 세 번째 줄 맨 앞 관계 단어(코드가 붙임)
 
 HANGUL = re.compile(r"[가-힣]")
 MAX_WORDS = 15
@@ -121,3 +123,10 @@ def check_quiet_fact(line: str) -> list[str]:
     if "(" in body or ")" in body:
         issues.append("괄호 — 출처 꼬리표는 웹이 붙인다")
     return issues
+
+
+def check_related(line: str) -> list[str]:
+    """세 번째 줄 연관 소식(#67) 검사. 위반 이유 목록, 빈 리스트 = 통과. 맨 앞 관계 단어는 있으면 떼고 본다(코드가 붙인 말, 아침 알림 티커와 같다).
+    check_card 전부 + related_banned("금지어 '<표현>'" 모양: 재생성 이유가 RETRY_COPY_WORD가 된다). 종목명은 호출하는 쪽이 가린다."""
+    body = RELATED_LABEL.sub("", _normalize(line).strip())
+    return check_card(body) + [f"금지어 '{term}'" for term in RELATED_BANNED if word_pattern(term).search(body)]

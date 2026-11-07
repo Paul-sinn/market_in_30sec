@@ -46,6 +46,7 @@ CARD_COLUMNS = [
     "event_line_text", "event_line_status", "event_line_checked_at", "event_line_source_scope",
     "price_fact_line_text", "price_fact_line_status", "price_fact_line_checked_at", "price_fact_line_source_scope",
     "updated_at", "leverage_tag", "news_line_accession", "previous_trading_day", "publish_suspended", "news_line_filing_count",
+    "related_line_text", "related_line_status", "related_line_checked_at", "related_line_source_scope", "related_line_filing_count",
 ]
 
 
@@ -61,7 +62,7 @@ def test_카드_컬럼은_정해진_목록뿐이고_방향_의견_필드가_없�
         "select column_name from information_schema.columns"
         " where table_schema = 'public' and table_name = 'stock_card' order by ordinal_position")]
     assert columns == CARD_COLUMNS  # 콜·토크·방향·판정 컬럼은 영원히 없다 (ADR-0001). 출처 공시 열은 방향 의견이 아니다
-    assert len(columns) == 23
+    assert len(columns) == 28
     assert enum_values(admin, "card_status") == ["normal", "fallback"]
     assert enum_values(admin, "line_status") == ["checked_found", "checked_none", "delayed", "unsupported"]
 
@@ -1100,3 +1101,134 @@ def test_탭_세기_함수는_서버만_부를_수_있고_모르는_자리는_�
         with pytest.raises((errors.CheckViolation, errors.NotNullViolation)):
             tap(admin, slot)
     assert admin.execute("select count(*) from public.locked_slot_tap").fetchone() == (0,)
+
+
+
+# 세 번째 줄 연관 소식(#67): stock_card 열 5개(완결성·건수), 보류함 줄 구분, 재발행·수정 이력 트리거
+RELATED_COLS = (f"{CARD_COLS}, related_line_text, related_line_status, related_line_checked_at, related_line_source_scope,"
+                " related_line_filing_count")
+NOW = datetime(2026, 10, 16, 7, 30, tzinfo=ET)
+RELATED_FOUND = "Competitor AMD reported Q3 revenue of $7.7B +1 more (SEC filing)"
+
+
+def insert_related(conn, text, status, checked_at, scope, count):
+    conn.execute(f"insert into public.stock_card ({RELATED_COLS})"
+                 " values ('AAPL', '2026-10-16', 'fallback', 1.3, 'checked_found', %s, %s, %s, %s, %s)",
+                 (text, status, checked_at, scope, count))
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        (None, "checked_none", None, None, None),
+        ("No major related filings found", "checked_none", NOW, None, None),
+        ("Update delayed", "delayed", NOW, None, None),
+        (RELATED_FOUND, None, NOW, "SEC filings", None),
+        (RELATED_FOUND, "checked_found", NOW, "SEC filings", None),
+        (RELATED_FOUND, "checked_found", NOW, "SEC filings", 0),
+        ("No major related filings found", "checked_none", NOW, "SEC filings", 1),
+        ("Update delayed", "delayed", NOW, "SEC filings", 2),
+        ("Not covered yet", "unsupported", NOW, None, 1),
+        (None, None, None, None, 1),
+    ],
+    ids=["상태만", "확인함·없음인데_범위_없음", "지연인데_범위_없음", "상태_없음", "확인함·있음인데_건수_없음", "건수_0",
+         "확인함·없음에_건수", "지연에_건수", "미지원에_건수", "줄_없는_카드에_건수"],
+)
+def test_세_번째_줄이_빠지거나_어긋나거나_건수가_확인함·있음_줄_밖이면_DB가_거부한다(aapl, line):
+    with pytest.raises(errors.CheckViolation):
+        insert_related(aapl, *line)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        (None, None, None, None, None),
+        ("Not covered yet", "unsupported", NOW, None, None),
+        ("No major related filings found", "checked_none", NOW, "SEC filings", None),
+        ("Update delayed", "delayed", NOW, "SEC filings", None),
+        (RELATED_FOUND, "checked_found", NOW, "SEC filings", 2),
+    ],
+    ids=["#67_전_카드", "미지원은_범위_없이", "확인함·없음", "지연", "확인함·있음과_건수"],
+)
+def test_세_번째_줄은_비었거나_다른_줄과_같은_모양이면_받는다(aapl, line):
+    insert_related(aapl, *line)
+
+    assert aapl.execute("select related_line_status::text, related_line_filing_count from public.stock_card").fetchall() == [
+        (line[1], line[4])]
+
+
+AMD_ACCESSION = "0000002488-26-000001"
+HOLD_LINE_SQL = ("insert into public.hold_queue (ticker, trading_day, accession, stage, rules, replacement_text, line)"
+                 " values ('AAPL', '2026-10-16', %s, %s, %s, %s, %s)")
+
+
+@pytest.fixture
+def related_card(aapl_card):
+    """AAPL 카드 = 첫 번째 줄 대체 줄(ACCESSION) + 세 번째 줄 확인함·있음(AMD 공시)."""
+    aapl_card.execute(FILING_SQL, (AMD_ACCESSION, "0000002488"))
+    aapl_card.execute("update public.stock_card set related_line_text = %s, related_line_status = 'checked_found',"
+                      " related_line_checked_at = now(), related_line_source_scope = 'SEC filings', related_line_filing_count = 2",
+                      (RELATED_FOUND,))
+    return aapl_card
+
+
+def test_보류함_행은_줄을_적지_않으면_첫_번째_줄_행이다(related_card):
+    related_card.execute(HOLD_SQL, tuple(HOLD_ROW.values()))
+
+    assert related_card.execute("select line from public.hold_queue").fetchall() == [("news",)]
+
+
+@pytest.mark.parametrize(
+    "row, error",
+    [
+        ((AMD_ACCESSION, "draft", ["1 draft: no_text"], RELATED_FOUND, "price"), errors.CheckViolation),
+        ((AMD_ACCESSION, "draft", ["1 draft: no_text"], RELATED_FOUND, None), errors.NotNullViolation),
+        ((AMD_ACCESSION, "amended_filing", ["정정 공시 있음"], None, "related"), errors.CheckViolation),
+    ],
+    ids=["모르는_줄", "줄_없음", "세_번째_줄_정정_공시_행"],
+)
+def test_보류함_줄은_첫_번째·세_번째_줄뿐이고_정정_공시_행은_첫_번째_줄만이다(related_card, row, error):
+    with pytest.raises(error):
+        related_card.execute(HOLD_LINE_SQL, row)
+
+
+def card_lines(conn):
+    return conn.execute("select news_line_text, related_line_text, related_line_filing_count from public.stock_card").fetchone()
+
+
+@pytest.mark.parametrize(
+    "line, after",
+    [
+        ("related", (REPLACEMENT, HUMAN, 2)),
+        ("news", (HUMAN, RELATED_FOUND, 2)),
+    ],
+    ids=["세_번째_줄_행", "첫_번째_줄_행"],
+)
+def test_보류함에서_재발행하면_그_행의_줄_문구만_바뀐다(related_card, line, after):
+    related_card.execute(HOLD_LINE_SQL, (ACCESSION, "draft", ["1 draft: no_text"], REPLACEMENT, "news"))
+    related_card.execute(HOLD_LINE_SQL, (AMD_ACCESSION, "draft", ["1 draft: no_text"], RELATED_FOUND, "related"))
+
+    as_service_role(related_card, "update public.hold_queue set edited_text = %s, state = 'republished' where line = %s", (HUMAN, line))
+
+    assert card_lines(related_card) == after
+
+
+def test_세_번째_줄이_확인함·있음이_아닌_카드는_세_번째_줄_재발행이_실패한다(related_card):
+    related_card.execute(HOLD_LINE_SQL, (AMD_ACCESSION, "draft", ["1 draft: no_text"], RELATED_FOUND, "related"))
+    related_card.execute("update public.stock_card set related_line_text = 'Update delayed', related_line_status = 'delayed',"
+                         " related_line_filing_count = null")
+
+    with pytest.raises(errors.RaiseException):
+        as_service_role(related_card, "update public.hold_queue set edited_text = %s, state = 'republished'", (HUMAN,))
+
+
+def test_세_번째_줄_확인_시각만_바뀐_갱신은_수정_이력이_아니고_문구가_바뀌면_이력이다(related_card):
+    def related_revisions():
+        return related_card.execute("select previous->>'related_line_text' from public.stock_card_revision order by id").fetchall()
+
+    before = related_revisions()  # 픽스처가 세 번째 줄을 채운 갱신(null → 줄)
+    related_card.execute("update public.stock_card set related_line_checked_at = related_line_checked_at + interval '1 hour'")
+    assert related_revisions() == before
+
+    related_card.execute("update public.stock_card set related_line_text = %s", (HUMAN,))
+    assert related_revisions() == [*before, (RELATED_FOUND,)]

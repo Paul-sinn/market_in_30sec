@@ -108,7 +108,7 @@ def test_운영_CLI는_가격_표시가_꺼져_있으면_TIINGO_API_KEY가_있�
     lines = out.splitlines()
     assert "RUN FAILED" not in out
     assert "2026-10-16 cards_saved=15 resumed=- change_delayed=-" in lines
-    assert "lines: change[unsupported=15] news[checked_none=15] event[unsupported=15] price[]" in lines
+    assert "lines: change[unsupported=15] news[checked_none=15] event[unsupported=15] price[] related[unsupported=15]" in lines
     assert "glance: close=unsupported indicator=checked_none market_news=checked_none review=-" in lines
     assert "prices=off" in lines
 
@@ -121,5 +121,5 @@ def test_시나리오_CLI는_가격_표시가_꺼져_있으면_가짜_시세도_
     assert r.returncode == 0, r.stderr
     lines = r.stdout.splitlines()  # first_card는 AAPL·MSFT 봉이 있다: on이면 change[checked_found=2 delayed=1]
     assert "2026-10-16 cards_saved=3 resumed=- change_delayed=-" in lines
-    assert "lines: change[unsupported=3] news[unsupported=3] event[unsupported=3] price[]" in lines
+    assert "lines: change[unsupported=3] news[unsupported=3] event[unsupported=3] price[] related[unsupported=3]" in lines
     assert "glance: close=unsupported indicator=unsupported market_news=unsupported review=-" in lines

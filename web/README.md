@@ -172,7 +172,7 @@ select (waitlisted_at at time zone 'America/New_York')::date as day, count(*)
 
 - **기본 off.** 켜는 값은 `on` 하나(대소문자·앞뒤 공백 무시). 없음·빈 값·그 밖의 값(`true`·`1` 포함)은 전부 off. 읽는 곳은 `src/server/price-display.ts`의 `priceDisplayOn()` 하나이고 요청 때마다 읽는다
 - off면 화면에서 숨기는 게 아니라 화면 모델(RSC props)에서 뺀다. DB에 옛 가격 값이 남아 있어도 같다
-  - 카드(`exposeCards`): `change` 키(등락률·종가 날짜 라벨)가 없다. 세 번째 줄(가격 사실)은 원문도 `Price facts in Plus` 잠금도 없이 모든 viewer(로그인 전·무료·Plus)에게 두 줄. 하단 `Checked …`는 두 줄로만(`Daily prices` 없음)
+  - 카드(`exposeCards`): `change` 키(등락률·종가 날짜 라벨)가 없다. 줄은 on과 같다: 세 번째 줄은 플래그와 무관하게 연관 소식이고, 가격 사실 열(`price_fact_line_*`)은 on이어도 읽지 않는다(#67 U1)
   - 시장 한눈에(`getDashboard`): 어제 마감 줄 열을 select하지 않는다. 지표 일정·시장 소식 2줄, 그날 행이 없으면 `Update delayed` 2줄
 - **Vercel(메인 또는 사용자)**: 프로젝트 Settings → Environment Variables에 `PRICE_DISPLAY` = `on`(Production, 필요하면 Preview). `NEXT_PUBLIC_`을 붙이지 않는다. 값을 넣거나 바꾸거나 지운 뒤에는 **재배포해야** 적용된다. 끄려면 변수를 지우고 재배포
 - 로컬: 셸에서 `export PRICE_DISPLAY=on`(위 "로컬에서 띄우기"). `.env` 파일은 만들지 않는다
@@ -188,8 +188,9 @@ select (waitlisted_at at time zone 'America/New_York')::date as day, count(*)
 
 ## 줄 노출 (#9)
 
-- 세 줄 전부는 **Plus 유저의 잠기지 않은 내 종목 카드**뿐이다. 나머지(로그인 전, 무료 유저의 모든 카드, 모든 플랜의 Browse 카드)는 무료 범위다
-- 무료 범위: 등락률·첫·두 번째 줄은 저장된 그대로(지연·미지원도 그대로). 세 번째 줄은 사실이 있든 없든 지연이든 `{ status: "locked" }`만 보내고 화면은 `Price facts in Plus`. 그 줄의 확인 시각·출처도 카드 하단에서 빠진다
+- 세 번째 줄(연관 소식, #67) 본문은 **Plus 유저의 잠기지 않은 내 종목 카드**뿐이다. 나머지(로그인 전, 무료 유저의 모든 카드, 모든 플랜의 Browse 카드, 잠긴 내 종목)는 무료 범위다
+- 무료 범위: 등락률·첫·두 번째 줄은 저장된 그대로(지연·미지원도 그대로). 세 번째 줄은 건수만: 확인함·있음 `{ status: "locked", count }` → `2 related updates in Plus`·`1 related update in Plus`, 없음·지연 `{ status: "locked" }` → `Related news in Plus`. 본문·확인 시각·출처는 보내지 않고 카드 하단에서도 빠진다. 건수는 DB `related_line_filing_count` 그대로
+- 세 번째 줄 미지원(ETF·연관 종목 없음)은 모든 viewer에게 `Not covered yet`. #67 전 카드(세 번째 줄 열이 빔)는 두 줄, 잠금도 없다
 - 판단은 `exposeCards`(`src/server/exposure.ts`) 한 곳이고, `/cards` 페이지가 컴포넌트로 넘기기 전에 부른다. 그래서 잠긴 줄의 글자·상태는 RSC 페이로드와 HTML에 아예 없다. 플랜은 세션 유저 id로 읽은 `user_profile.plan`(`getMyStocks`)
 - 화면 모델은 허용한 키만 옮긴다(`tests/exposure.test.tsx` 화이트리스트). 방향 의견 필드는 없다(ADR-0001)
 - 발행 중단(`stock_card.publish_suspended = true`, #16)인 카드는 `exposeCards`가 모든 viewer에서 뺀다(읽기 쿼리는 거르지 않는다). 내 종목이면 그 자리는 카드 없음과 같다(`Summary arrives tomorrow morning`). 켜는 법은 `backend/README.md`

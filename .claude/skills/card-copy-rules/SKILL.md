@@ -29,7 +29,7 @@ description: "30초 종목 리포트 앱에 나가는 문장의 규칙. 카드 �
 
 | 상태 | 첫 번째 줄 | 두 번째 줄 | 세 번째 줄(연관 소식) |
 | --- | --- | --- | --- |
-| 확인함·없음 | `No new SEC filings found` | `No confirmed events found` | `No related filings found` |
+| 확인함·없음 | `No new SEC filings found` | `No confirmed events found` | `No major related filings found`(후보가 중요도 4 이상만이라 `major`, #67 U3) |
 | 지연·실패 | `Update delayed` | `Update delayed` | `Update delayed` |
 | 미지원 | `Not covered yet` | `Not covered yet` | `Not covered yet`(ETF) |
 
@@ -57,12 +57,13 @@ AI 없이 첫 번째 줄 상태로 정한다: 확인함·있음 `N new filing(s)
 
 ### 세 번째 줄 (RelatedLine, AI 작성, 2026-11-03, #67)
 - 연관 종목의 그날 공시 1등 하나 + `+N more`. 관계 단어로 시작한다: `Competitor` · `Customer` · `Supplier` · `Peer`. 예: `Competitor AMD reported Q3 revenue of $X.XB (SEC filing)`
-- 첫 번째 줄 규칙(1~8)과 검수를 그대로 따른다. 관계 단어와 회사 이름은 코드가 넘긴 값만 쓴다
-- **관계와 그 회사의 사실만** 쓴다. 내 종목에 대한 영향·방향·좋고 나쁨은 쓰지 않는다(ADR-0005). 금지 표현: `could affect`, `impact on`, `good for`, `bad for`, `pressure on`, `benefit from`, `threat to`(검사 목록은 #67에서 `card.toml`에 추가)
-- 무료 유저에게는 본문 없이 건수만: `2 related updates in Plus`, 0건이면 `Related news in Plus`(서버가 결정)
+- 관계 단어는 코드가 맨 앞에 붙이고 15단어에 세지 않는다. LLM 요청은 첫 번째 줄과 같은 공시 요청이라 LLM은 내 종목도 관계도 모른다(영향 문장을 만들 재료가 없다, #67 U2)
+- 첫 번째 줄 규칙(1~8)과 검수를 그대로 따른다. 검수 실패면 첫 번째 줄과 같은 대체 줄 + 보류함, 앞에 관계 단어. 회사 이름은 코드가 넘긴 값만 쓴다
+- **관계와 그 회사의 사실만** 쓴다. 내 종목에 대한 영향·방향·좋고 나쁨은 쓰지 않는다(ADR-0005). 금지 표현은 `card.toml` `related_banned`: `could affect`, `impact on`, `good for`, `bad for`, `pressure on`, `benefit from`, `threat to` + 조동사형(`may/might/will/would affect`, `… impact`, `… hurt`)과 방향 표현(`good news for`, `positive for`, `negative for`, `risk to`, `boost for`, `headwind for`, `tailwind for`, `weigh on` 등, #67 검수). 맨 `affect`·`impact`는 넣지 않는다(정정 공시 `affected periods` 같은 정상 사실)
+- 무료 유저에게는 본문 없이 건수만: `2 related updates in Plus`, 0건이면 `Related updates in Plus`(서버가 결정)
 
 ### 가격 사실 (PriceFactLine, 코드 템플릿) — 가격 표시 플래그 on일 때만
-- 원래 세 번째 줄. 플래그 off(기본)면 만들지도 보여 주지도 않는다
+- 원래 세 번째 줄. 플래그 off(기본)면 만들지 않는다. on이면 계산·저장만 하고 웹은 보여 주지 않는다(세 번째 줄은 늘 연관 소식, 화면 자리는 라이선스를 살 때 정함, #67 U1)
 - 시가·고가·저가·종가로만 계산한 과거 사실 하나: `Up 5 days in a row`, `8.0% below 52-week high`, `At 52-week high`. 기준값·우선순위는 HANDOFF 3-3(연속 3일 이상, 52주 고점·저점 10% 이내). %는 소수 첫째 자리
 - 가격 데이터가 정상인데 표시 조건에 맞는 사실이 없으면 `No additional price highlights`(데이터 누락·오류는 `Update delayed`로 구분)
 
@@ -106,6 +107,7 @@ buy, sell, should, bullish, bearish, likely to rise, upside, downside, opportuni
 python3 .claude/skills/card-copy-rules/scripts/check_copy.py --mode card  _workspace/lines.txt
 python3 .claude/skills/card-copy-rules/scripts/check_copy.py --mode arena _workspace/talk.txt
 python3 .claude/skills/card-copy-rules/scripts/check_copy.py --mode quiet-fact _workspace/facts.txt   # 알아두기 사실 문장(#66)
+python3 .claude/skills/card-copy-rules/scripts/check_copy.py --mode related _workspace/related.txt   # 세 번째 줄 연관 소식(#67): 관계 단어 제외 15단어 + related_banned
 ```
 
 스크립트는 서버 패키지 `backend/src/m30/copy_rules/`를 불러 쓰는 실행기다. 규칙은 서버에 한 벌만 있다. 표준 라이브러리만 쓰므로 uv 없이 `python3`(3.13 이상)로 돈다. 종료 코드 1은 "위반 있음"과 "실행 오류"(데이터 파일 깨짐 등) 둘 다다. 출력 끝에 `위반 N줄`이 없으면 오류로 본다.

@@ -5,13 +5,13 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, test, vi } from "vitest";
 
 import { Dashboard } from "@/components/dashboard";
-import { myDashboardView, type CardView } from "@/lib/card-view";
+import { myDashboardView, type CardView, type LineView } from "@/lib/card-view";
 import type { StoredCard, StoredLine } from "@/server/cards";
 import { exposeCards, exposePastCards, pastCardDays } from "@/server/exposure";
 import type { MyStocks } from "@/server/my-stocks";
 
 const AT = "2026-10-16T11:30:00Z"; // 7:30 AM ET
-const PRICE_AT = "2026-10-16T11:10:00Z"; // 7:10 AM ET: 가장 이른 시각. 잠기면 하단에서도 빠져야 한다
+const RELATED_AT = "2026-10-16T11:10:00Z"; // 7:10 AM ET: 가장 이른 시각. 잠기면 하단에서도 빠져야 한다
 
 const line = (text: string, status: StoredLine["status"], source_scope: string | null, checked_at = AT): StoredLine => ({
   text,
@@ -20,10 +20,11 @@ const line = (text: string, status: StoredLine["status"], source_scope: string |
   source_scope,
 });
 
+/** 세 번째 줄 = 연관 소식(#67). 범위는 첫 번째 줄과 같은 SEC filings라 하단에서 하나로 합쳐지고, 시각만 다르다 */
 const THIRD = {
-  "사실 있음": line("Up 5 days in a row", "checked_found", "Daily prices", PRICE_AT),
-  "사실 없음": line("No additional price highlights", "checked_none", "Daily prices", PRICE_AT),
-  지연: line("Update delayed", "delayed", "Daily prices", PRICE_AT),
+  있음: line("Competitor Microsoft reported Q3 revenue of $65.6B +1 more (SEC filing)", "checked_found", "SEC filings", RELATED_AT),
+  없음: line("No major related filings found", "checked_none", "SEC filings", RELATED_AT),
+  지연: line("Update delayed", "delayed", "SEC filings", RELATED_AT),
 };
 
 const stored = (third: StoredLine | null, over: Partial<StoredCard> = {}): StoredCard => ({
@@ -38,6 +39,7 @@ const stored = (third: StoredLine | null, over: Partial<StoredCard> = {}): Store
   leverageTag: null,
   suspended: false,
   newsFilingCount: 1, // 첫 번째 줄이 다룬 공시 수(#63)
+  relatedFilingCount: third?.status === "checked_found" ? 2 : null, // 세 번째 줄이 다룬 공시 수(#67, DB가 확인함·있음에만 허용)
   firstQuietFact: null, // 알아두기 1번(#66). 첫 번째 줄이 확인함·있음이라 있어도 안 보인다
   lockedSlot: null, // 잠긴 자리(#69). null = ETF·지난 카드(키 없음)
   ...over,
@@ -62,55 +64,90 @@ const FIRST_TWO = [
   { text: "No confirmed events found", status: "checked_none" },
 ] as const;
 
-/** 무료 범위: 세 번째 줄이 무엇이든 같은 결과(글자·상태·확인 시각·출처가 새지 않는다) */
-const FREE: CardView = {
+/** 무료 범위: 세 번째 줄은 건수만(확인함·있음일 때 count, 그 밖엔 status 하나). 본문·확인 시각·출처가 새지 않는다 */
+const LOCKED: Record<keyof typeof THIRD, LineView> = { 있음: { status: "locked", count: 2 }, 없음: { status: "locked" }, 지연: { status: "locked" } };
+const FREE_OF = (kind: keyof typeof THIRD): CardView => ({
   ticker: "AAPL",
   name: "Apple Inc.",
   header: { text: "1 new filing", status: "checked_found" },
   change: { text: "+1.3%", tone: "up", label: "Thu 10/15 close" },
-  lines: [...FIRST_TWO, { status: "locked" }],
+  lines: [...FIRST_TWO, LOCKED[kind]],
   leverageTag: null,
-  checked: "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar",
-};
+  checked: "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar", // 세 번째 줄의 7:10은 빠진다
+});
+const FREE = FREE_OF("있음");
 
 const FULL: Record<keyof typeof THIRD, CardView> = {
-  "사실 있음": {
+  있음: {
     ...FREE,
-    lines: [...FIRST_TWO, { text: "Up 5 days in a row", status: "checked_found" }],
-    checked: "Checked 7:10 AM ET · SEC filings · Earnings and dividend calendar · Daily prices",
+    lines: [...FIRST_TWO, { text: THIRD.있음.text, status: "checked_found" }],
+    checked: "Checked 7:10 AM ET · SEC filings · Earnings and dividend calendar",
   },
-  "사실 없음": {
+  없음: {
     ...FREE,
-    lines: [...FIRST_TWO, { text: "No additional price highlights", status: "checked_none" }],
-    checked: "Checked 7:10 AM ET · SEC filings · Earnings and dividend calendar · Daily prices",
+    lines: [...FIRST_TWO, { text: "No major related filings found", status: "checked_none" }],
+    checked: "Checked 7:10 AM ET · SEC filings · Earnings and dividend calendar",
   },
   지연: { ...FREE, lines: [...FIRST_TWO, { text: "Update delayed", status: "delayed" }] }, // 지연 줄은 하단에 넣지 않는다
 };
 
-describe("exposeCards: 세 줄 전부는 Plus 유저의 내 종목 카드뿐", () => {
+describe("exposeCards: 세 번째 줄(연관 소식, #67) 본문은 Plus 유저의 잠기지 않은 내 종목뿐, 그 밖은 건수만", () => {
   for (const [who, viewer, full] of VIEWERS) {
     for (const [kind, third] of Object.entries(THIRD) as [keyof typeof THIRD, StoredLine][]) {
-      test(`${who} × 세 번째 줄 ${kind} → ${full ? "세 줄 전부" : "무료 범위(잠금)"}`, () => {
-        expect(exposeCards([stored(third)], viewer)).toEqual([full ? FULL[kind] : FREE]);
+      test(`${who} × 세 번째 줄 ${kind} → ${full ? "본문" : "건수만(잠금)"}`, () => {
+        expect(exposeCards([stored(third)], viewer)).toEqual([full ? FULL[kind] : FREE_OF(kind)]);
       });
     }
   }
 
   test("Plus여도 잠긴 내 종목은 무료 범위(둘러보기와 같은 자리)", () => {
-    expect(exposeCards([stored(THIRD["사실 있음"])], my("plus", "AAPL", true))).toEqual([FREE]);
+    for (const kind of Object.keys(THIRD) as (keyof typeof THIRD)[]) {
+      expect(exposeCards([stored(THIRD[kind])], my("plus", "AAPL", true)), kind).toEqual([FREE_OF(kind)]);
+    }
   });
 
   test("카드마다 따로 판단: Plus 유저의 내 종목만 열리고 같은 화면의 둘러보기 카드는 잠긴다", () => {
-    const cards = [stored(THIRD["사실 있음"]), stored(THIRD["사실 있음"], { ticker: "MSFT", name: "Microsoft" })];
+    const cards = [stored(THIRD.있음), stored(THIRD.있음, { ticker: "MSFT", name: "Microsoft" })];
     const [mine, browse] = exposeCards(cards, my("plus", "AAPL"));
-    expect(mine.lines[2]).toEqual({ text: "Up 5 days in a row", status: "checked_found" });
-    expect(browse.lines[2]).toEqual({ status: "locked" });
+    expect(mine.lines[2]).toEqual({ text: THIRD.있음.text, status: "checked_found" });
+    expect(browse.lines[2]).toEqual({ status: "locked", count: 2 });
+  });
+
+  test("건수는 확인함·있음이고 1 이상일 때만 키가 생긴다(저장 건수 그대로, 문장의 +N more는 읽지 않는다)", () => {
+    for (const [count, want] of [[1, { status: "locked", count: 1 }], [5, { status: "locked", count: 5 }], [null, { status: "locked" }], [0, { status: "locked" }]] as const) {
+      const [view] = exposeCards([stored(THIRD.있음, { relatedFilingCount: count })], null);
+      expect(view.lines[2], String(count)).toStrictEqual(want); // toStrictEqual: count: undefined 키도 실패
+    }
+    // 없음·지연 줄에 건수가 붙어 와도(DB 제약상 없음) 내보내지 않는다
+    for (const kind of ["없음", "지연"] as const) expect(exposeCards([stored(THIRD[kind], { relatedFilingCount: 3 })], null)[0].lines[2], kind).toStrictEqual({ status: "locked" });
+  });
+
+  test("미지원(ETF·연관 종목 없음)은 모든 viewer에게 Not covered yet: Plus에도 없는 것을 잠그지 않는다. 하단에는 넣지 않는다", () => {
+    const unsupported = line("Not covered yet", "unsupported", null, RELATED_AT);
+    for (const [who, viewer] of [...VIEWERS, ["Plus 잠긴 내 종목", my("plus", "AAPL", true)] as const]) {
+      const [view] = exposeCards([stored(unsupported)], viewer);
+      expect(view.lines, who).toEqual([...FIRST_TWO, { text: "Not covered yet", status: "unsupported" }]);
+      expect(view.checked, who).toBe("Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar");
+      expect(JSON.stringify(view), who).not.toContain('"locked"');
+    }
+  });
+
+  test("#67 전 카드(세 번째 줄 없음)는 모든 viewer·가격 플래그에 두 줄, 잠금도 없다", () => {
+    for (const prices of ["on", "off"]) {
+      vi.stubEnv("PRICE_DISPLAY", prices);
+      for (const [who, viewer] of VIEWERS) {
+        const [view] = exposeCards([stored(null)], viewer);
+        expect(view.lines, `${prices} ${who}`).toEqual([...FIRST_TWO]);
+        expect(view.checked, `${prices} ${who}`).toBe("Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar");
+      }
+    }
+    vi.unstubAllEnvs();
   });
 
   test("데이터 상태(지연·미지원·축소판)와 레버리지 태그는 플랜과 관계없이 그대로", () => {
-    const card = stored(THIRD["사실 있음"], {
+    const card = stored(THIRD.있음, {
       change: { text: "Update delayed", tone: "delayed", label: "prev close" },
-      lines: [null, line("Not covered yet", "unsupported", null), THIRD["사실 있음"]],
+      lines: [null, line("Not covered yet", "unsupported", null), THIRD.있음],
       leverageTag: "3x · resets daily",
       newsFilingCount: null,
     });
@@ -124,13 +161,13 @@ describe("exposeCards: 세 줄 전부는 Plus 유저의 내 종목 카드뿐", (
       expect(view.leverageTag, who).toBe("3x · resets daily");
       expect(view.header, who).toEqual({ text: "Update delayed", status: "delayed" }); // 축소판 헤더 = 첫 번째 줄과 같은 지연
       // 확인된 줄은 세 번째 줄뿐: 잠기면 하단도 없다
-      expect(view.checked, who).toBe(full ? "Checked 7:10 AM ET · Daily prices" : null);
+      expect(view.checked, who).toBe(full ? "Checked 7:10 AM ET · SEC filings" : null);
     }
   });
 
   test("화면 모델은 허용한 키만(화이트리스트): 저장 카드에 다른 값(방향 의견 등)이 붙어 와도 옮기지 않는다", () => {
     const extra = {
-      ...stored({ ...THIRD["사실 있음"], direction: "bullish" } as StoredLine),
+      ...stored({ ...THIRD.있음, direction: "bullish" } as StoredLine),
       direction: "bullish",
       change: { text: "+1.3%", tone: "up", label: "Thu 10/15 close", rating: "buy" },
     } as StoredCard;
@@ -139,7 +176,7 @@ describe("exposeCards: 세 줄 전부는 Plus 유저의 내 종목 카드뿐", (
       expect(Object.keys(view).sort(), who).toEqual(["change", "checked", "header", "leverageTag", "lines", "name", "ticker"]);
       expect(Object.keys(view.change!).sort(), who).toEqual(["label", "text", "tone"]);
       expect(Object.keys(view.header!).sort(), who).toEqual(["status", "text"]);
-      for (const l of view.lines) expect(Object.keys(l).sort(), who).toEqual(l.status === "locked" ? ["status"] : ["status", "text"]);
+      for (const l of view.lines) expect(Object.keys(l).sort(), who).toEqual(l.status === "locked" ? ["count", "status"] : ["status", "text"]);
       expect(JSON.stringify(view), who).not.toMatch(/bullish|buy/);
     }
   });
@@ -148,8 +185,8 @@ describe("exposeCards: 세 줄 전부는 Plus 유저의 내 종목 카드뿐", (
 describe("발행 중단(#16 D7): 데이터는 두고 화면에서 뺀다", () => {
   const SUSPENDED = `canary-suspended-${randomUUID()}`;
   const cards = [
-    stored(THIRD["사실 있음"]),
-    stored(line(SUSPENDED, "checked_found", "Daily prices"), { ticker: "MSFT", name: "Microsoft", suspended: true }),
+    stored(THIRD.있음),
+    stored(line(SUSPENDED, "checked_found", "SEC filings"), { ticker: "MSFT", name: "Microsoft", suspended: true }),
   ];
 
   for (const [who, viewer] of [...VIEWERS, ["Plus 내 종목이 발행 중단", my("plus", "MSFT"), true] as const]) {
@@ -161,7 +198,7 @@ describe("발행 중단(#16 D7): 데이터는 두고 화면에서 뺀다", () =>
   }
 
   test("그날 카드가 전부 발행 중단이면 0장", () => {
-    expect(exposeCards([stored(THIRD["사실 있음"], { suspended: true })], my("plus", "AAPL"))).toEqual([]);
+    expect(exposeCards([stored(THIRD.있음, { suspended: true })], my("plus", "AAPL"))).toEqual([]);
   });
 
   test("내 종목이 발행 중단이면 그 자리는 카드 없음과 같다(Summary arrives tomorrow morning), 둘러보기에도 없다", () => {
@@ -181,7 +218,7 @@ describe("발행 중단(#16 D7): 데이터는 두고 화면에서 뺀다", () =>
 });
 
 describe("잠긴 줄의 원문은 화면 모델(RSC props)과 HTML에 없다", () => {
-  const CANARY = `canary-price-fact-${randomUUID()}`;
+  const CANARY = `canary-related-${randomUUID()}`;
   const SCOPE = `canary-scope-${randomUUID()}`;
   const card = stored(line(CANARY, "checked_found", SCOPE, "2026-10-16T10:07:00Z")); // 6:07 AM ET
   const coverage = [{ ticker: "AAPL", name: "Apple Inc." }];
@@ -194,37 +231,31 @@ describe("잠긴 줄의 원문은 화면 모델(RSC props)과 HTML에 없다", (
   };
 
   for (const [who, viewer, full] of VIEWERS) {
-    test(`${who}: ${full ? "원문이 보인다(대조군)" : "원문·출처·시각 없음, Price facts in Plus"}`, () => {
+    test(`${who}: ${full ? "원문이 보인다(대조군)" : "원문·출처·시각 없음, 건수만 2 related updates in Plus"}`, () => {
       const { props, html } = render(viewer);
       for (const secret of [CANARY, SCOPE, "6:07 AM"]) {
         expect(props.includes(secret), secret).toBe(full);
         expect(html.includes(secret), secret).toBe(full);
       }
-      expect(html.includes("Price facts in Plus")).toBe(!full);
+      expect(html.includes("2 related updates in Plus")).toBe(!full);
+      expect(html).not.toContain("Price facts in Plus"); // #67 U1: 가격 사실 잠금 문구는 없어졌다
     });
   }
 });
 
-describe("가격 표시 플래그 off(#56): 화면 모델에 가격 키가 없다", () => {
+describe("가격 표시 플래그 off(#56): 화면 모델에 가격 키가 없다. 세 번째 줄(연관 소식)은 플래그와 무관(#67 U1)", () => {
   afterEach(() => vi.unstubAllEnvs()); // 설정 기본값 on으로 돌아간다(vitest.config.mts)
 
-  /** off 카드: 모든 viewer에게 두 줄, 세 번째 줄 잠금도 없다. 하단은 두 줄의 확인 시각·출처만 */
-  const OFF = {
-    ticker: "AAPL",
-    name: "Apple Inc.",
-    header: { text: "1 new filing", status: "checked_found" },
-    lines: [...FIRST_TWO],
-    leverageTag: null,
-    checked: "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar",
-  };
-
+  const unsupported = line("Not covered yet", "unsupported", null);
   for (const [who, viewer] of VIEWERS) {
-    for (const [kind, third] of Object.entries(THIRD) as [keyof typeof THIRD, StoredLine][]) {
-      test(`${who} × 세 번째 줄 ${kind} → 등락률 키 없음, 두 줄, 잠금 없음`, () => {
+    for (const [kind, third] of [...Object.entries(THIRD), ["미지원", unsupported], ["없음(#67 전)", null]] as [string, StoredLine | null][]) {
+      test(`${who} × 세 번째 줄 ${kind} → off는 on에서 change 키만 빠진다(줄·하단 같음)`, () => {
+        const { change, ...on } = exposeCards([stored(third)], viewer)[0];
+        expect(change).toBeDefined();
         vi.stubEnv("PRICE_DISPLAY", undefined);
-        const [view] = exposeCards([stored(third)], viewer);
-        expect(view).toStrictEqual(OFF); // toStrictEqual: change: undefined도 실패
-        expect(Object.keys(view).sort()).toEqual(["checked", "header", "leverageTag", "lines", "name", "ticker"]);
+        const [off] = exposeCards([stored(third)], viewer);
+        expect(off).toStrictEqual(on); // toStrictEqual: change: undefined도 실패
+        expect(Object.keys(off).sort()).toEqual(["checked", "header", "leverageTag", "lines", "name", "ticker"]);
       });
     }
   }
@@ -232,28 +263,29 @@ describe("가격 표시 플래그 off(#56): 화면 모델에 가격 키가 없�
   test("플래그 값: on(대소문자·앞뒤 공백 무시)만 켜고 없음·빈 값·off·true·1은 끈다", () => {
     const on = (value: string | undefined) => {
       vi.stubEnv("PRICE_DISPLAY", value);
-      return "change" in exposeCards([stored(THIRD["사실 있음"])], my("plus", "AAPL"))[0];
+      return "change" in exposeCards([stored(THIRD.있음)], my("plus", "AAPL"))[0];
     };
     for (const value of ["on", "ON", "On", " on\n"]) expect(on(value), JSON.stringify(value)).toBe(true);
     for (const value of [undefined, "", " ", "off", "OFF", "true", "1", "yes", "onn", "o n"]) expect(on(value), JSON.stringify(value)).toBe(false);
   });
 
-  test("DB 값(등락률·종가 날짜 라벨·가격 사실 문구·범위·시각)이 화면 모델(RSC props)과 HTML 어디에도 없다", () => {
+  test("DB 값(등락률·종가 날짜 라벨)이 화면 모델(RSC props)과 HTML 어디에도 없다. 가격 사실 잠금 문구도 없다", () => {
     vi.stubEnv("PRICE_DISPLAY", "off");
-    const [PCT, LABEL, FACT, SCOPE] = ["pct", "label", "fact", "scope"].map((k) => `canary-${k}-${randomUUID()}`);
-    const card = stored(line(FACT, "checked_found", SCOPE, PRICE_AT), { change: { text: PCT, tone: "up", label: LABEL } });
+    const [PCT, LABEL] = ["pct", "label"].map((k) => `canary-${k}-${randomUUID()}`);
+    const card = stored(THIRD.있음, { change: { text: PCT, tone: "up", label: LABEL } });
     const coverage = [{ ticker: "AAPL", name: "Apple Inc." }];
-    for (const [who, viewer] of VIEWERS) {
+    for (const [who, viewer, full] of VIEWERS) {
       const cards = exposeCards([card], viewer);
       const data = { tradingDay: "Fri, Oct 16, 2026", glance: null, cards };
       const mine = viewer ? myDashboardView(cards, coverage, viewer, undefined) : undefined;
       const props = JSON.stringify({ data, mine });
       const html = renderToStaticMarkup(<Dashboard data={data} mine={mine} />);
-      for (const secret of [PCT, LABEL, FACT, SCOPE, "7:10 AM", "Price facts in Plus", "data-tone"]) {
+      for (const secret of [PCT, LABEL, "Price facts in Plus", "data-tone"]) {
         expect(props, `${who} ${secret}`).not.toContain(secret);
         expect(html, `${who} ${secret}`).not.toContain(secret);
       }
       expect(html, who).toContain("Apple reported Q3 results (SEC filing)"); // 두 줄은 그대로
+      expect(html.includes(THIRD.있음.text), who).toBe(full); // 세 번째 줄은 off에서도 플랜대로
     }
   });
 });
@@ -263,7 +295,7 @@ describe("카드 헤더(#63): 첫 번째 줄 상태와 저장 건수로만 정�
 
   const header = (lines: StoredCard["lines"], newsFilingCount: number | null, viewer: MyStocks | null = null) =>
     exposeCards([stored(null, { lines, newsFilingCount })], viewer)[0].header;
-  const OTHERS = [line("Earnings Thu 10/29 after close (D-13)", "checked_found", "Earnings and dividend calendar"), THIRD["사실 있음"]];
+  const OTHERS = [line("Earnings Thu 10/29 after close (D-13)", "checked_found", "Earnings and dividend calendar"), THIRD.있음];
 
   test("헤더 건수는 저장 건수만 쓰고 문장의 +N more는 읽지 않는다", () => {
     const first = line("Apple named a new CFO +5 more (Company)", "checked_found", "SEC filings");
@@ -275,12 +307,12 @@ describe("카드 헤더(#63): 첫 번째 줄 상태와 저장 건수로만 정�
     expect(header([line("Update delayed", "delayed", "SEC filings"), ...OTHERS], null)).toEqual({ text: "Update delayed", status: "delayed" });
     expect(header([line("Not covered yet", "unsupported", null), ...OTHERS], null)).toEqual({ text: "Not covered yet", status: "unsupported" });
     // 다른 줄이 전부 없음이어도 첫 번째 줄이 확인함·있음이면 조용한 날이 아니다
-    const none = [line("No confirmed events found", "checked_none", "Earnings and dividend calendar"), THIRD["사실 없음"]];
+    const none = [line("No confirmed events found", "checked_none", "Earnings and dividend calendar"), THIRD.없음];
     expect(header([line("Apple named a new CFO (Company)", "checked_found", "SEC filings"), ...none], 1)).toEqual({ text: "1 new filing", status: "checked_found" });
   });
 
   test("#63 전 확인함·있음 카드(건수 없음)는 헤더 없음, 줄·하단은 그대로", () => {
-    const [view] = exposeCards([stored(THIRD["사실 있음"], { newsFilingCount: null })], null);
+    const [view] = exposeCards([stored(THIRD.있음, { newsFilingCount: null })], null);
     expect(view.header).toBeNull();
     expect(view).toEqual({ ...FREE, header: null });
   });
@@ -294,10 +326,10 @@ describe("카드 헤더(#63): 첫 번째 줄 상태와 저장 건수로만 정�
   });
 
   test("가격 표시 on이면 헤더와 등락률이 같이, off면 헤더만(가격 키 없음)", () => {
-    const [on] = exposeCards([stored(THIRD["사실 있음"])], null);
+    const [on] = exposeCards([stored(THIRD.있음)], null);
     expect([on.header, on.change]).toEqual([{ text: "1 new filing", status: "checked_found" }, { text: "+1.3%", tone: "up", label: "Thu 10/15 close" }]);
     vi.stubEnv("PRICE_DISPLAY", "off");
-    const [off] = exposeCards([stored(THIRD["사실 있음"])], null);
+    const [off] = exposeCards([stored(THIRD.있음)], null);
     expect(off.header).toEqual({ text: "1 new filing", status: "checked_found" });
     expect("change" in off).toBe(false);
   });
@@ -312,7 +344,7 @@ describe("알아두기(#66): 조용한 날에만 한 문장. 잠기지 않은 �
   const QUIET = line("No new SEC filings found", "checked_none", "SEC filings");
   const EVENT = line("No confirmed events found", "checked_none", "Earnings and dividend calendar");
   const quiet = (over: Partial<StoredCard> = {}) =>
-    stored(THIRD["사실 있음"], { lines: [QUIET, EVENT, THIRD["사실 있음"]], newsFilingCount: null, firstQuietFact: FIRST, ...over });
+    stored(THIRD.있음, { lines: [QUIET, EVENT, THIRD.있음], newsFilingCount: null, firstQuietFact: FIRST, ...over });
   const fact = (card: StoredCard, viewer: MyStocks | null, progress?: ReadonlyMap<string, string>) => exposeCards([card], viewer, progress)[0];
 
   const WHO: [string, MyStocks | null, string][] = [
@@ -348,7 +380,7 @@ describe("알아두기(#66): 조용한 날에만 한 문장. 잠기지 않은 �
     ];
     for (const first of firsts) {
       for (const [who, viewer] of WHO) {
-        const view = fact(quiet({ lines: [first, EVENT, THIRD["사실 있음"]], newsFilingCount: 1 }), viewer, PROGRESS);
+        const view = fact(quiet({ lines: [first, EVENT, THIRD.있음], newsFilingCount: 1 }), viewer, PROGRESS);
         expect("quietFact" in view, `${who} ${first?.status ?? "축소판"}`).toBe(false);
       }
     }
@@ -362,14 +394,14 @@ describe("알아두기(#66): 조용한 날에만 한 문장. 잠기지 않은 �
     }
   });
 
-  test("카드 줄 수는 그대로(보조 문장): 가격 표시 on 3줄·off 2줄, 알아두기는 가격 플래그와 무관", () => {
+  test("카드 줄 수는 그대로(보조 문장): 가격 표시 on·off 모두 3줄(세 번째 = 연관 소식, #67), 알아두기는 가격 플래그와 무관", () => {
     for (const [who, viewer, want] of WHO) {
       vi.stubEnv("PRICE_DISPLAY", "on");
       const on = fact(quiet(), viewer, PROGRESS);
       vi.stubEnv("PRICE_DISPLAY", "off");
       const off = fact(quiet(), viewer, PROGRESS);
       expect([on.lines.length, on.quietFact], who).toEqual([3, want]);
-      expect([off.lines.length, off.quietFact, "change" in off], who).toEqual([2, want, false]);
+      expect([off.lines.length, off.quietFact, "change" in off], who).toEqual([3, want, false]);
     }
   });
 
@@ -407,9 +439,9 @@ describe("지난 카드(#68): 한 종목의 날짜별 카드. Plus = 받은 날 
   const history = {
     today: TODAY,
     cards: [
-      { day: TODAY, card: stored(THIRD["사실 있음"]) },
-      { day: "2026-10-15", card: stored(line(SUSPENDED, "checked_found", "Daily prices"), { suspended: true }) },
-      { day: "2026-07-20", card: stored(line(OLD, "checked_found", "Daily prices")) },
+      { day: TODAY, card: stored(THIRD.있음) },
+      { day: "2026-10-15", card: stored(line(SUSPENDED, "checked_found", "SEC filings"), { suspended: true }) },
+      { day: "2026-07-20", card: stored(line(OLD, "checked_found", "SEC filings")) },
     ],
   };
   const KEYS = ["change", "checked", "header", "leverageTag", "lines", "name", "ticker"]; // 오늘 카드(exposeCards)와 같은 키
@@ -419,19 +451,19 @@ describe("지난 카드(#68): 한 종목의 날짜별 카드. Plus = 받은 날 
     expect(pastCardDays("free")).toBe(1);
   });
 
-  test("Plus 내 종목: 최신순, 카드마다 세 줄 전부, 발행 중단 날은 빠짐, 잠금 안내 없음", () => {
+  test("Plus 내 종목: 최신순, 카드마다 세 번째 줄 본문, 발행 중단 날은 빠짐, 잠금 안내 없음", () => {
     const view = exposePastCards(AAPL, history, my("plus", "AAPL"));
     expect(view).toEqual({
       ...AAPL,
       locked: false,
       days: [
-        { day: "Fri, Oct 16, 2026", card: FULL["사실 있음"] },
+        { day: "Fri, Oct 16, 2026", card: FULL.있음 },
         {
           day: "Mon, Jul 20, 2026",
           card: {
             ...FREE,
             lines: [...FIRST_TWO, { text: OLD, status: "checked_found" }],
-            checked: "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar · Daily prices",
+            checked: "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar",
           },
         },
       ],
@@ -439,7 +471,7 @@ describe("지난 카드(#68): 한 종목의 날짜별 카드. Plus = 받은 날 
     expect(JSON.stringify(view)).not.toContain(SUSPENDED);
   });
 
-  test("무료 내 종목: 지난 날 카드를 받아도 오늘만 + locked, 세 번째 줄은 잠금", () => {
+  test("무료 내 종목: 지난 날 카드를 받아도 오늘만 + locked, 세 번째 줄은 건수만", () => {
     const view = exposePastCards(AAPL, history, my("free", "AAPL"));
     expect(view).toEqual({ ...AAPL, locked: true, days: [{ day: "Fri, Oct 16, 2026", card: FREE }] });
     expect(JSON.stringify(view)).not.toContain(OLD);
@@ -451,7 +483,7 @@ describe("지난 카드(#68): 한 종목의 날짜별 카드. Plus = 받은 날 
       ["Fri, Oct 16, 2026", null],
       ["Mon, Jul 20, 2026", { text: OLD, status: "checked_found" }],
     ]);
-    const suspended = { today: TODAY, cards: [{ day: TODAY, card: stored(THIRD["사실 있음"], { suspended: true }) }] };
+    const suspended = { today: TODAY, cards: [{ day: TODAY, card: stored(THIRD.있음, { suspended: true }) }] };
     for (const plan of ["free", "plus"] as const) expect(exposePastCards(AAPL, suspended, my(plan, "AAPL")).days).toEqual([{ day: "Fri, Oct 16, 2026", card: null }]);
   });
 
@@ -459,23 +491,25 @@ describe("지난 카드(#68): 한 종목의 날짜별 카드. Plus = 받은 날 
     expect(exposePastCards(AAPL, { today: null, cards: [] }, my("plus", "AAPL"))).toEqual({ ...AAPL, locked: false, days: [] });
   });
 
-  test("가격 표시 off: 모든 날 카드에 가격 키 없음, 두 줄, 지난 날의 가격 사실 원문도 없음", () => {
+  test("가격 표시 off: 모든 날 카드에 가격 키 없음, 세 번째 줄은 on과 같다(Plus 지난 날 본문, 무료 오늘 건수만)", () => {
     vi.stubEnv("PRICE_DISPLAY", undefined);
     for (const plan of ["free", "plus"] as const) {
       const view = exposePastCards(AAPL, history, my(plan, "AAPL"));
       expect(view.days.length, plan).toBe(plan === "plus" ? 2 : 1);
       for (const { card } of view.days) {
         expect(Object.keys(card!).sort(), plan).toEqual(KEYS.filter((k) => k !== "change"));
-        expect(card!.lines, plan).toHaveLength(2);
+        expect(card!.lines, plan).toHaveLength(3);
       }
-      expect(JSON.stringify(view), plan).not.toMatch(new RegExp(`${OLD}|Up 5 days|Daily prices|\\+1\\.3%`));
+      expect(view.days[0].card!.lines[2], plan).toEqual(plan === "plus" ? { text: THIRD.있음.text, status: "checked_found" } : { status: "locked", count: 2 });
+      expect(JSON.stringify(view).includes(OLD), plan).toBe(plan === "plus");
+      expect(JSON.stringify(view), plan).not.toMatch(/Thu 10\/15 close|\+1\.3%/);
     }
   });
 
   test("알아두기(#66)는 지난 카드에 없다: 조용한 날 카드에 1번이 담겨 와도(읽기는 null을 담는다) 유저 진도를 넘기지 않는다", () => {
     const FACT = `canary-past-quiet-${randomUUID()}`;
     const QUIET = line("No new SEC filings found", "checked_none", "SEC filings");
-    const quiet = stored(THIRD["사실 있음"], { lines: [QUIET, null, null], newsFilingCount: null, firstQuietFact: FACT });
+    const quiet = stored(THIRD.있음, { lines: [QUIET, null, null], newsFilingCount: null, firstQuietFact: FACT });
     const days = { today: TODAY, cards: [{ day: TODAY, card: quiet }, { day: "2026-10-14", card: quiet }] };
     for (const plan of ["free", "plus"] as const) {
       const view = exposePastCards(AAPL, days, my(plan, "AAPL"));
@@ -503,7 +537,7 @@ describe("잠긴 자리(#69): 공용 카드 속성이라 모든 viewer·가격 �
   test("비 ETF 카드: 로그인 전·무료·Plus·내 종목·둘러보기 모두 같은 lockedSlot, 키 = 기존 + lockedSlot", () => {
     for (const lockedSlot of SLOTS) {
       for (const [who, viewer] of VIEWERS) {
-        const [view] = exposeCards([stored(THIRD["사실 있음"], { lockedSlot })], viewer);
+        const [view] = exposeCards([stored(THIRD.있음, { lockedSlot })], viewer);
         expect(view.lockedSlot, who).toBe(lockedSlot);
         expect(Object.keys(view).sort(), who).toEqual(["change", "checked", "header", "leverageTag", "lines", "lockedSlot", "name", "ticker"]);
       }
@@ -513,17 +547,17 @@ describe("잠긴 자리(#69): 공용 카드 속성이라 모든 viewer·가격 �
   test("가격 표시 off여도 그대로(가격 키가 아니다)", () => {
     vi.stubEnv("PRICE_DISPLAY", undefined);
     for (const [who, viewer] of VIEWERS) {
-      const [view] = exposeCards([stored(THIRD["사실 있음"], { lockedSlot: "big_holders" })], viewer);
+      const [view] = exposeCards([stored(THIRD.있음, { lockedSlot: "big_holders" })], viewer);
       expect(view.lockedSlot, who).toBe("big_holders");
       expect("change" in view, who).toBe(false);
     }
   });
 
   test("ETF(lockedSlot null)는 키 자체가 없다(undefined 키도 아니다)", () => {
-    for (const [who, viewer] of VIEWERS) expect("lockedSlot" in exposeCards([stored(THIRD["사실 있음"])], viewer)[0], who).toBe(false);
+    for (const [who, viewer] of VIEWERS) expect("lockedSlot" in exposeCards([stored(THIRD.있음)], viewer)[0], who).toBe(false);
   });
 
   test("발행 중단 카드는 잠긴 자리가 있어도 빠진다", () => {
-    expect(exposeCards([stored(THIRD["사실 있음"], { suspended: true, lockedSlot: "earnings_summary" })], null)).toEqual([]);
+    expect(exposeCards([stored(THIRD.있음, { suspended: true, lockedSlot: "earnings_summary" })], null)).toEqual([]);
   });
 });

@@ -430,7 +430,23 @@ def test_정상_운영_실행은_배너_없이_LLM_토큰과_줄_상태별_카�
     assert not [line for line in lines if "!!!" in line or line.startswith("failed:")]
     assert "filings=0 unclassified=0 batches=0 skipped=- llm_calls=0/60 tokens=in:0,out:0,cache_read:0,cache_write:0" in lines
     # 0인 상태는 뺀다. 시세 키 없음 = 등락률·세 번째 줄 지연, 일정 출처 없음 = 미지원, 공시 없는 날 = 15장 모두 확인함·없음
-    assert "lines: change[delayed=15] news[checked_none=15] event[unsupported=15] price[delayed=15]" in lines
+    assert "lines: change[delayed=15] news[checked_none=15] event[unsupported=15] price[delayed=15] related[unsupported=15]" in lines
+
+
+EDGAR_LINE = re.compile(r"edgar: ciks=(\d+) related_ciks=(\d+) requests=(\d+) seconds=\d+ run_seconds=\d+")
+
+
+def test_운영_CLI는_EDGAR_대상_CIK·요청_수와_실행_시간을_코드·건수·초로만_한_줄_찍는다(settings, admin):
+    code, out = run_probe(settings, "quiet", webhook=WEBHOOK_CANARY)
+
+    assert code == 0
+    [line] = [line for line in out.splitlines() if line.startswith("edgar:")]
+    found = EDGAR_LINE.fullmatch(line)
+    # 8-K 단계 = 실험 회사 11개(연관 종목 행 없음). 요청 = 티커 목록 1 + 8-K submissions 11 + 실적 추정 submissions 11
+    # + 편입 보고(펀드 티커 목록 1 + 회사 티커 목록 1(SPY는 단일 시리즈 신탁) + 신탁 submissions 3 + NPORT-P 4: SCHD는 두 번째 보고)
+    assert found and found.groups() == ("11", "0", "32")
+    assert line in webhook_message(out).splitlines()  # Discord에도 같은 줄
+    assert {"related_drafts: -", "related_review: -"} <= set(out.splitlines())
 
 
 def test_운영_실행_중_DB_오류는_예외_이름과_SQLSTATE만_찍고_행_내용은_공개_로그에_남기지_않는다(settings, admin):

@@ -25,6 +25,7 @@ from m30.models import (
     Coverage,
     EarningsEstimate,
     HoldItem,
+    HoldLine,
     HoldStage,
     HoldState,
     LineStatus,
@@ -40,7 +41,7 @@ from m30.models import (
     UnclassifiedReason,
 )
 
-LINES = ("news_line", "event_line", "price_fact_line")
+LINES = ("news_line", "event_line", "price_fact_line", "related_line")
 LINE_ATTRS = ("text", "status", "checked_at", "source_scope")
 CARD_COLUMNS = (
     "ticker",
@@ -53,6 +54,7 @@ CARD_COLUMNS = (
     "news_line_accession",
     "previous_trading_day",  # publish_suspended는 넣지 않는다: 재실행이 사람이 켠 발행 중단을 덮지 않게
     "news_line_filing_count",
+    "related_line_filing_count",
 )
 _UPSERT_CARD = (
     f"insert into public.stock_card ({', '.join(CARD_COLUMNS)}) values ({', '.join(['%s'] * len(CARD_COLUMNS))})"
@@ -212,13 +214,17 @@ class CardStore:
             " and failed is not true)", (trading_day,)
         ).fetchone()[0]
 
-    def save_card(self, card: StockCard, holds: Sequence[HoldItem] | None) -> None:
-        """한 트랜잭션: upsert_card(card) 다음, holds가 None이 아니면 replace_hold_items(card.ticker, card.trading_day, holds).
-        None = 이번에 첫 번째 줄을 만들지 않았다(재발행 유지, CIK 실패 시 이전 값 유지) → 그 카드의 보류함 행을 건드리지 않는다."""
+    def save_card(
+        self, card: StockCard, holds: Sequence[HoldItem] | None, related_holds: Sequence[HoldItem] | None = None
+    ) -> None:
+        """한 트랜잭션: upsert_card(card) 다음, holds가 None이 아니면 첫 번째 줄 보류함 행 교체, related_holds가 None이 아니면 세 번째 줄 행 교체.
+        None = 이번에 그 줄을 만들지 않았다(재발행 유지, CIK 실패 시 이전 값 유지) → 그 줄의 보류함 행을 건드리지 않는다."""
         with self._conn.transaction():
             self.upsert_card(card)
             if holds is not None:
                 self.replace_hold_items(card.ticker, card.trading_day, holds)
+            if related_holds is not None:
+                self.replace_hold_items(card.ticker, card.trading_day, related_holds, HoldLine.RELATED)
 
     def upsert_coverage(self, rows: Iterable[Coverage]) -> None:
         with self._conn.cursor() as cur:
@@ -260,10 +266,12 @@ class CardStore:
             *_line_values(card.news_line),
             *_line_values(card.event_line),
             *_line_values(card.price_fact_line),
+            *_line_values(card.related_line),
             card.leverage_tag,
             card.news_line_accession,
             card.previous_trading_day,
             card.news_line_filing_count,
+            card.related_line_filing_count,
         )
         self._conn.execute(_UPSERT_CARD, values)
 
@@ -576,6 +584,8 @@ class CardStore:
                 previous_trading_day=r["previous_trading_day"],
                 publish_suspended=r["publish_suspended"],
                 news_line_filing_count=r["news_line_filing_count"],
+                related_line=_line(r, "related_line"),
+                related_line_filing_count=r["related_line_filing_count"],
             )
             for r in rows
         ]
@@ -621,29 +631,42 @@ class CardStore:
         rows = self._conn.execute(
             "select c.ticker, c.news_line_text, c.news_line_accession, c.news_line_filing_count from public.stock_card c"
             " where c.trading_day = %s and exists (select from public.hold_queue h where h.ticker = c.ticker"
-            " and h.trading_day = c.trading_day and h.state = 'republished')",
+            " and h.trading_day = c.trading_day and h.state = 'republished' and h.line = 'news')",
             (trading_day,),
         )
         return {ticker: (text, accession, filing_count) for ticker, text, accession, filing_count in rows}
 
-    def replace_hold_items(self, ticker: str, trading_day: date, rows: Iterable[HoldItem]) -> None:
-        """한 트랜잭션: (ticker, trading_day)의 pending이면서 amended_filing이 아닌 행을 지우고 rows를 넣는다.
+    def republished_related(self, trading_day: date) -> dict[str, tuple[str, int | None]]:
+        """티커 → (related_line_text, related_line_filing_count): line = 'related'인 republished 보류함 행이 있는 카드의 현재 값(#67).
+        republished_news와 같이 카드 루프 전에 읽는다."""
+        rows = self._conn.execute(
+            "select c.ticker, c.related_line_text, c.related_line_filing_count from public.stock_card c"
+            " where c.trading_day = %s and exists (select from public.hold_queue h where h.ticker = c.ticker"
+            " and h.trading_day = c.trading_day and h.state = 'republished' and h.line = 'related')",
+            (trading_day,),
+        )
+        return {ticker: (text, filing_count) for ticker, text, filing_count in rows}
+
+    def replace_hold_items(
+        self, ticker: str, trading_day: date, rows: Iterable[HoldItem], line: HoldLine = HoldLine.NEWS
+    ) -> None:
+        """한 트랜잭션: (ticker, trading_day, line)의 pending이면서 amended_filing이 아닌 행을 지우고 rows를 넣는다(행의 line 열 그대로).
         on conflict do nothing: 사람이 손댄 행·정정 행과 키가 겹치면 그 행을 그대로 둔다. 같은 입력이면 같은 행."""
         values = [
             (r.ticker, r.trading_day, r.accession, r.stage.value, r.draft_text, list(r.rules), r.replacement_text,
-             r.state.value, r.edited_text)
+             r.state.value, r.edited_text, r.line.value)
             for r in rows
         ]
         with self._conn.transaction(), self._conn.cursor() as cur:
             cur.execute(
-                "delete from public.hold_queue"
-                " where ticker = %s and trading_day = %s and state = 'pending' and stage <> 'amended_filing'",
-                (ticker, trading_day),
+                "delete from public.hold_queue where ticker = %s and trading_day = %s and line = %s"
+                " and state = 'pending' and stage <> 'amended_filing'",
+                (ticker, trading_day, line.value),
             )
             cur.executemany(
                 "insert into public.hold_queue"
-                " (ticker, trading_day, accession, stage, draft_text, rules, replacement_text, state, edited_text)"
-                " values (%s, %s, %s, %s, %s, %s, %s, %s, %s) on conflict do nothing",
+                " (ticker, trading_day, accession, stage, draft_text, rules, replacement_text, state, edited_text, line)"
+                " values (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) on conflict do nothing",
                 values,
             )
 
@@ -669,11 +692,12 @@ class CardStore:
     def list_hold_items(self, trading_day: date) -> list[HoldItem]:
         """trading_day 행, (종목, 접수번호) 순."""
         rows = self._conn.execute(
-            "select ticker, trading_day, accession, stage::text, draft_text, rules, replacement_text, state::text, edited_text"
+            "select ticker, trading_day, accession, stage::text, draft_text, rules, replacement_text, state::text, edited_text, line"
             " from public.hold_queue where trading_day = %s order by ticker, accession",
             (trading_day,),
         )
         return [
-            HoldItem(ticker, day, accession, HoldStage(stage), draft, tuple(rules), replacement, HoldState(state), edited)
-            for ticker, day, accession, stage, draft, rules, replacement, state, edited in rows
+            HoldItem(ticker, day, accession, HoldStage(stage), draft, tuple(rules), replacement, HoldState(state), edited,
+                     HoldLine(line))
+            for ticker, day, accession, stage, draft, rules, replacement, state, edited, line in rows
         ]

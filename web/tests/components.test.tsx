@@ -138,14 +138,21 @@ describe("StockCard", () => {
     expect(classOf(unsupported, 'data-status="unsupported')).toContain("text-muted");
   });
 
-  test("잠긴 세 번째 줄(#9): 상태만 받아 고정 문구 Price facts in Plus를 흐리게, 줄을 숨기지 않는다", () => {
-    const html = renderToStaticMarkup(<StockCard card={card({ lines: [...card().lines.slice(0, 2), { status: "locked" }] })} />);
-    expect(lines(html)).toEqual([
-      ["checked_found", "Apple reported Q3 results (SEC filing)"],
-      ["checked_found", "Earnings Thu 10/29 after close (D-13)"],
-      ["locked", "Price facts in Plus"],
-    ]);
-    expect(classOf(html, 'data-status="locked')).toContain("text-muted");
+  test("잠긴 세 번째 줄(#9·#67): 건수만 받아 고정 문구(복수·단수·건수 없음)를 흐리게, 줄을 숨기지 않는다", () => {
+    for (const [locked, label] of [
+      [{ status: "locked", count: 2 }, "2 related updates in Plus"],
+      [{ status: "locked", count: 1 }, "1 related update in Plus"],
+      [{ status: "locked" }, "Related updates in Plus"], // 0건·지연(무료에게는 둘을 구분하지 않는다)
+    ] as const) {
+      const html = renderToStaticMarkup(<StockCard card={card({ lines: [...card().lines.slice(0, 2), locked] })} />);
+      expect(lines(html)).toEqual([
+        ["checked_found", "Apple reported Q3 results (SEC filing)"],
+        ["checked_found", "Earnings Thu 10/29 after close (D-13)"],
+        ["locked", label],
+      ]);
+      expect(classOf(html, 'data-status="locked')).toContain("text-muted");
+      expect(html).not.toContain("Price facts in Plus");
+    }
   });
 
   test("등락률 옆 기준 라벨은 화면 모델의 label 그대로: 종가 날짜(#16) 또는 옛 카드의 prev close, 값이 없어도(#27 시안)", () => {
@@ -307,7 +314,7 @@ describe("랜딩 / (#27 사용자 시안)", () => {
       ["unsupported", "Not covered yet"],
       ["checked_none", "No new SEC filings found"],
       ["checked_none", "No confirmed events found"],
-      ["checked_none", "No related filings found"],
+      ["checked_none", "No major related filings found"],
     ]);
     // 카드마다 하단 확인 줄(실제 카드와 같은 모양)
     expect(page.match(/Checked 7:30 AM ET · SEC filings/g)).toHaveLength(3);
@@ -862,7 +869,7 @@ describe("지난 카드 /cards/[ticker](#68)", () => {
   test("무료: 오늘 카드 + Past 90 days in Plus(글자뿐, 결제·누르는 곳 없음: 링크·버튼은 뒤로 하나 + 세 번째 줄 잠금 탭(#69))", () => {
     const html = render(view({ locked: true, days: [{ day: "Fri, Oct 16, 2026", card: quiet }] }));
     expect(headings(html)).toEqual(["h1 AAPL", "h2 Fri, Oct 16, 2026", "h2 AAPL"]);
-    expect(text(html).indexOf("Price facts in Plus")).toBeLessThan(text(html).indexOf("Past 90 days in Plus"));
+    expect(text(html).indexOf("Related updates in Plus")).toBeLessThan(text(html).indexOf("Past 90 days in Plus"));
     expect(targets(html)).toHaveLength(2);
     expect(html).toMatch(/<p[^>]*>Past 90 days in Plus<\/p>/); // 잠금 안내 자체는 링크·버튼이 아니다
     expect([...html.matchAll(/name="slot" value="([^"]+)"/g)].map((m) => m[1])).toEqual(["related_lock"]); // 잠긴 자리는 지난 카드에 없다(U3)
@@ -913,12 +920,12 @@ describe("잠긴 자리·Notify me(#69)", () => {
     }
   });
 
-  test("세 번째 줄 잠금도 같은 탭 폼(slot=related_lock), 글자는 그대로. 잠긴 자리와 둘 다 있으면 폼 둘", () => {
-    const locked = card({ lines: [...card().lines.slice(0, 2), { status: "locked" }], lockedSlot: "big_holders" });
+  test("세 번째 줄 잠금도 같은 탭 폼(slot=related_lock, #67에서도 그대로), 글자는 건수 문구. 잠긴 자리와 둘 다 있으면 폼 둘", () => {
+    const locked = card({ lines: [...card().lines.slice(0, 2), { status: "locked", count: 2 }], lockedSlot: "big_holders" });
     const html = renderToStaticMarkup(<StockCard card={locked} />);
-    expect(lines(html)[2]).toEqual(["locked", "Price facts in Plus"]);
+    expect(lines(html)[2]).toEqual(["locked", "2 related updates in Plus"]);
     expect(forms(html).map((f) => [f.action, f.fields, f.button])).toEqual([
-      ["/waitlist", { intent: "tap", slot: "related_lock" }, "Price facts in Plus"],
+      ["/waitlist", { intent: "tap", slot: "related_lock" }, "2 related updates in Plus"],
       ["/waitlist", { intent: "tap", slot: "big_holders" }, "Insider and big holder filings in Plus"],
     ]);
   });

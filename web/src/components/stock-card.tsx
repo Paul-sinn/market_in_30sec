@@ -1,5 +1,5 @@
 import type { CardView, ChangeView, LineView, TapSlot } from "@/lib/card-view";
-import { LOCKED_SLOT, PRICE_FACTS_IN_PLUS, QUIET_FACT, SUMMARY_TOMORROW } from "@/lib/copy";
+import { LOCKED_SLOT, QUIET_FACT, RELATED_IN_PLUS, SUMMARY_TOMORROW } from "@/lib/copy";
 
 // 상태는 표시 방식에만 쓴다(색). 문구는 card.lines의 text 그대로. 모양은 사용자 시안의 샘플 카드(#27)
 const CHANGE_TONE: Record<ChangeView["tone"], string> = {
@@ -14,7 +14,7 @@ export const LINE_TONE: Record<LineView["status"], string> = {
   checked_none: "text-muted",
   delayed: "text-muted",
   unsupported: "text-muted",
-  locked: "text-muted", // 무료 범위의 세 번째 줄(#9). 문구가 잠금을 말한다
+  locked: "text-muted", // 무료 범위의 세 번째 줄(#9·#67). 문구가 잠금·건수를 말한다
 };
 
 /** 잠긴 자리·세 번째 줄 잠금 누르기(#69): POST /waitlist가 그날 그 자리 합계를 1 올리고 /plus 설명으로 보낸다.
@@ -67,7 +67,7 @@ export function StockCard({ card }: { card: CardView }) {
           >
             {line.status === "locked" ? (
               <TapForm slot="related_lock" className="py-1 underline underline-offset-4">
-                {PRICE_FACTS_IN_PLUS}
+                {RELATED_IN_PLUS(line.count)}
               </TapForm>
             ) : (
               line.text

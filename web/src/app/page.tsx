@@ -54,7 +54,7 @@ const SAMPLES = [
     lines: [
       { text: "No new SEC filings found", status: "checked_none" },
       { text: "No confirmed events found", status: "checked_none" },
-      { text: "No related filings found", status: "checked_none" },
+      { text: "No major related filings found", status: "checked_none" },
     ],
     leverageTag: null,
     checked: CHECKED,

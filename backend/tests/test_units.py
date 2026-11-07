@@ -22,13 +22,13 @@ from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.nport import EdgarHoldingsSource
 from m30.adapters.prices import DailyBar
 from m30.config import ET, ConfigError, is_local_db, load_discord_settings, load_llm_settings, load_settings
-from m30.copy_rules import ALWAYS_BANNED, CARD_BANNED, EMOTION_VERBS, SOURCE_TAG, check_card
+from m30.copy_rules import ALWAYS_BANNED, CARD_BANNED, EMOTION_VERBS, RELATED_LABEL, SOURCE_TAG, check_card, check_related
 from m30.db.store import connect_failure_reason
 from m30 import config, notify
 from m30.coverage import coverage_name, load_etfs
 from m30.llm import LLMReply, LLMRequest
 from m30.llm.anthropic import AnthropicLLM
-from m30.models import CardLine, Coverage, FundHoldings, LineStatus
+from m30.models import CardLine, Coverage, FundHoldings, LineStatus, Relation
 from m30.pipeline.collect import INDICATOR_NAME_MAX, MARKET_NEWS_SOURCE_MAX
 from m30.pipeline.compute import (
     card_numbers,
@@ -45,6 +45,8 @@ from m30.pipeline.lines import (
     MARKET_NEWS_SCOPE,
     NO_INDICATORS,
     NO_MARKET_NEWS,
+    NO_RELATED,
+    RELATION_WORDS,
     REPLACEMENT_PHRASES,
     company_short_name,
     event_line,
@@ -53,6 +55,7 @@ from m30.pipeline.lines import (
     indicator_line,
     leverage_tag,
     price_fact_line,
+    related_text,
     replacement_sentence,
 )
 from m30.pipeline.glance import GLANCE_EXAMPLES, GLANCE_RETRY_REASONS, GLANCE_SYSTEM, parse_glance_reply
@@ -499,6 +502,17 @@ def test_자를_때_바꾼_숫자를_쪼개지_않고_잘린_값은_목록에서
 
 def test_첫_번째_줄_출처_꼬리표는_문구_검사기의_꼬리표_목록에_있다():
     assert SOURCE_TAG.search(f"x ({NEWS_TAG})")  # 목록 밖이면 검사기가 꼬리표를 단어 수에 센다
+
+
+def test_관계_단어는_모든_관계에_하나씩이고_문구_검사기가_단어_수에서_빼는_목록과_같다():
+    assert list(RELATION_WORDS) == list(Relation)
+    assert [w for w in RELATION_WORDS.values() if not RELATED_LABEL.fullmatch(f"{w} ")] == []  # 빠지면 관계 단어가 15단어에 들어간다
+
+
+def test_세_번째_줄은_관계_단어_뒤에_첫_번째_줄과_같은_조립_줄이고_없음_문구는_문구_규칙을_지킨다():
+    assert related_text(Relation.SUPPLIER, "AMD reported Q3 revenue of $7.7B +1 more (SEC filing)") == (
+        "Supplier AMD reported Q3 revenue of $7.7B +1 more (SEC filing)")
+    assert (NO_RELATED, check_related(NO_RELATED)) == ("No major related filings found", [])
 
 
 def test_첫_번째_줄_지시문이_이름_붙인_금지어는_카드_금지어_목록에_있다():

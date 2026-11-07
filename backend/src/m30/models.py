@@ -140,6 +140,8 @@ class StockCard:
     previous_trading_day: date | None = None  # 등락률·세 번째 줄의 종가 날짜. 파이프라인은 항상 채운다. None = #16 전 카드
     publish_suspended: bool = False  # 발행 중단(사람이 대시보드에서 켠다). 저장소에서 읽은 카드에만 의미가 있고 upsert_card는 쓰지 않는다
     news_line_filing_count: int | None = None  # 첫 번째 줄이 다룬 공시 수 = 1등 + +N more(#63). 확인함·있음 줄에만. 카드 헤더 N new filing(s)
+    related_line: CardLine | None = None  # 세 번째 줄 연관 소식(#67). None = #67 전 카드
+    related_line_filing_count: int | None = None  # 세 번째 줄이 다룬 공시 수 = 1등 + +N more. 확인함·있음 줄에만(무료 잠금 건수)
 
 
 @dataclass(frozen=True)
@@ -176,6 +178,13 @@ class HoldState(StrEnum):
 AMENDED_RULE = "정정 공시 있음"
 
 
+class HoldLine(StrEnum):
+    """보류함 행이 대체한 줄(#67). 바꾸면 마이그레이션 check도 같이."""
+
+    NEWS = "news"  # 첫 번째 줄
+    RELATED = "related"  # 세 번째 줄 연관 소식
+
+
 @dataclass(frozen=True)
 class HoldItem:
     """hold_queue 한 행(GLOSSARY HoldQueue)."""
@@ -188,7 +197,8 @@ class HoldItem:
     rules: tuple[str, ...]  # 걸린 규칙. 비지 않는다
     replacement_text: str | None  # 카드에 들어간 대체 줄. 정정 행은 None(카드를 고치지 않는다)
     state: HoldState = HoldState.PENDING
-    edited_text: str | None = None  # 사람이 쓴 첫 번째 줄(꼬리표 포함 전체)
+    edited_text: str | None = None  # 사람이 쓴 줄(꼬리표 포함 전체)
+    line: HoldLine = HoldLine.NEWS  # 대체한 줄. 정정 행은 NEWS만(DB check)
 
 
 class Relation(StrEnum):
@@ -236,3 +246,11 @@ class ReportMentions:
 
     accession: str
     mentions: tuple[Mention, ...]  # 문서 순서. () = 뽑았지만 없음
+
+
+@dataclass(frozen=True)
+class RelatedNews(TickerNews):
+    """종목 하나의 세 번째 줄 상태·후보(#67). 후보는 연관 종목 공시, 정렬은 중요도 → 관계 순서 → 접수 시각 늦은 순 → 접수번호.
+    초안·검수에는 TickerNews로 들어간다(LLM 요청에 관계·카드 종목이 없다, ADR-0005)."""
+
+    relation: Relation | None = None  # candidates[0]의 관계 = 관계 단어. 후보가 없으면 None

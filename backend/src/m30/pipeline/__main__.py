@@ -7,13 +7,21 @@ import argparse
 import json
 import os
 import sys
+import time
 from collections import Counter
 from collections.abc import Callable, Sequence
 from datetime import date, datetime
 from pathlib import Path
 from typing import TextIO
 
-from m30.adapters.edgar import ANNUAL_REPORT_FILE_MAX, QUARTERLY_INTERVAL, EdgarAnnualReportSource, EdgarClient, Throttle
+from m30.adapters.edgar import (
+    ANNUAL_REPORT_FILE_MAX,
+    QUARTERLY_INTERVAL,
+    CountedGet,
+    EdgarAnnualReportSource,
+    EdgarClient,
+    Throttle,
+)
 from m30.adapters.gov import GovClient
 from m30.adapters.tiingo import TiingoPriceSource
 from m30.adapters.unavailable import NoPriceSource
@@ -173,14 +181,20 @@ def _print_summary(summary: RunSummary, say: Callable[[str], None] = print) -> N
         say("holdings: " + " ".join(
             f"{ticker}={f.status}" + (f"(unmatched {f.unmatched})" if f.unmatched else "") for ticker, f in summary.funds.items()
         ))
-    # 문장은 찍지 않는다(통과한 줄은 카드에, 걸린 줄은 보류함에 있다). 종목별 결과 코드만
-    drafts = " ".join(f"{ticker}={d.problem or 'ok'}" for ticker, d in summary.drafts.items()) or "-"
-    say(f"drafts: {drafts}")
-    reviews = " ".join(
-        f"{ticker}={'pass' if r.stage is None else f'hold:{r.stage}'}{'+retry' if r.retried else ''}"
-        for ticker, r in summary.reviews.items()
-    ) or "-"
-    say(f"review: {reviews}")
+    # 문장은 찍지 않는다(통과한 줄은 카드에, 걸린 줄은 보류함에 있다). 종목별 결과 코드만. 세 번째 줄(#67)도 같은 모양
+    def drafts(found: dict) -> str:
+        return " ".join(f"{ticker}={d.problem or 'ok'}" for ticker, d in found.items()) or "-"
+
+    def reviews(found: dict) -> str:
+        return " ".join(
+            f"{ticker}={'pass' if r.stage is None else f'hold:{r.stage}'}{'+retry' if r.retried else ''}"
+            for ticker, r in found.items()
+        ) or "-"
+
+    say(f"drafts: {drafts(summary.drafts)}")
+    say(f"review: {reviews(summary.reviews)}")
+    say(f"related_drafts: {drafts(summary.related_drafts)}")
+    say(f"related_review: {reviews(summary.related_reviews)}")
     if (g := summary.glance) is None:  # 시장 한눈에(#11): 줄 상태와 검수 코드만. 문장·지표 이름·등락률은 찍지 않는다
         say("glance: resumed")
     else:
@@ -202,7 +216,8 @@ def _failure(stage: str, subject: str | None, reason: str, error: str | None) ->
     return f"{stage}/{subject}={code}" if subject else f"{stage}={code}"
 
 
-QUALITY_LINES = (("news", "news_line"), ("event", "event_line"), ("price", "price_fact_line"))  # 품질 블록 줄 이름 → 카드 필드
+QUALITY_LINES = (("news", "news_line"), ("event", "event_line"), ("price", "price_fact_line"),
+                 ("related", "related_line"))  # 품질 블록 줄 이름 → 카드 필드
 
 
 def _quality_lines(summary: RunSummary, store: CardStore, prices: str) -> list[str]:
@@ -338,14 +353,17 @@ def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> in
                     say.notify = False
                     return 0
                 say(BACKUP_RUN)  # 정시 dispatch가 오지 않았다는 신호(#17 D7). Discord에도 들어간다
+            sec = CountedGet(EdgarClient(edgar_settings).get)  # 실행 요약 edgar 줄(#67 D9): SEC 요청 수·쓴 시간
+            started = time.monotonic()
             summary, refresh = run_production(
                 store,
                 day,
-                get=EdgarClient(edgar_settings).get,
+                get=sec,
                 gov_get=GovClient(edgar_settings).get,  # 연락처는 BLS 요청에만(#50 U1)
                 llm=AnthropicLLM(llm_settings),
                 prices=None if not prices_on else TiingoPriceSource(tiingo_settings) if tiingo else NoPriceSource(),
             )
+            run_seconds = time.monotonic() - started  # 커버 범위 갱신 + 파이프라인
             lines = _quality_lines(summary, store, price_code) + _glance_quality_lines(summary, store) if quality else []
     except RunLocked:  # 카드 0장과 같은 실패(exit 1). except Exception보다 먼저
         say(LOCKED.format(day), file=sys.stderr)
@@ -362,6 +380,9 @@ def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> in
     _print_summary(summary, say)
     say(_coverage_line(refresh))
     say(f"prices={price_code}")  # off = 가격 표시 꺼짐(#56), none = TIINGO_API_KEY 없음(구독 전) 또는 --quality
+    # 07:45 마감 판단용(#67 U4): 8-K 단계 CIK 수·그중 연관 종목 몫, SEC 요청 수·초, 실행 초. 주소·회사 이름 없음
+    say(f"edgar: ciks={summary.filing_ciks} related_ciks={summary.related_ciks} requests={sec.requests}"
+        f" seconds={round(sec.seconds)} run_seconds={round(run_seconds)}")
     for line in lines:
         print(line)
     return 1 if run_failed(summary) else 0

@@ -35,6 +35,11 @@ const EARLIER_GLANCE = `canary-earlier-glance-${randomUUID()}`; // 이전 거래
 const PAST_OLDEST = `canary-past-oldest-${randomUUID()}`; // 2099-10-03(범위 첫날)의 세 번째 줄
 const PAST_OUTSIDE = `canary-past-outside-${randomUUID()}`; // 2099-10-02(범위 밖)
 const PAST_SUSPENDED = `canary-past-suspended-${randomUUID()}`; // 2099-12-29 발행 중단
+// 세 번째 줄 연관 소식(#67): ZZWA 본문(건수 2). 확인 시각은 다른 줄보다 이른 7:05 AM EST라 무료 하단에 새면 보인다.
+// ZZWA에는 가격 사실 열도 차 있다(U1: 가격 표시 on이면 파이프라인이 저장만 한다). 웹은 플래그와 무관하게 읽지 않는다
+const RELATED_A = `Competitor Web Test B reported Q3 revenue of $1.0B +1 more (SEC filing) ${randomUUID()}`;
+const RELATED_AT = "2099-12-31T12:05:00+00:00";
+const NO_RELATED = "No major related filings found";
 // 알아두기(#66): 테스트 10-K 한 행(고정 접수번호, service_role에 delete 권한 없음: upsert do nothing)에 붙은 사실
 const ACCESSION = "0009999999-99-000066";
 const QUIET_FIRST = "Web Test B makes test widgets"; // ZZWB 1번(공용)
@@ -92,7 +97,7 @@ const cards = [
     change_status: "unsupported",
     ...line("news_line", "Not covered yet", "unsupported", null),
     ...line("event_line", "Not covered yet", "unsupported", null),
-    ...line("price_fact_line", "Not covered yet", "unsupported", null),
+    ...line("related_line", "Not covered yet", "unsupported", null), // ETF: 연관 종목 없음(#67)
     leverage_tag: "−3x inverse · resets daily",
   },
   {
@@ -107,6 +112,9 @@ const cards = [
     news_line_filing_count: 3, // 카드 헤더(#63): 문장에 +N more가 없어도 저장 건수 그대로(웹은 문장을 파싱하지 않는다)
     ...line("event_line", "Earnings Thu 1/7 after close (D-7)", "checked_found", "Earnings and dividend calendar"),
     ...line("price_fact_line", "Up 5 days in a row", "checked_found", "Daily prices"),
+    ...line("related_line", RELATED_A, "checked_found", "SEC filings"),
+    related_line_checked_at: RELATED_AT,
+    related_line_filing_count: 2,
     leverage_tag: null,
   },
   {
@@ -117,7 +125,7 @@ const cards = [
     change_pct: null,
     change_status: "delayed",
     ...line("event_line", "No confirmed events found", "checked_none", "Earnings and dividend calendar"),
-    ...line("price_fact_line", "Update delayed", "delayed", "Daily prices"),
+    ...line("related_line", "Update delayed", "delayed", "SEC filings"),
     leverage_tag: "3x · resets daily",
   },
   {
@@ -128,7 +136,7 @@ const cards = [
     change_status: "checked_found",
     ...line("news_line", "No new SEC filings found", "checked_none", "SEC filings"),
     ...line("event_line", "No confirmed events found", "checked_none", "Earnings and dividend calendar"),
-    ...line("price_fact_line", "No additional price highlights", "checked_none", "Daily prices"),
+    ...line("related_line", NO_RELATED, "checked_none", "SEC filings"),
     leverage_tag: null,
   },
   // 발행 중단(#16 D7): 읽히지만(suspended) 화면 모델에는 없다
@@ -142,7 +150,7 @@ const cards = [
     change_status: "checked_found",
     ...line("news_line", SUSPENDED_TEXT, "checked_found", "SEC filings"),
     ...line("event_line", "No confirmed events found", "checked_none", "Earnings and dividend calendar"),
-    ...line("price_fact_line", "No additional price highlights", "checked_none", "Daily prices"),
+    ...line("related_line", NO_RELATED, "checked_none", "SEC filings"),
     leverage_tag: null,
   },
   // 카드 헤더(#63): 첫 번째 줄 지연(수집 실패), 공시 1건
@@ -204,7 +212,8 @@ const cards = [
     change_pct: null,
     change_status: "delayed",
     ...line("news_line", "No new SEC filings found", "checked_none", "SEC filings"),
-    ...line("price_fact_line", PAST_OLDEST, "checked_found", "Daily prices"),
+    ...line("related_line", PAST_OLDEST, "checked_found", "SEC filings"),
+    related_line_filing_count: 1,
     leverage_tag: null,
   },
   {
@@ -284,20 +293,22 @@ afterEach(() => vi.unstubAllEnvs()); // 가격 표시 플래그는 설정 기본
 /** 네 종목 전부가 잠기지 않은 내 종목인 Plus 유저(세 줄 전부) */
 const PLUS_ALL = { plan: "plus" as const, stocks: TICKERS.map((ticker) => ({ ticker, locked: false })) };
 
-test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus 내 종목 = 세 줄 전부, 발행 중단 카드는 빠진다)", async () => {
+test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus 내 종목 = 세 번째 줄 본문, 발행 중단 카드는 빠진다)", async () => {
   const data = await getDashboard();
   expect(data.tradingDay).toBe("Thu, Dec 31, 2099");
   // 발행 중단은 읽기에서 거르지 않고 suspended로 담는다: 거르는 곳은 exposeCards 한 곳(#16 D7)
-  // 공시 수(#63)는 DB 값 그대로 담는다. 헤더는 exposeCards가 만든다
-  expect(data.cards.map((c) => [c.ticker, c.suspended, c.newsFilingCount, c.lockedSlot])).toEqual([
-    ["ZZWA", false, 3, "earnings_summary"],
-    ["ZZWB", false, null, "earnings_summary"],
-    ["ZZWC", false, null, "big_holders"],
-    ["ZZWD", false, null, null],
-    ["ZZWE", true, null, "big_holders"],
-    ["ZZWF", false, null, "big_holders"],
-    ["ZZWG", false, 1, "big_holders"],
+  // 공시 수(#63·#67)는 DB 값 그대로 담는다. 헤더·잠금 건수는 exposeCards가 만든다
+  expect(data.cards.map((c) => [c.ticker, c.suspended, c.newsFilingCount, c.relatedFilingCount, c.lockedSlot])).toEqual([
+    ["ZZWA", false, 3, 2, "earnings_summary"],
+    ["ZZWB", false, null, null, "earnings_summary"],
+    ["ZZWC", false, null, null, "big_holders"],
+    ["ZZWD", false, null, null, null],
+    ["ZZWE", true, null, null, "big_holders"],
+    ["ZZWF", false, null, null, "big_holders"],
+    ["ZZWG", false, 1, null, "big_holders"],
   ]);
+  // U1: 가격 표시 on(테스트 기본값)이어도 가격 사실 열은 읽지 않는다. 서버 메모리(공유 캐시에 들어가는 값)에도 없다
+  expect(JSON.stringify(data)).not.toContain("Up 5 days in a row");
   expect(exposeCards(data.cards, PLUS_ALL)).toEqual([
     {
       ticker: "ZZWA",
@@ -307,10 +318,10 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
       lines: [
         { text: "Web Test A reported Q3 results (SEC filing)", status: "checked_found" },
         { text: "Earnings Thu 1/7 after close (D-7)", status: "checked_found" },
-        { text: "Up 5 days in a row", status: "checked_found" },
+        { text: RELATED_A, status: "checked_found" },
       ],
       leverageTag: null,
-      checked: "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar · Daily prices",
+      checked: "Checked 7:05 AM ET · SEC filings · Earnings and dividend calendar", // 세 번째 줄 확인 시각(가장 이름)
       lockedSlot: "earnings_summary",
     },
     {
@@ -321,10 +332,10 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
       lines: [
         { text: "No new SEC filings found", status: "checked_none" },
         { text: "No confirmed events found", status: "checked_none" },
-        { text: "No additional price highlights", status: "checked_none" },
+        { text: NO_RELATED, status: "checked_none" },
       ],
       leverageTag: null,
-      checked: "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar · Daily prices",
+      checked: "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar",
       lockedSlot: "earnings_summary",
     },
     {
@@ -338,7 +349,7 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
         { text: "Update delayed", status: "delayed" },
       ],
       leverageTag: "3x · resets daily",
-      checked: "Checked 7:30 AM ET · Earnings and dividend calendar", // 지연된 가격 줄의 출처는 빠진다
+      checked: "Checked 7:30 AM ET · Earnings and dividend calendar", // 지연된 세 번째 줄의 출처는 빠진다
       lockedSlot: "big_holders",
     },
     {
@@ -362,8 +373,7 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
       lines: [
         { text: "Update delayed", status: "delayed" },
         { text: "Update delayed", status: "delayed" },
-        { text: "Update delayed", status: "delayed" },
-      ],
+      ], // #67 전 카드(세 번째 줄 열이 비었다): 두 줄
       leverageTag: null,
       checked: null,
       lockedSlot: "big_holders",
@@ -375,7 +385,6 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
       change: { text: "Update delayed", tone: "delayed", label: "prev close" },
       lines: [
         { text: "Web Test G named a new CFO (SEC filing)", status: "checked_found" },
-        { text: "Update delayed", status: "delayed" },
         { text: "Update delayed", status: "delayed" },
       ],
       leverageTag: null,
@@ -427,7 +436,7 @@ test("시장 한눈에(#11): 카드의 최신 거래일 행의 세 줄을 순서
   expect(all).not.toContain(EARLIER_GLANCE);
 });
 
-test("로그인 전 = 무료 범위: 세 번째 줄은 잠금만, 하단에서도 그 줄의 출처가 빠진다. 지연·미지원은 그대로", async () => {
+test("로그인 전 = 무료 범위: 세 번째 줄은 건수만(확인함·있음이면 count), 하단에서도 그 줄의 시각이 빠진다. 미지원은 Not covered yet 그대로, #67 전 카드는 두 줄", async () => {
   const cards = exposeCards((await getDashboard()).cards, null);
   // ZZWE(발행 중단)는 없다
   expect(cards.map((c) => [c.ticker, c.change!.text, c.lines, c.checked])).toEqual([
@@ -437,7 +446,7 @@ test("로그인 전 = 무료 범위: 세 번째 줄은 잠금만, 하단에서�
       [
         { text: "Web Test A reported Q3 results (SEC filing)", status: "checked_found" },
         { text: "Earnings Thu 1/7 after close (D-7)", status: "checked_found" },
-        { status: "locked" },
+        { status: "locked", count: 2 },
       ],
       "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar",
     ],
@@ -460,17 +469,46 @@ test("로그인 전 = 무료 범위: 세 번째 줄은 잠금만, 하단에서�
     [
       "ZZWD",
       "Not covered yet",
-      [{ text: "Not covered yet", status: "unsupported" }, { text: "Not covered yet", status: "unsupported" }, { status: "locked" }],
+      [{ text: "Not covered yet", status: "unsupported" }, { text: "Not covered yet", status: "unsupported" }, { text: "Not covered yet", status: "unsupported" }],
       null,
     ],
-    ["ZZWF", "Update delayed", [{ text: "Update delayed", status: "delayed" }, { text: "Update delayed", status: "delayed" }, { status: "locked" }], null],
+    ["ZZWF", "Update delayed", [{ text: "Update delayed", status: "delayed" }, { text: "Update delayed", status: "delayed" }], null],
     [
       "ZZWG",
       "Update delayed",
-      [{ text: "Web Test G named a new CFO (SEC filing)", status: "checked_found" }, { text: "Update delayed", status: "delayed" }, { status: "locked" }],
+      [{ text: "Web Test G named a new CFO (SEC filing)", status: "checked_found" }, { text: "Update delayed", status: "delayed" }],
       "Checked 7:30 AM ET · SEC filings",
     ],
   ]);
+});
+
+test("세 번째 줄(#67) 화이트리스트: 무료·로그인 전·Plus 둘러보기·Plus 잠긴 내 종목 응답·HTML에 연관 본문·없음 문구·확인 시각이 없고, 잠금 키는 status(+ 확인함·있음이면 count)뿐. ETF는 Not covered yet", async () => {
+  const { tradingDay, glance, cards } = await getDashboard();
+  const viewers = {
+    무료: { plan: "free" as const, stocks: PLUS_ALL.stocks },
+    "로그인 전": null,
+    "Plus 둘러보기": { plan: "plus" as const, stocks: [] },
+    "Plus 잠긴 내 종목": { plan: "plus" as const, stocks: TICKERS.map((ticker) => ({ ticker, locked: true })) },
+  };
+  for (const [who, viewer] of Object.entries(viewers)) {
+    const views = exposeCards(cards, viewer);
+    expect(views.map((c) => [c.ticker, c.lines[2] ?? "none"]), who).toEqual([
+      ["ZZWA", { status: "locked", count: 2 }],
+      ["ZZWB", { status: "locked" }],
+      ["ZZWC", { status: "locked" }],
+      ["ZZWD", { text: "Not covered yet", status: "unsupported" }], // ETF: Plus에도 없는 것을 잠그지 않는다
+      ["ZZWF", "none"], // #67 전 카드
+      ["ZZWG", "none"],
+    ]);
+    for (const c of views) if (c.lines[2]?.status === "locked") expect(Object.keys(c.lines[2]).sort(), `${who} ${c.ticker}`).toEqual(c.ticker === "ZZWA" ? ["count", "status"] : ["status"]);
+    const props = JSON.stringify({ tradingDay, glance, cards: views });
+    const html = renderToStaticMarkup(createElement(Dashboard, { data: { tradingDay, glance, cards: views } }));
+    for (const secret of [RELATED_A, "Competitor", NO_RELATED, "7:05 AM", "12:05:00"]) {
+      expect(props, `${who} ${secret}`).not.toContain(secret);
+      expect(html, `${who} ${secret}`).not.toContain(secret);
+    }
+    expect(html, who).toContain("2 related updates in Plus");
+  }
 });
 
 test("같은 카드를 Plus 유저와 무료 유저가 볼 때 세 번째 줄이 다르다(플랜은 user_profile.plan, 세션 유저 id로). 발행 중단한 내 종목은 두 플랜 모두 카드 없음 자리", async () => {
@@ -498,14 +536,17 @@ test("같은 카드를 Plus 유저와 무료 유저가 볼 때 세 번째 줄이
   const out = renderToStaticMarkup(createElement(Dashboard, { data: { tradingDay, glance, cards: exposeCards(cards, null) } }));
   const third = (d: typeof f, ticker: string) => d.data.cards.find((c) => c.ticker === ticker)!.lines[2];
 
-  expect(third(p, "ZZWA")).toEqual({ text: "Up 5 days in a row", status: "checked_found" }); // Plus 내 종목
-  expect(third(f, "ZZWA")).toEqual({ status: "locked" }); // 무료 내 종목
-  expect(third(p, "ZZWB")).toEqual({ status: "locked" }); // Plus 둘러보기
+  expect(third(p, "ZZWA")).toEqual({ text: RELATED_A, status: "checked_found" }); // Plus 내 종목
+  expect(third(f, "ZZWA")).toEqual({ status: "locked", count: 2 }); // 무료 내 종목
+  expect(third(p, "ZZWB")).toEqual({ status: "locked" }); // Plus 둘러보기(없음)
   expect(third(f, "ZZWB")).toEqual({ status: "locked" });
-  // ZZWA의 세 번째 줄 문구는 픽스처에서 하나뿐: 무료 HTML에는 없다
-  expect(p.html).toContain("Up 5 days in a row");
-  expect(f.html).not.toContain("Up 5 days in a row");
-  expect(f.html).toContain("Price facts in Plus");
+  // ZZWA의 세 번째 줄 문구·확인 시각은 픽스처에서 하나뿐: 무료 HTML에는 없다
+  expect(p.html).toContain(RELATED_A);
+  expect(p.html).toContain("Checked 7:05 AM ET");
+  for (const secret of [RELATED_A, "7:05 AM"]) expect(f.html, secret).not.toContain(secret);
+  expect(f.html).toContain("2 related updates in Plus");
+  expect(f.html).toContain("Related updates in Plus"); // ZZWB(없음)·ZZWC(지연)
+  for (const html of [f.html, p.html]) expect(html).not.toMatch(/Up 5 days in a row|Price facts in Plus/); // U1
 
   // 발행 중단 카드는 내 종목에서도 빠지고, 그 자리는 카드 없음과 같다(#16)
   for (const d of [f, p]) {
@@ -522,7 +563,7 @@ test("같은 카드를 Plus 유저와 무료 유저가 볼 때 세 번째 줄이
   for (const html of [out, f.html, p.html]) expect(html).not.toContain(HOLD);
 });
 
-test("가격 표시 off(#56)면 DB에 등락률·가격 사실·어제 마감 값이 있어도 화면 모델·HTML에 없다(Plus 내 종목·로그인 전 모두)", async () => {
+test("가격 표시 off(#56)면 DB에 등락률·가격 사실·어제 마감 값이 있어도 화면 모델·HTML에 없다(Plus 내 종목·로그인 전 모두). 세 번째 줄(연관 소식)은 on과 같다", async () => {
   vi.stubEnv("PRICE_DISPLAY", undefined);
   const { tradingDay, glance, cards } = await getDashboard();
   expect(glance).toEqual({ lines: GLANCE.lines.slice(1), checked: "Checked 7:20 AM ET · Economic calendar" });
@@ -531,16 +572,20 @@ test("가격 표시 off(#56)면 DB에 등락률·가격 사실·어제 마감 �
     // 알아두기(#66)는 가격 키가 아니다: 로그인 전 조용한 날 카드(ZZWB)는 1번이 붙는다. PLUS_ALL은 진도를 넘기지 않아 없다
     const quiet = (t: string) => (viewer === null && t === "ZZWB" ? ["quietFact"] : []);
     const slot = (t: string) => (t === "ZZWD" ? [] : ["lockedSlot"]); // 잠긴 자리(#69)는 가격 키가 아니다. ZZWD는 ETF
+    const related = (t: string) => (["ZZWF", "ZZWG"].includes(t) ? 2 : 3); // #67 전 카드만 두 줄
     expect(data.cards.map((c) => [c.ticker, Object.keys(c).sort(), c.lines.length])).toEqual(
-      ["ZZWA", "ZZWB", "ZZWC", "ZZWD", "ZZWF", "ZZWG"].map((t) => [t, ["checked", "header", "leverageTag", "lines", "name", "ticker", ...quiet(t), ...slot(t)].sort(), 2]),
+      ["ZZWA", "ZZWB", "ZZWC", "ZZWD", "ZZWF", "ZZWG"].map((t) => [t, ["checked", "header", "leverageTag", "lines", "name", "ticker", ...quiet(t), ...slot(t)].sort(), related(t)]),
     );
+    vi.stubEnv("PRICE_DISPLAY", "on");
+    expect(data.cards.map((c) => [c.lines, c.checked])).toEqual(exposeCards((await getDashboard()).cards, viewer).map((c) => [c.lines, c.checked]));
+    vi.stubEnv("PRICE_DISPLAY", undefined);
     const props = JSON.stringify(data);
     const html = renderToStaticMarkup(createElement(Dashboard, { data }));
-    for (const price of ["+1.3%", "\u22122.0%", "Wed 12/30 close", "prev close", "Up 5 days in a row", "No additional price highlights", "Daily prices", CLOSE, "SPY", "Price facts in Plus"]) {
+    for (const price of ["+1.3%", "\u22122.0%", "Wed 12/30 close", "prev close", "Up 5 days in a row", "Daily prices", CLOSE, "SPY", "Price facts in Plus"]) {
       expect(props, price).not.toContain(price);
       expect(html, price).not.toContain(price);
     }
-    expect(html).toContain("Web Test A reported Q3 results (SEC filing)"); // 두 줄은 그대로
+    expect(html).toContain("Web Test A reported Q3 results (SEC filing)"); // 첫·두 번째 줄은 그대로
   }
 });
 
@@ -574,11 +619,12 @@ async function pastUser(plan: "free" | "plus", tickers: string[], then?: "free")
 
 const days = (...d: string[]) => d.map(formatTradingDay);
 
-test("지난 카드: Plus 내 종목 = 오늘 포함 최근 90일(달력일) 최신순, 발행 중단 날·90일 밖은 없다. 세 번째 줄은 본문", async () => {
+test("지난 카드: Plus 내 종목 = 오늘 포함 최근 90일(달력일) 최신순, 발행 중단 날·90일 밖은 없다. 세 번째 줄은 본문(#67 전 날은 두 줄)", async () => {
   const view = (await getPastCards(await pastUser("plus", ["ZZWA"]), "ZZWA"))!;
   expect(view.days.map((d) => d.day)).toEqual(days(DAY, EARLIER, "2099-10-03"));
   expect([view.ticker, view.name, view.locked]).toEqual(["ZZWA", "Web Test A", false]);
-  expect(view.days[0].card!.lines[2]).toEqual({ text: "Up 5 days in a row", status: "checked_found" });
+  expect(view.days[0].card!.lines[2]).toEqual({ text: RELATED_A, status: "checked_found" });
+  expect(view.days[1].card!.lines).toHaveLength(2); // 2099-12-30: 세 번째 줄 열이 비었다
   expect(view.days[2].card!.lines[2]).toEqual({ text: PAST_OLDEST, status: "checked_found" });
   const all = JSON.stringify(view);
   expect(all).not.toContain(PAST_OUTSIDE);
@@ -594,10 +640,11 @@ test("지난 카드: 무료 내 종목 = 오늘만 + 잠금 안내. 지난 날 �
   const view = (await getPastCards(await pastUser("free", ["ZZWA"]), "ZZWA"))!;
   expect(view.days.map((d) => d.day)).toEqual(days(DAY));
   expect(view.locked).toBe(true);
-  expect(view.days[0].card!.lines[2]).toEqual({ status: "locked" });
+  expect(view.days[0].card!.lines[2]).toEqual({ status: "locked", count: 2 });
   const html = renderToStaticMarkup(createElement(PastCards, { view }));
   expect(html).toContain("Past 90 days in Plus");
-  for (const secret of [PAST_OLDEST, "Up 5 days in a row", "9.9%"]) {
+  expect(html).toContain("2 related updates in Plus");
+  for (const secret of [PAST_OLDEST, RELATED_A, "7:05 AM", "Up 5 days in a row", "9.9%"]) {
     expect(JSON.stringify(view), secret).not.toContain(secret);
     expect(html, secret).not.toContain(secret);
   }
@@ -618,11 +665,12 @@ test("지난 카드: 가격 표시 off면 모든 날 카드에 가격 키가 없
   vi.stubEnv("PRICE_DISPLAY", undefined);
   const view = (await getPastCards(await pastUser("plus", ["ZZWA"]), "ZZWA"))!;
   expect(view.days.map((d) => [Object.keys(d.card!).includes("change"), d.card!.lines.length])).toEqual([
-    [false, 2],
-    [false, 2],
-    [false, 2],
+    [false, 3],
+    [false, 2], // #67 전 날
+    [false, 3],
   ]);
-  for (const price of ["+1.3%", "9.9%", "Up 5 days in a row", PAST_OLDEST, "Daily prices"]) expect(JSON.stringify(view), price).not.toContain(price);
+  for (const price of ["+1.3%", "9.9%", "Up 5 days in a row", "Daily prices"]) expect(JSON.stringify(view), price).not.toContain(price);
+  expect(view.days[2].card!.lines[2]).toEqual({ text: PAST_OLDEST, status: "checked_found" }); // 세 번째 줄은 플래그와 무관(U1)
 });
 
 // ---- 알아두기(#66): 웹 서버 카드 조회 입구 = getDashboard(공용 1번, 캐시 안) + getMyQuietFacts(유저 진도, 캐시 밖) → exposeCards ----

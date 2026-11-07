@@ -36,7 +36,15 @@ from m30.adapters import (
     edgar,
     error_for_status,
 )
-from m30.adapters.edgar import SUBMISSIONS_URL, TICKERS_URL, EdgarClient, EdgarFilingSource, Throttle, ticker_ciks
+from m30.adapters.edgar import (
+    SUBMISSIONS_URL,
+    TICKERS_URL,
+    CountedGet,
+    EdgarClient,
+    EdgarFilingSource,
+    Throttle,
+    ticker_ciks,
+)
 from m30.adapters.fake import (
     FailurePlan,
     FakeEarningsFilingSource,
@@ -254,6 +262,25 @@ def test_SEC_요청_사이에_이미_간격만큼_지났으면_기다리지_않�
     throttle.wait()  # 이미 지났다
 
     assert clock.sleeps == [pytest.approx(0.075)]
+
+
+def test_SEC_요청_측정은_성공·실패를_요청_하나씩_세고_get_안에서_쓴_시간을_더하며_예외는_그대로_올린다(monkeypatch):
+    now = [100.0]
+    monkeypatch.setattr(edgar.time, "monotonic", lambda: now[0])
+
+    def get(url):
+        now[0] += 2.5  # 간격 대기·응답 시간
+        if url == "down":
+            raise TransientSourceError("sec http 503")
+        return b"ok"
+
+    sec = CountedGet(get)
+    assert sec("up") == b"ok"
+    with pytest.raises(TransientSourceError):
+        sec("down")
+    now[0] += 10  # get 밖에서 흐른 시간은 세지 않는다
+
+    assert (sec.requests, sec.seconds) == (2, 5.0)
 
 
 def test_SEC_클라이언트는_요청마다_간격_조절을_거치고_요청_전에_멈춘_주소는_간격을_쓰지_않는다(monkeypatch):

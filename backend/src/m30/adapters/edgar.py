@@ -16,6 +16,7 @@ import urllib.parse
 import urllib.request
 import zlib
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from html.parser import HTMLParser
 
@@ -66,6 +67,23 @@ LINE_BREAK_TAGS = BLOCK_TAGS - {"td", "th"}  # 10-K 글자에서 줄을 나누�
 _WHITESPACE = re.compile(r"\s")  # 10-K HTML 글자 안의 줄바꿈(\xa0 등 공백 포함)은 줄을 나누지 않는다
 
 Get = Callable[[str], bytes]
+
+
+@dataclass
+class CountedGet:
+    """한 실행의 SEC 요청 수와 get 안에서 쓴 시간(간격 대기·실패 포함)(#67 실행 요약 edgar 줄). 주소·응답은 남기지 않는다."""
+
+    get: Get
+    requests: int = 0
+    seconds: float = 0.0
+
+    def __call__(self, url: str) -> bytes:
+        self.requests += 1
+        started = time.monotonic()
+        try:
+            return self.get(url)
+        finally:
+            self.seconds += time.monotonic() - started
 
 
 class Throttle:

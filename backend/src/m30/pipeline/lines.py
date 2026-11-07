@@ -9,7 +9,7 @@ from m30.adapters.events import CorporateEvent, Earnings, EarningsTiming
 from m30.adapters.indicators import IndicatorRelease
 from m30.adapters.prices import DailyBar
 from m30.config import ET
-from m30.models import CardLine, LineStatus, TickerNews
+from m30.models import CardLine, LineStatus, Relation, TickerNews
 from m30.pipeline.compute import format_per_share, streak, week52_gaps
 
 # 데이터 상태 문구 (card-copy-rules "데이터 상태 문구")
@@ -18,6 +18,7 @@ NO_EVENTS = "No confirmed events found"
 NO_PRICE_FACTS = "No additional price highlights"  # 가격 데이터가 정상인데 표시 조건에 맞는 사실이 없음
 NO_INDICATORS = "No Fed decision or major BLS or BEA releases scheduled"  # 시장 한눈에 지표 일정 줄(#11). 연준은 성명일만 본다, major = 화면 이름 목록(#50 D5)
 NO_MARKET_NEWS = "No new major BLS, BEA, Census or Fed releases"  # 시장 한눈에 소식 줄(#11). 확인한 기관 이름(#50 D5)
+NO_RELATED = "No major related filings found"  # 세 번째 줄 확인함·없음(#67 U3). major = 후보 중요도 4 이상
 UPDATE_DELAYED = "Update delayed"
 NOT_COVERED = "Not covered yet"
 
@@ -27,6 +28,7 @@ HOLDINGS_SCOPE = "SEC filings of top holdings"  # ETF 편입 보고를 못 읽�
 EVENT_SCOPE = "Earnings and dividend calendar"
 ESTIMATE_SCOPE = NEWS_SCOPE  # 실적 추정일 줄(#57): SEC 실적 공시로만 만든다. 웹 하단에서 첫 번째 줄 범위와 하나로 합쳐진다
 PRICE_SCOPE = "Daily prices"
+RELATED_SCOPE = NEWS_SCOPE  # 세 번째 줄(#67): 연관 종목의 SEC 공시. 웹 하단에서 첫 번째 줄 범위와 하나로 합쳐진다
 INDICATOR_SCOPE = "BLS, BEA and Fed calendars"  # Census 일정은 HTML뿐이라 확인하지 않는다(#50)
 MARKET_NEWS_SCOPE = "BLS, BEA, Census and Fed releases"
 
@@ -38,6 +40,10 @@ INDICATORS_SHOWN = 2  # 지표 일정 줄에 이름을 쓰는 발표 수. 나머
 EVENT_WINDOW = timedelta(days=365)  # U1 = C: 기간 제한 없이 가장 가까운 일정. 조회만 1년 앞까지
 STREAK_MIN = 3  # U3: 연속 상승·하락 3일 이상
 NEAR_52W_PCT = Decimal("10.0")  # U4 = B: 52주 고점·저점 10% 이내
+
+# 세 번째 줄 맨 앞 관계 단어(#67). 코드가 붙인다(LLM은 관계를 모른다, ADR-0005). card.toml related_labels와 같게(test_units)
+RELATION_WORDS = {Relation.COMPETITOR: "Competitor", Relation.CUSTOMER: "Customer",
+                  Relation.SUPPLIER: "Supplier", Relation.PEER: "Peer"}
 
 # 대체 줄: 검수를 통과하지 못한 첫 번째 줄 대신. 8-K 항목 번호로 소식 종류만 밝힌다(보도자료 제목·서식 이름은 쓰지 않는다)
 REPLACEMENT_PHRASES = (
@@ -67,17 +73,24 @@ def holdings_scope(companies: int) -> str:
     return f"SEC filings of {companies} top holding{'' if companies == 1 else 's'}"
 
 
-def news_template_line(news: TickerNews, checked_at: datetime, scope: str = NEWS_SCOPE) -> CardLine | None:
+def news_template_line(
+    news: TickerNews, checked_at: datetime, scope: str = NEWS_SCOPE, none_text: str = NO_FILINGS
+) -> CardLine | None:
     """LLM 없이 정해지는 첫 번째 줄(스펙 #6 D2 표). None = 후보가 있다 → 초안·검수(#7)를 기다리는 축소판.
-    scope: 확인함·지연 줄의 출처 범위(ETF는 holdings_scope·HOLDINGS_SCOPE)."""
+    scope: 확인함·지연 줄의 출처 범위(ETF는 holdings_scope·HOLDINGS_SCOPE). none_text: 확인함·없음 문구(세 번째 줄은 NO_RELATED)."""
     if news.status is LineStatus.UNSUPPORTED:
         return CardLine(NOT_COVERED, LineStatus.UNSUPPORTED, checked_at, None)
     if news.status is LineStatus.CHECKED_NONE:
-        return CardLine(NO_FILINGS, LineStatus.CHECKED_NONE, checked_at, scope)
+        return CardLine(none_text, LineStatus.CHECKED_NONE, checked_at, scope)
     if news.status is LineStatus.DELAYED or not news.candidates:
         # U4 = A: 공시가 있는데 후보가 없으면(전부 의견글 = 회사 공시라 분류 오류) "없음"으로 단정하지 않는다
         return delayed_line(scope, checked_at)
     return None
+
+
+def related_text(relation: Relation, line: str) -> str:
+    """'{관계 단어} {line}'. line = news_text 결과(문장 + +N more + (SEC filing)). 통과 줄·대체 줄이 같이 쓴다."""
+    return f"{RELATION_WORDS[relation]} {line}"
 
 
 def company_short_name(name: str) -> str:

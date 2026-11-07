@@ -146,13 +146,16 @@ def review_drafts(
     names: Mapping[str, str],  # 커버 범위 티커 → 이름(종목명 가리기)
     trading_day: date,
     send: Callable[[str, LLMRequest], str],  # (접수번호, 요청) → 응답. SourceError·LLMCallLimitReached를 낼 수 있다
+    copy_check: Callable[[str], list[str]] = check_card,  # 금지어 검사. 세 번째 줄은 check_related(#67)
 ) -> dict[str, NewsReview]:
     """drafts의 모든 종목, drafts 순서. 같은 공시(GOOG/GOOGL)는 한 번만 검수하고 결과를 같이 쓴다(+N more는 종목마다).
     공시마다 판정 → (재생성 → 판정)까지 끝낸 뒤 다음 공시. 다른 예외는 버그라 그대로 올린다."""
     reviews, done = {}, {}
     for ticker, draft in drafts.items():
         if draft.accession not in done:
-            done[draft.accession] = _review(draft, news[ticker].candidates[0], items[draft.accession], names, trading_day, send)
+            done[draft.accession] = _review(
+                draft, news[ticker].candidates[0], items[draft.accession], names, trading_day, send, copy_check
+            )
         sentence, stage, draft_text, rules, retried = done[draft.accession]
         reviews[ticker] = NewsReview(draft.accession, news_text(sentence, draft.more), stage, draft_text, rules, retried)
     return reviews
@@ -165,6 +168,7 @@ def _review(
     names: Mapping[str, str],
     trading_day: date,
     send: Callable[[str, LLMRequest], str],
+    copy_check: Callable[[str], list[str]],
 ) -> tuple[str, HoldStage | None, str | None, tuple[str, ...], bool]:
     """(카드 문장, 단계, 마지막 LLM 문장, 규칙, 재생성했나). 통과하면 카드 표기, 아니면 대체 줄."""
     terms = name_terms(item.tickers, names)
@@ -175,6 +179,7 @@ def _review(
         subject=item.filing.accession,
         send=send,
         shown=lambda sentence: news_text(sentence, draft.more),
+        copy_check=copy_check,
     )
     if reviewed.stage is None:
         line = card_form(reviewed.sentence, terms)
@@ -192,11 +197,12 @@ def review_sentence(
     send: Callable[[str, LLMRequest], str],
     shown: Callable[[str], str] = lambda sentence: sentence,  # 금지어 검사 대상 = 화면에 보일 줄
     reason_texts: Mapping[str, str] = RETRY_REASONS,
+    copy_check: Callable[[str], list[str]] = check_card,  # 금지어 검사 = 종목명을 가린 화면 줄에
 ) -> Reviewed:
     """검사 → (고칠 수 있으면) 이유 넣어 1회 재생성 → 검사. 2차 실패는 무엇이든 대체. 숫자 대조 원본은 그 시도의 초안 것
     (시장 한눈에는 재생성이 다른 항목을 고를 수 있다)."""
     def check(draft: Draft):
-        return _check(*draft, shown, terms, subject, send, reason_texts)
+        return _check(*draft, shown, terms, subject, send, reason_texts, copy_check)
 
     last = first[0]
     stage, found, reasons = check(first)
@@ -220,6 +226,7 @@ def _check(
     subject: str,
     send: Callable[[str, LLMRequest], str],
     reason_texts: Mapping[str, str],
+    copy_check: Callable[[str], list[str]],
 ) -> tuple[HoldStage | None, list[str], list[str] | None]:
     """한 시도의 검수(스펙 #7 D2 표). (걸린 단계 — None = 통과, 규칙(시도 번호 없이), 재생성 이유 — None = 재생성 대상 아님).
     숫자·금지어는 둘 다 돌려 이유를 한 번에 모은다(코드 검사라 비용 0). 둘 중 하나라도 걸리면 판정 LLM을 부르지 않는다."""
@@ -228,7 +235,7 @@ def _check(
     if problem is not None:
         return HoldStage.DRAFT, [f"draft: {problem}"], [draft_retry_reason(problem, sentence, reason_texts)] if problem in REVIEW_FAILURES else None
     numbers_ok = numbers_from_source(mask_names(sentence, terms), numbers)
-    issues = check_card(mask_names(shown(sentence), terms))  # 화면에 보이는 조립 줄 그대로(종목명만 가림)
+    issues = copy_check(mask_names(shown(sentence), terms))  # 화면에 보이는 조립 줄 그대로(종목명만 가림)
     rules = ([] if numbers_ok else ["numbers: not from source"]) + [f"copy_rules: {i}" for i in issues]
     if rules:
         reasons = ([] if numbers_ok else [reason_texts["numbers"]]) + copy_retry_reasons(issues, reason_texts)

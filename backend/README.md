@@ -1,6 +1,6 @@
 # m30 서버
 
-아침 파이프라인(가짜 공시·지표 일정 수집 → 원본 저장 → 공시 분류(가짜 LLM) → 첫 번째 줄 초안 → 검수 → 가짜 시세·일정으로 등락률·두 번째 줄(일정)·세 번째 줄(가격 사실)·레버리지 태그 → 카드 저장 → 보류함)과 로컬 Supabase 스키마.
+아침 파이프라인(가짜 공시·지표 일정 수집 → 원본 저장 → 공시 분류(가짜 LLM) → 첫 번째 줄 초안 → 검수 → 가짜 시세·일정으로 등락률·두 번째 줄(일정)·가격 사실·세 번째 줄(연관 소식)·레버리지 태그 → 카드 저장 → 보류함)과 로컬 Supabase 스키마.
 
 ## 실행
 
@@ -16,10 +16,11 @@ uv run python -m m30.pipeline 2026-10-13 --scenario scenarios/events_and_tags.js
 uv run python -m m30.pipeline 2026-10-16 --scenario scenarios/filings_day.json       # 공시 수집·분류 확인용
 ```
 
-- 가짜 시세도 가격 표시 플래그를 따른다. 셸에 `export PRICE_DISPLAY=on`이 없으면 등락률·어제 마감은 `unsupported`, 세 번째 줄은 저장하지 않는다(아래 "가격 표시 플래그"). pytest는 플래그와 상관없이 on으로 돈다(`tests/conftest.py`).
+- 가짜 시세도 가격 표시 플래그를 따른다. 셸에 `export PRICE_DISPLAY=on`이 없으면 등락률·어제 마감은 `unsupported`, 가격 사실은 저장하지 않는다(아래 "가격 표시 플래그"). pytest는 플래그와 상관없이 on으로 돈다(`tests/conftest.py`).
 
 - LLM은 시나리오의 `llm_replies`(가짜, 호출 순서대로: 분류 묶음 → 첫 번째 줄 초안 종목 순 → 공시마다 사실/예측 판정(걸리면 재생성 → 재판정))를 쓴다. `ANTHROPIC_API_KEY` 없이 돈다. 실제 Anthropic은 운영 모드(아래)와 품질 확인 모드(`--quality`, 맨 아래)만 쓴다. CLI는 문장을 찍지 않는다(`drafts:`·`review:` 줄은 결과 코드만. 예외는 `--quality`뿐).
 - 검수: 초안 → 숫자 대조(계산 원본 `numbers`) → 금지어(`m30.copy_rules`, 종목명을 가리고) → 사실/예측 판정(LLM) → 걸리면 이유를 넣어 1회 재생성. 그래도 걸리면 카드에 8-K 항목 대체 줄(`Apple reported quarterly results (SEC filing)` 등)을 쓰고 `hold_queue`(보류함)에 행을 남긴다. 문장 없이 대체 줄만 나간 경우(본문 없음·LLM 실패)도 행이 생긴다. 8-K/A가 앞선 카드가 쓴 공시(같은 CIK·같은 `report_date` = EDGAR reportDate. 가짜 시나리오는 공시의 선택 키 `"report_date": "YYYY-MM-DD"`)를 정정하면 그 카드는 그대로 두고 `amended_filing` 행(`정정 공시 있음`)을 남긴다.
+- 세 번째 줄 연관 소식(#67): 생성 대상 주식의 연관 종목(`stock_relation`, 분기 작업) 공시도 같이 받아 분류한다(연관 종목 카드는 만들지 않는다). 중요도 4 이상 중 중요도 → 관계(competitor → customer → supplier → peer) → 늦게 접수된 순 1등 하나를 첫 번째 줄과 같은 초안·검수로 쓰고 맨 앞에 관계 단어를 붙인다(`Competitor AMD reported Q3 revenue of $7.7B +1 more (SEC filing)`). 없음 `No major related filings found`, 연관 회사 하나라도 수집 실패·미분류 `Update delayed`, ETF·연관 종목 없음 `Not covered yet`. 검수 실패는 대체 줄(`Competitor Advanced Micro Devices reported quarterly results (SEC filing)`) + 보류함 행 `line = related`. CLI `related_drafts:`·`related_review:` 줄은 `drafts:`·`review:`와 같은 코드만. 시나리오 모드는 DB에 있는 연관 종목 행을 그대로 읽는다.
 - 보류함 `rules` 읽는 법: 한 칸 = `{시도} {단계}: {이유}`.
   - 시도: `1` 처음 쓴 줄, `2` 걸린 이유를 넣어 한 번 다시 쓴 줄(`2 draft: call_limit`이면 다시 쓰려다, `2 fact_check: call_limit`이면 다시 쓴 줄을 판정받으려다 실행당 호출 상한에 막힘). `2`가 없으면 다시 쓰지 않은 것(문장이 없었거나 판정을 못 받음)
   - 단계: `draft` 초안 형식·문장 없음, `numbers` 숫자 대조, `copy_rules` 금지어 검사, `fact_check` 사실/예측 판정, `amended_filing` 정정 공시
@@ -30,8 +31,8 @@ uv run python -m m30.pipeline 2026-10-16 --scenario scenarios/filings_day.json  
 - 보류함 재발행(Supabase 대시보드 Table Editor에서 직접):
   1. `hold_queue`에서 그 행을 연다(`replacement_text`가 지금 카드에 나간 줄)
   2. `edited_text`에 꼬리표까지 포함한 줄 전체를 쓴다(예: `Apple named a new CFO (SEC filing)`). 문장만 저장해 두려면 `state`를 `edited`로(카드 그대로)
-  3. `state`를 `republished`로 바꿔 저장하면 DB 트리거가 그 카드의 첫 번째 줄 문구만 바꾼다(아침 알림은 다시 만들지 않는다). 이미 `republished`인 행의 `edited_text`를 다시 고쳐도 카드가 따라 바뀐다. 바뀌기 전 줄은 수정 이력에 남는다
-  - 같은 거래일을 다시 돌려도 재발행된 줄은 덮지 않는다. 공시 줄이 없는 카드(데이터 상태 문구)는 재발행이 오류로 거부된다
+  3. `state`를 `republished`로 바꿔 저장하면 DB 트리거가 그 행의 `line` 열이 가리키는 줄 문구만 바꾼다(`news` 첫 번째 줄, `related` 세 번째 줄. 관계 단어까지 포함한 줄 전체를 쓴다. 아침 알림은 다시 만들지 않는다). 이미 `republished`인 행의 `edited_text`를 다시 고쳐도 카드가 따라 바뀐다. 바뀌기 전 줄은 수정 이력에 남는다
+  - 같은 거래일을 다시 돌려도 재발행된 줄은 덮지 않는다(줄마다 따로). 그 줄이 확인함·있음이 아닌 카드(데이터 상태 문구)는 재발행이 오류로 거부된다
   - 사람 문장은 검사기를 거치지 않으니 저장 전에 미리 본다: `echo "Name named a new CFO (SEC filing)" | python3 .claude/skills/card-copy-rules/scripts/check_copy.py --mode card -`(레포 루트에서). 파이프라인처럼 그 카드의 종목명·티커를 단어마다 `Name`으로 바꿔 넣는다. 안 바꾸면 이름 때문에 정상 줄이 걸린다(`Best Buy`의 `buy`, `3M`의 숫자)
 - 카드 수정 이력: 카드 내용(확인 시각·갱신 시각 제외)이 바뀔 때마다 바뀌기 전 행 전체가 `stock_card_revision.previous`(jsonb)에 남는다(트리거, 추가만).
 - 출처 실패는 시나리오의 `failures`로 넣는다: `{"source": "sec_filings", "subject": "0000320193", "error": "transient", "times": 3}`. `source`는 `prices`·`events`·`sec_filings`·`earnings`(실적 추정일 #57: 목록 실패는 CIK, 헤더 실패는 접수번호가 `subject`)·`indicators`·`llm`(뒤의 둘은 `subject` 없음), `error`는 `transient`(재시도함)·`rate_limited`(429, 재시도함. 성공해도 CLI 맨 위 `RATE LIMITED (429, retried): …` 줄에 남는다)·`access_denied`(401·403, `ACCESS DENIED` 줄)·`error`. `times`가 없으면 계속 실패한다. CLI는 실제로 기다린다(재시도 간격 1·2·4초).
@@ -56,7 +57,8 @@ uv run python -m m30.pipeline --production 2026-10-16   # 지난 거래일 다�
 ```
 
 - `.github/workflows/morning.yml`이 평일 09:17 UTC(05:17 EDT / 04:17 EST)에 이 명령을 돌린다. Actions → `morning-pipeline` → Run workflow로 수동 실행(거래일 입력은 비워도 된다). 실행은 한 번에 하나씩.
-- 출처: 공시 = SEC EDGAR, LLM = Anthropic, 시세 = Tiingo(`TIINGO_API_KEY`가 있을 때). 실제 출처가 아직 없는 자리는 가짜 데이터 없이 데이터 상태 문구만: 시세 키 없음 → 등락률 지연·세 번째 줄 `Update delayed`(실패로 치지 않는다), 일정(#21 전) → 일반 종목 두 번째 줄은 EDGAR 과거 실적 공시(8-K Item 2.02)로 계산한 실적 추정일(#57, `Earnings Thu 10/29 after close (est.) (D-13)`, 범위 `SEC filings`. 작년 같은 분기 공시가 없으면 `Not covered yet`, 추정일이 지났는데 공시가 없으면 `No confirmed events found`), ETF·배당은 `Not covered yet`, 지표 일정 → 저장 안 함. 마지막 줄 `prices=off` / `prices=tiingo` / `prices=none`이 어느 쪽으로 돌았는지 알려 준다(아래 "가격 표시 플래그"). 실행 전에 커버 범위를 갱신한다(아래 "커버 범위", `coverage:` 줄).
+- `edgar: ciks=<n> related_ciks=<n> requests=<n> seconds=<n> run_seconds=<n>`(#67): 8-K를 받은 CIK 수와 그중 연관 종목 때문에만 더한 수, 이번 실행의 SEC 요청 수(실패·재시도 포함)·요청에 쓴 초, 커버 범위 갱신 + 파이프라인 초. `run_seconds`가 1800을 넘거나 `seconds`가 900을 넘으면 EDGAR 일별 색인 방식으로 바꾸는 티켓을 연다(#67 U4).
+- 출처: 공시 = SEC EDGAR, LLM = Anthropic, 시세 = Tiingo(`TIINGO_API_KEY`가 있을 때). 실제 출처가 아직 없는 자리는 가짜 데이터 없이 데이터 상태 문구만: 시세 키 없음 → 등락률 지연·가격 사실 `Update delayed`(실패로 치지 않는다), 일정(#21 전) → 일반 종목 두 번째 줄은 EDGAR 과거 실적 공시(8-K Item 2.02)로 계산한 실적 추정일(#57, `Earnings Thu 10/29 after close (est.) (D-13)`, 범위 `SEC filings`. 작년 같은 분기 공시가 없으면 `Not covered yet`, 추정일이 지났는데 공시가 없으면 `No confirmed events found`), ETF·배당은 `Not covered yet`, 지표 일정 → 저장 안 함. 마지막 줄 `prices=off` / `prices=tiingo` / `prices=none`이 어느 쪽으로 돌았는지 알려 준다(아래 "가격 표시 플래그"). 실행 전에 커버 범위를 갱신한다(아래 "커버 범위", `coverage:` 줄).
 - 필요한 환경 변수 셋: `SUPABASE_DB_URL`, `ANTHROPIC_API_KEY`, `SEC_USER_AGENT`. 하나라도 없으면 DB에 붙기 전에 이름만 알리고 exit 2.
 - 선택 환경 변수 `DISCORD_WEBHOOK_URL`(#17, 실패 알림): 있으면 운영 실행마다 터미널 요약 줄 그대로를 Discord로 한 번 보낸다(머리줄 `OK morning <거래일> exit=0` 또는 `**FAILED** morning <거래일> exit=<코드>` + 코드 블록). 보내지 않는 경우: 변수 없음·빈 값(아무것도 찍지 않는다), 주말·휴장일 exit 0, `ALREADY_DONE`, `--quality`. 끝에 `discord: sent` 또는 `discord: not sent (reason=bad_url|http_<상태>|timeout|connection|error)`가 찍힌다. 보내기 실패는 exit 코드를 바꾸지 않고 다시 시도하지 않는다. 주소는 `https://discord.com/api/webhooks/…` 한 줄이어야 한다(아니면 `bad_url`). 메시지에는 터미널과 같은 코드·건수·티커만 있다(카드 문장·가격·URL·키 없음). 메시지가 2000자를 넘으면 뒤 줄부터 빼고 `… N more lines (see Actions log)`.
 - 선택 환경 변수 `TIINGO_API_KEY`: Tiingo **유료(Commercial) 구독 전까지 비워 둔다**. 가격 표시 플래그가 꺼져 있으면 읽지도 않는다(`prices=off`). 켜져 있을 때 없거나 빈 값이면 시세 없이 돈다(`prices=none`). 값이 있는데 한 줄 ASCII가 아니면(공백·줄바꿈) DB에 붙기 전에 이름만 알리고 exit 2.
@@ -142,7 +144,7 @@ uv run python -m m30.pipeline --quarterly   # 실제 SEC. 원격 DB 허용. 거�
 표시 라이선스 전이라 가격을 공개하지 않는다(2026-11-03 피봇). 아침 실행(GitHub Actions)과 웹(Vercel)이 같은 이름의 환경 변수를 읽는다. 비밀값이 아니다.
 
 - **기본 off.** 켜는 값은 `on` 하나다(대소문자·앞뒤 공백 무시). 없음·빈 값과 그 밖의 값(`true`·`1` 포함)은 전부 off(닫힌 쪽).
-- off일 때 아침 실행: 시세 어댑터를 만들지도 부르지도 않는다(`TIINGO_API_KEY`도 읽지 않는다). 카드 등락률은 `unsupported`, 세 번째 줄(가격 사실)은 저장하지 않는다(`price_fact_line_*` 열 null), 시장 한눈에 어제 마감 줄은 `Not covered yet`(`unsupported`). 첫·두 번째 줄, 지표 일정·소식 줄은 on과 같다. `change_delayed=`에 세지 않는다(지연이 아니다).
+- off일 때 아침 실행: 시세 어댑터를 만들지도 부르지도 않는다(`TIINGO_API_KEY`도 읽지 않는다). 카드 등락률은 `unsupported`, 가격 사실은 저장하지 않는다(`price_fact_line_*` 열 null. 세 번째 줄은 플래그와 무관하게 연관 소식, #67 U1), 시장 한눈에 어제 마감 줄은 `Not covered yet`(`unsupported`). 첫·두 번째 줄, 지표 일정·소식 줄은 on과 같다. `change_delayed=`에 세지 않는다(지연이 아니다).
 - CLI 마지막 줄: `prices=off` 플래그 꺼짐 / `prices=tiingo` 켜짐 + Tiingo / `prices=none` 켜짐 + 키 없음 또는 `--quality`. 플래그 값 자체는 찍지 않는다.
 - GitHub Actions: secrets가 아니라 **Variables**. `gh variable set PRICE_DISPLAY --env production --body on`(켜기), `gh variable delete PRICE_DISPLAY --env production`(끄기). `morning.yml`이 `vars.PRICE_DISPLAY`를 실행 단계 `env:`로 넘긴다. 변수가 없으면 빈 문자열 → off.
 - Vercel: 프로젝트 환경 변수 `PRICE_DISPLAY`(Production, 필요하면 Preview). `NEXT_PUBLIC_`을 붙이지 않는다. 값을 바꾸면 재배포해야 적용된다(`web/README.md`).
@@ -197,11 +199,11 @@ SEC_USER_AGENT="<app name> <contact email>" \
 | 줄 | 뜻 |
 | --- | --- |
 | `quality <거래일> classify=… newsline=… review=… prices=scenario\|none\|off` | 블록 시작. 쓴 모델과 시세 출처(`off` = 가격 표시 플래그 꺼짐) |
-| `card <티커>` 아래 `  news`·`  event`·`  price <상태> "<카드 문구>"` | 저장된 카드의 세 줄(티커 순). 줄이 없으면 `- -` |
+| `card <티커>` 아래 `  news`·`  event`·`  price`·`  related <상태> "<카드 문구>"` | 저장된 카드의 줄(티커 순, `related` = 세 번째 줄 연관 소식 #67). 줄이 없으면 `- -` |
 | `  draft1 <ok\|문제 코드> "<문장>"` | 첫 시도 초안(검수 전, 꼬리표 없음). 소식 있는 종목만. 문장이 없으면 `-` |
 | `  draft2 "<문장>"` | 재생성한 경우의 마지막 LLM 문장 |
 | `  review <pass\|hold:단계>[+retry] <규칙 \| …>` | 검수 결과. 규칙 읽는 법은 위 "보류함 `rules` 읽는 법". 1차 통과면 `-` |
-| `lines news\|event\|price checked_found=… checked_none=… delayed=… unsupported=…` | 데이터 상태별 줄 수(있음·없음·지연·미지원) |
+| `lines news\|event\|price\|related checked_found=… checked_none=… delayed=… unsupported=…` | 데이터 상태별 줄 수(있음·없음·지연·미지원) |
 | `review_counts pass_first=… pass_retry=… replaced=… retried=…` | 첫 시도 통과 / 재생성 뒤 통과 / 대체 줄 / 재생성한 종목 수 |
 | `hold <티커> <단계> <상태> <접수번호>` | 보류함 행(정정 행 포함). 없으면 `hold -` |
 | `classify <티커> <접수번호> <종류>/<중요도> opinion=…` 또는 `unclassified=<사유>` | 분류 행. 없으면 `classify -` |

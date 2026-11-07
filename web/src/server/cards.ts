@@ -16,7 +16,8 @@ import { db } from "./db";
 import { priceDisplayOn } from "./price-display";
 
 // DB는 이 모듈에서만 읽는다(ADR-0003). select만 한다: 카드는 파이프라인만 쓴다
-const LINES = ["news_line", "event_line", "price_fact_line"] as const;
+// 세 번째 줄 = 연관 소식(#67). 가격 사실(price_fact_line)은 가격 표시 플래그와 무관하게 읽지 않는다(U1: on이면 파이프라인이 저장만 한다)
+const LINES = ["news_line", "event_line", "related_line"] as const;
 const lineColumns = (l: string) => [`${l}_text`, `${l}_status`, `${l}_checked_at`, `${l}_source_scope`];
 const COLUMNS = [
   "ticker",
@@ -26,6 +27,7 @@ const COLUMNS = [
   "publish_suspended",
   ...LINES.flatMap(lineColumns),
   "news_line_filing_count", // 카드 헤더 N new filing(s)(#63). 웹은 문장의 +N more를 파싱하지 않는다
+  "related_line_filing_count", // 무료 잠금 N related update(s) in Plus(#67). 같은 이유로 DB 값 그대로
   "leverage_tag",
   "coverage(name,holdings_ticker)", // holdings_ticker 있음 = ETF(잠긴 자리 없음, #69. backend _earnings_target과 같은 정의)
 ].join(",");
@@ -44,6 +46,7 @@ type Row = {
   previous_trading_day: string | null;
   publish_suspended: boolean;
   news_line_filing_count: number | null;
+  related_line_filing_count: number | null;
   leverage_tag: string | null;
   coverage: { name: string; holdings_ticker: string | null };
 } & Record<`${Line}_status`, LineStatus | null> &
@@ -60,10 +63,11 @@ export type StoredCard = {
   ticker: string;
   name: string;
   change: ChangeView;
-  lines: (StoredLine | null)[]; // 항상 3개. null = 그 줄이 없음(축소판의 첫 번째 줄 등)
+  lines: (StoredLine | null)[]; // 항상 3개(첫 번째·두 번째·연관 소식). null = 그 줄이 없음(축소판의 첫 번째 줄, #67 전 카드의 세 번째 줄)
   leverageTag: string | null;
   suspended: boolean; // 발행 중단(#16). 읽기에서 거르지 않는다: 노출 판단은 exposeCards 한 곳
   newsFilingCount: number | null; // 첫 번째 줄이 다룬 공시 수(DB 값 그대로, #63). 헤더는 exposeCards가 만든다
+  relatedFilingCount: number | null; // 세 번째 줄이 다룬 공시 수(DB 값 그대로, #67, 확인함·있음에만). 무료 잠금 건수는 exposeCards가 만든다
   firstQuietFact: string | null; // 알아두기 1번(#66, 둘러보기·로그인 전). 모든 viewer에게 같은 공용 데이터. 노출은 exposeCards
   lockedSlot: LockedSlot | null; // 잠긴 자리(#69). viewer와 무관한 카드 속성. null = ETF, 지난 카드(getCardHistory는 늘 null)
 };
@@ -174,6 +178,7 @@ function toStoredCard(r: Row, firstQuietFact: string | null, lockedSlot: LockedS
     leverageTag: r.leverage_tag,
     suspended: r.publish_suspended,
     newsFilingCount: r.news_line_filing_count,
+    relatedFilingCount: r.related_line_filing_count,
     firstQuietFact,
     lockedSlot,
   };
