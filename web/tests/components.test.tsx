@@ -14,6 +14,7 @@ import Landing from "@/app/page";
 import { AuthControl } from "@/components/auth-control";
 import { Dashboard, DashboardSkeleton } from "@/components/dashboard";
 import { MarketGlance } from "@/components/market-glance";
+import { NotifyMe, type NotifyMeView } from "@/components/notify-me";
 import { PastCards } from "@/components/past-cards";
 import { SiteFooter } from "@/components/site-footer";
 import { StockCard } from "@/components/stock-card";
@@ -858,11 +859,13 @@ describe("지난 카드 /cards/[ticker](#68)", () => {
     expect(t).not.toContain("Past 90 days in Plus");
   });
 
-  test("무료: 오늘 카드 + Past 90 days in Plus(글자뿐, 결제·누르는 곳 없음: 링크·버튼은 뒤로 하나)", () => {
+  test("무료: 오늘 카드 + Past 90 days in Plus(글자뿐, 결제·누르는 곳 없음: 링크·버튼은 뒤로 하나 + 세 번째 줄 잠금 탭(#69))", () => {
     const html = render(view({ locked: true, days: [{ day: "Fri, Oct 16, 2026", card: quiet }] }));
     expect(headings(html)).toEqual(["h1 AAPL", "h2 Fri, Oct 16, 2026", "h2 AAPL"]);
     expect(text(html).indexOf("Price facts in Plus")).toBeLessThan(text(html).indexOf("Past 90 days in Plus"));
-    expect(targets(html)).toHaveLength(1);
+    expect(targets(html)).toHaveLength(2);
+    expect(html).toMatch(/<p[^>]*>Past 90 days in Plus<\/p>/); // 잠금 안내 자체는 링크·버튼이 아니다
+    expect([...html.matchAll(/name="slot" value="([^"]+)"/g)].map((m) => m[1])).toEqual(["related_lock"]); // 잠긴 자리는 지난 카드에 없다(U3)
   });
 
   test("오늘 카드 없음은 Summary arrives tomorrow morning 자리, 날이 하나도 없으면 No cards yet", () => {
@@ -880,5 +883,116 @@ describe("지난 카드 /cards/[ticker](#68)", () => {
     for (const t of targets(html)) expect(t, t).toMatch(/class="[^"]*\b(min-)?h-1[12]\b/);
     expect(html).not.toMatch(/class="[^"]*\b(min-|max-)?w-(\[|[1-9])/);
     expect(html).not.toMatch(/\b(text-nowrap|truncate|overflow-x-)/);
+  });
+});
+
+describe("잠긴 자리·Notify me(#69)", () => {
+  const forms = (html: string) =>
+    [...html.matchAll(/<form\b([^>]*)>(.*?)<\/form>/g)].map((m) => ({
+      method: m[1].match(/\bmethod="([^"]*)"/)?.[1],
+      action: m[1].match(/\baction="([^"]*)"/)?.[1],
+      fields: Object.fromEntries([...m[2].matchAll(/<input type="hidden" name="([^"]+)" value="([^"]*)"\/>/g)].map((f) => [f[1], f[2]])),
+      button: text(m[2].match(/<button\b.*?<\/button>/)?.[0] ?? ""),
+      buttonTag: m[2].match(/<button\b[^>]*>/)?.[0] ?? "",
+    }));
+  const plain = (s: string) => s.replaceAll("&#x27;", "'");
+
+  test("카드의 잠긴 자리: 자리 종류별 글자의 탭 폼(POST /waitlist, intent=tap, slot) 하나, 줄 목록 아래·하단 위, 줄 수에 세지 않는다", () => {
+    for (const [slot, label] of [
+      ["earnings_summary", "Earnings summary in Plus"],
+      ["big_holders", "Insider and big holder filings in Plus"],
+    ] as const) {
+      const html = renderToStaticMarkup(<StockCard card={card({ lockedSlot: slot })} />);
+      expect(forms(html).map(({ method, action, fields, button }) => ({ method, action, fields, button }))).toEqual([
+        { method: "post", action: "/waitlist", fields: { intent: "tap", slot }, button: label },
+      ]);
+      expect(lines(html)).toHaveLength(3);
+      const t = text(html);
+      expect(t.indexOf("Up 5 days in a row")).toBeLessThan(t.indexOf(label));
+      expect(t.indexOf(label)).toBeLessThan(t.indexOf("Checked 7:30 AM ET"));
+    }
+  });
+
+  test("세 번째 줄 잠금도 같은 탭 폼(slot=related_lock), 글자는 그대로. 잠긴 자리와 둘 다 있으면 폼 둘", () => {
+    const locked = card({ lines: [...card().lines.slice(0, 2), { status: "locked" }], lockedSlot: "big_holders" });
+    const html = renderToStaticMarkup(<StockCard card={locked} />);
+    expect(lines(html)[2]).toEqual(["locked", "Price facts in Plus"]);
+    expect(forms(html).map((f) => [f.action, f.fields, f.button])).toEqual([
+      ["/waitlist", { intent: "tap", slot: "related_lock" }, "Price facts in Plus"],
+      ["/waitlist", { intent: "tap", slot: "big_holders" }, "Insider and big holder filings in Plus"],
+    ]);
+  });
+
+  test("ETF 카드(lockedSlot 없음)·잠금 없는 카드에는 폼이 없다", () => {
+    expect(forms(renderToStaticMarkup(<StockCard card={card()} />))).toEqual([]);
+  });
+
+  test("탭 버튼은 터치 영역 44px 이상(min-h-11), 누를 수 있는 모양(cursor-pointer), 가로 고정 폭 없음", () => {
+    const html = renderToStaticMarkup(<StockCard card={card({ lines: [...card().lines.slice(0, 2), { status: "locked" }], lockedSlot: "earnings_summary" })} />);
+    const buttons = forms(html).map((f) => f.buttonTag);
+    expect(buttons).toHaveLength(2);
+    for (const b of buttons) {
+      expect(b, b).toMatch(/class="[^"]*\bmin-h-1[12]\b/);
+      expect(b, b).toMatch(/\bcursor-pointer\b/);
+      expect(b, b).toMatch(/type="submit"/);
+    }
+    expect(html).not.toMatch(/class="[^"]*\b(min-|max-)?w-(\[|[1-9])/);
+  });
+
+  const notify = (over: Partial<NotifyMeView> = {}) => renderToStaticMarkup(<NotifyMe view={{ signedIn: true, waitlisted: false, failed: false, ...over }} />);
+  const PLANNED = "Plus is not available yet. Planned: earnings summaries, insider and big holder filings, and related company filings. All from SEC filings.";
+  const NOTE = "Tap Notify me and we'll email your sign-in address once when Plus launches.";
+
+  test("설명 화면: 카드로 돌아가는 링크, 제목 About Plus(h1), 설명은 상태와 무관하게 같다. 이메일 입력칸 없음", () => {
+    for (const view of [{ signedIn: false }, {}, { waitlisted: true }, { failed: true }]) {
+      const html = notify(view);
+      expect([...html.matchAll(/<a\b[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g)].map((m) => [m[1], text(m[2])])).toEqual([["/cards", "Open the latest cards"]]);
+      expect(html).toMatch(/<h1\b[^>]*>About Plus<\/h1>/);
+      expect(plain(text(html))).toContain(PLANNED);
+      expect(html).not.toMatch(/type="email"|name="email"|@/);
+    }
+  });
+
+  test("로그인 전: 안내 + 로그인 폼만(POST /auth/sign-in, 숨은 타임존, Sign in to use Notify me). Notify 폼 없음", () => {
+    const html = notify({ signedIn: false, failed: true });
+    expect(forms(html).map(({ method, action, fields, button }) => ({ method, action, fields, button }))).toEqual([
+      { method: "post", action: "/auth/sign-in", fields: { timezone: "" }, button: "Sign in to use Notify me" },
+    ]);
+    expect(plain(text(html))).toContain(NOTE);
+    expect(text(html)).not.toContain("could not be saved"); // 세션이 없으면 실패 문구도 없다
+  });
+
+  test("로그인·미등록: 안내 + Notify me 폼(POST /waitlist, intent=notify, 유저 값 없음)", () => {
+    const html = notify();
+    expect(forms(html).map(({ method, action, fields, button }) => ({ method, action, fields, button }))).toEqual([
+      { method: "post", action: "/waitlist", fields: { intent: "notify" }, button: "Notify me" },
+    ]);
+    expect(plain(text(html))).toContain(NOTE);
+    expect(html).not.toContain('role="status"');
+  });
+
+  test("등록됨: You're on the list(role=status), 버튼·안내 없음(failed여도)", () => {
+    for (const failed of [false, true]) {
+      const html = notify({ waitlisted: true, failed });
+      expect(forms(html)).toEqual([]);
+      expect(plain(html)).toMatch(/<p[^>]*role="status"[^>]*>You're on the list<\/p>/);
+      expect(plain(text(html))).not.toContain(NOTE);
+      expect(text(html)).not.toContain("could not be saved");
+    }
+  });
+
+  test("저장 실패: Notify me could not be saved(role=status) + Notify me 다시", () => {
+    const html = notify({ failed: true });
+    expect(html).toMatch(/<p[^>]*role="status"[^>]*>Notify me could not be saved<\/p>/);
+    expect(forms(html).map((f) => [f.action, f.fields])).toEqual([["/waitlist", { intent: "notify" }]]);
+  });
+
+  test("링크·버튼은 터치 영역 44px 이상, 휴대폰 폭에서 가로 스크롤이 생기지 않는 구조", () => {
+    for (const view of [{ signedIn: false }, {}, { waitlisted: true }, { failed: true }]) {
+      const html = notify(view);
+      for (const t of targets(html)) expect(t, t).toMatch(/class="[^"]*\b(min-)?h-1[12]\b/);
+      expect(html).not.toMatch(/class="[^"]*\b(min-|max-)?w-(\[|[1-9])/);
+      expect(html).not.toMatch(/\b(text-nowrap|truncate|overflow-x-)/);
+    }
   });
 });

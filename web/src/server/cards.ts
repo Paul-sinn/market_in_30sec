@@ -1,6 +1,16 @@
 import "server-only";
 
-import { changeView, formatTradingDay, glanceView, type ChangeView, type GlanceView, type LineStatus, type Stock } from "@/lib/card-view";
+import {
+  changeView,
+  formatTradingDay,
+  glanceView,
+  lockedSlotOf,
+  type ChangeView,
+  type GlanceView,
+  type LineStatus,
+  type LockedSlot,
+  type Stock,
+} from "@/lib/card-view";
 
 import { db } from "./db";
 import { priceDisplayOn } from "./price-display";
@@ -17,8 +27,11 @@ const COLUMNS = [
   ...LINES.flatMap(lineColumns),
   "news_line_filing_count", // 카드 헤더 N new filing(s)(#63). 웹은 문장의 +N more를 파싱하지 않는다
   "leverage_tag",
-  "coverage(name)",
+  "coverage(name,holdings_ticker)", // holdings_ticker 있음 = ETF(잠긴 자리 없음, #69. backend _earnings_target과 같은 정의)
 ].join(",");
+// 잠긴 자리(#69): 첫 번째 줄 1등 공시의 분류. 그 공시의 모든 종목 행이 오므로 카드 티커 행만 본다.
+// 힌트 !news_line_accession 필수: hold_queue가 stock_card↔sec_filing 다른 경로를 만든다. 대시보드만 읽는다(지난 카드에는 잠긴 자리가 없다, U3)
+const DASHBOARD_COLUMNS = `${COLUMNS},news_filing:sec_filing!news_line_accession(filing_classification(ticker,kind))`;
 // 시장 한눈에(#11): 줄 컬럼 12개만(가격 표시 off면 어제 마감 빼고 8개, #56). market_news_hold_*(검수에 걸린 문장)는 select하지 않는다(화면·props·HTML에 닿지 않게)
 const GLANCE_LINES = ["close_line", "indicator_line", "market_news_line"] as const;
 const MAX_ROWS = 1000; // supabase/config.toml [api] max_rows. 넘으면 카드가 조용히 잘린다
@@ -32,7 +45,7 @@ type Row = {
   publish_suspended: boolean;
   news_line_filing_count: number | null;
   leverage_tag: string | null;
-  coverage: { name: string };
+  coverage: { name: string; holdings_ticker: string | null };
 } & Record<`${Line}_status`, LineStatus | null> &
   Record<`${Line}_${"text" | "checked_at" | "source_scope"}`, string | null>;
 
@@ -52,7 +65,9 @@ export type StoredCard = {
   suspended: boolean; // 발행 중단(#16). 읽기에서 거르지 않는다: 노출 판단은 exposeCards 한 곳
   newsFilingCount: number | null; // 첫 번째 줄이 다룬 공시 수(DB 값 그대로, #63). 헤더는 exposeCards가 만든다
   firstQuietFact: string | null; // 알아두기 1번(#66, 둘러보기·로그인 전). 모든 viewer에게 같은 공용 데이터. 노출은 exposeCards
+  lockedSlot: LockedSlot | null; // 잠긴 자리(#69). viewer와 무관한 카드 속성. null = ETF, 지난 카드(getCardHistory는 늘 null)
 };
+type DashboardRow = Row & { news_filing: { filing_classification: { ticker: string; kind: string | null }[] } | null };
 
 /** 카드가 있는 가장 최근 거래일("2099-12-31") = 대시보드·지난 카드의 오늘. 카드가 없으면 null */
 async function latestTradingDay(client: ReturnType<typeof db>): Promise<string | null> {
@@ -76,18 +91,32 @@ export async function getDashboard(): Promise<{ tradingDay: string | null; day: 
 
   // 가격 표시 off(#56): 어제 마감 열은 읽지도 않는다(DB에 옛 값이 있어도 서버 메모리에 올라오지 않는다). 카드의 가격 키는 exposeCards가 뺀다
   const glanceLines = priceDisplayOn() ? GLANCE_LINES : GLANCE_LINES.filter((l) => l !== "close_line");
-  const [{ data, error }, glance, quiet] = await Promise.all([
-    client.from("stock_card").select(COLUMNS).eq("trading_day", day).order("ticker").overrideTypes<Row[], { merge: false }>(),
+  const [{ data, error }, glance, quiet, estimates] = await Promise.all([
+    client.from("stock_card").select(DASHBOARD_COLUMNS).eq("trading_day", day).order("ticker").overrideTypes<DashboardRow[], { merge: false }>(),
     client.from("market_glance").select(glanceLines.flatMap(lineColumns).join(",")).eq("trading_day", day).maybeSingle<GlanceRow>(),
     // 알아두기 1번(#66)만: 모든 viewer에게 같아 이 공용 캐시 안에서 읽는다. 2번부터는 유저 진도라 캐시 밖(getMyQuietFacts)
     client.from("quiet_fact").select("ticker, text").eq("seq", 1).overrideTypes<{ ticker: string; text: string }[], { merge: false }>(),
+    // 잠긴 자리(#69): 그날 거래일의 실적 추정일. 웹은 두 번째 줄 문장(D-N)을 파싱하지 않는다
+    client.from("earnings_estimate").select("ticker, estimate_day").eq("trading_day", day).overrideTypes<{ ticker: string; estimate_day: string }[], { merge: false }>(),
   ]);
   if (error) throw new Error(`stock_card read failed: ${error.message}`);
   if (data.length >= MAX_ROWS) throw new Error(`stock_card has ${MAX_ROWS}+ rows for ${day}; paginate the read`);
   if (glance.error) throw new Error(`market_glance read failed: ${glance.error.message}`);
   if (quiet.error) throw new Error(`quiet_fact read failed: ${quiet.error.message}`);
   if (quiet.data.length >= MAX_ROWS) throw new Error(`quiet_fact has ${MAX_ROWS}+ rows for seq 1; paginate the read`);
+  if (estimates.error) throw new Error(`earnings_estimate read failed: ${estimates.error.message}`);
+  if (estimates.data.length >= MAX_ROWS) throw new Error(`earnings_estimate has ${MAX_ROWS}+ rows for ${day}; paginate the read`);
   const first = new Map(quiet.data.map((f) => [f.ticker, f.text]));
+  const estimateDay = new Map(estimates.data.map((e) => [e.ticker, e.estimate_day]));
+  const slot = (r: DashboardRow) =>
+    lockedSlotOf(
+      {
+        etf: r.coverage.holdings_ticker !== null,
+        topFilingEarnings: r.news_filing?.filing_classification.some((c) => c.ticker === r.ticker && c.kind === "earnings") ?? false,
+        estimateDay: estimateDay.get(r.ticker) ?? null,
+      },
+      day,
+    );
   const g = glance.data;
   return {
     tradingDay: formatTradingDay(day),
@@ -97,7 +126,7 @@ export async function getDashboard(): Promise<{ tradingDay: string | null; day: 
       g && glanceLines.map((l) => ({ text: g[`${l}_text`], status: g[`${l}_status`], checked_at: g[`${l}_checked_at`], source_scope: g[`${l}_source_scope`] })),
       glanceLines.length,
     ),
-    cards: data.map((r) => toStoredCard(r, first.get(r.ticker) ?? null)),
+    cards: data.map((r) => toStoredCard(r, first.get(r.ticker) ?? null, slot(r))),
   };
 }
 
@@ -121,7 +150,7 @@ export async function getCardHistory(ticker: string, days: number): Promise<Card
     .order("trading_day", { ascending: false })
     .overrideTypes<(Row & { trading_day: string })[], { merge: false }>(); // 90일 = 최대 90행(MAX_ROWS 아래)
   if (error) throw new Error(`stock_card read failed: ${error.message}`);
-  return { today, cards: data.map((r) => ({ day: r.trading_day, card: toStoredCard(r, null) })) }; // 알아두기는 지난 카드에 없다(#66)
+  return { today, cards: data.map((r) => ({ day: r.trading_day, card: toStoredCard(r, null, null) })) }; // 알아두기(#66)·잠긴 자리(#69)는 지난 카드에 없다
 }
 
 /** 커버 범위 전부, 종목순(내 종목 고르기 검색의 후보, #38·#58). 검색어는 이 조회에 넣지 않는다(메모리에서 searchStocks) */
@@ -132,7 +161,7 @@ export async function getCoverage(): Promise<Stock[]> {
   return data;
 }
 
-function toStoredCard(r: Row, firstQuietFact: string | null): StoredCard {
+function toStoredCard(r: Row, firstQuietFact: string | null, lockedSlot: LockedSlot | null): StoredCard {
   return {
     ticker: r.ticker,
     name: r.coverage.name,
@@ -146,5 +175,6 @@ function toStoredCard(r: Row, firstQuietFact: string | null): StoredCard {
     suspended: r.publish_suspended,
     newsFilingCount: r.news_line_filing_count,
     firstQuietFact,
+    lockedSlot,
   };
 }

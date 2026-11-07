@@ -12,12 +12,12 @@ export const MAX_TRACKED_IPS = 10_000; // 차면 새 IP는 세지 않고 통과(
 const counts = new Map<string, number>();
 let windowIndex = -1; // 지금 세는 창 번호
 
-/** 카드 조회(/cards, /cards/…)만 센다. 한도 안이면 null, 넘으면 429(TOO_MANY_REQUESTS, Retry-After, no-store).
+/** 카드 조회(/cards, /cards/…)와 잠긴 자리 설명 화면·탭·대기 등록(/plus, /waitlist, #69: 로그인 없는 쓰기)만 같은 창에서 센다. 한도 안이면 null, 넘으면 429(TOO_MANY_REQUESTS, Retry-After, no-store).
  *  IP = x-real-ip → x-forwarded-for 첫 값 → "unknown"(로컬). 두 헤더는 Vercel이 덮어쓴다(배포처는 Vercel 하나).
  *  창이 바뀌면 표를 비운다. IP는 응답·로그에 남기지 않는다(초과 로그도 없음: 몰릴 때 넘친다) */
 export function limitCardRead(request: NextRequest): Response | null {
   const path = request.nextUrl.pathname; // proxy는 RSC·프리페치 요청도 페이지 경로로 받는다(.rsc 정규화)
-  if (path !== "/cards" && !path.startsWith("/cards/")) return null;
+  if (path !== "/cards" && !path.startsWith("/cards/") && path !== "/plus" && path !== "/waitlist") return null;
 
   const now = Date.now();
   const current = Math.floor(now / CARD_READ_WINDOW_MS);

@@ -65,7 +65,7 @@ npm run dev                               # http://localhost:3000(랜딩), /card
 
 ## 요청 제한·캐시 (#62)
 
-- **요청 제한**: `src/proxy.ts` 맨 앞(배포 보호보다 먼저)의 `limitCardRead`(`src/server/rate-limit.ts`). `/cards`와 `/cards/…`만 IP당 고정 1분 창에 60번, 61번째부터 `429 Too many requests. Try again in a minute.`(`Retry-After`, `Cache-Control: no-store`, Set-Cookie 없음, Supabase 부르지 않음). IP는 `x-real-ip` → `x-forwarded-for` 첫 값 → `unknown`(로컬). IP는 응답·로그에 남기지 않는다. 다른 경로(`/`, `/terms`, `/privacy`, `/auth/*`, `/my-stocks`, `/_next/*`)는 세지 않는다
+- **요청 제한**: `src/proxy.ts` 맨 앞(배포 보호보다 먼저)의 `limitCardRead`(`src/server/rate-limit.ts`). `/cards`·`/cards/…`와 잠긴 자리 설명 화면·쓰기(`/plus`, `/waitlist`, #69: 로그인 없는 쓰기)만 같은 IP 창 하나로 고정 1분에 60번, 61번째부터 `429 Too many requests. Try again in a minute.`(`Retry-After`, `Cache-Control: no-store`, Set-Cookie 없음, Supabase 부르지 않음). IP는 `x-real-ip` → `x-forwarded-for` 첫 값 → `unknown`(로컬). IP는 응답·로그에 남기지 않는다. 다른 경로(`/`, `/terms`, `/privacy`, `/auth/*`, `/my-stocks`, `/_next/*`)는 세지 않는다
   - 인스턴스 메모리라 Vercel 인스턴스마다 따로 센다(실제 한도 = 인스턴스 수 × 60). 남용이 보이면 Vercel 방화벽 요청 제한 규칙을 더한다(코드 변경 없음)
   - 로컬 확인: `npm run build && npm start` 뒤 `for i in $(seq 61); do curl -s -o /dev/null -w '%{http_code}\n' -u "$DASHBOARD_USER:$DASHBOARD_PASSWORD" http://localhost:3000/cards; done | sort | uniq -c` → `200` 60, `429` 1
 - **캐시**: 공용 카드 읽기 하나만 `getDashboardCached()`(`src/server/card-cache.ts`, `"use cache: remote"` + `cacheLife("minutes")`)로 감싼다. 1분 뒤 다시 읽고 최대 1시간. 발행·재발행·발행 중단(#16)이 약 1분 안에 보인다. 재배포하면 키가 바뀌어 새로 읽는다. Vercel에서 remote 캐시 처리기가 없으면 Next 기본 메모리 캐시로 동작한다
@@ -76,7 +76,7 @@ npm run dev                               # http://localhost:3000(랜딩), /card
 개인정보처리방침 `/privacy#delete`: 유저가 계정 이메일로 연락 주소에 "Delete my account"를 보내면 30일 안에 지우고 답장한다. 데이터 삭제는 항상 Paul이 직접 한다.
 
 1. 보낸 주소가 Supabase 대시보드 Authentication → Users의 그 유저 이메일과 같은지 확인한다(다르면 지우지 않고 계정 이메일로 다시 보내 달라고 답한다)
-2. 그 유저 → Delete user. 프로필·내 종목·이력·아침 요약은 FK cascade로 같이 지워진다(`supabase/migrations/20261028051643_auth_user_delete_with_my_stocks.sql`, `…_morning_notice.sql`). 대기 등록(#69)도 같은 cascade여야 한다
+2. 그 유저 → Delete user. 프로필·내 종목·이력·아침 요약은 FK cascade로 같이 지워진다(`supabase/migrations/20261028051643_auth_user_delete_with_my_stocks.sql`, `…_morning_notice.sql`). 대기 등록(#69)은 프로필의 `waitlisted_at` 열이라 프로필과 같이 지워진다. 탭 합계(`locked_slot_tap`)는 유저와 잇지 않은 일별 합계라 지울 것이 없다
 3. 지웠다고 답장한다. 서버 기록·백업은 각 제공자 주기대로 사라진다(방침 `keep` 절)
 
 ## 로그인 (#37)
@@ -128,6 +128,43 @@ Google 로그인(Supabase Auth)은 전부 웹 서버에서 돈다. 브라우저�
 - 남은 교체 = 3 − 오늘(`user_local_date`) 빼기 수, 0 미만은 0. 표시용이고 막는 건 DB다. Plus는 그리지 않는다
 - 웹은 AI를 부르지 않는다. 넣은 종목의 카드는 다음 아침 실행부터 생긴다(생성 대상, #8)
 - 원격에 `supabase/migrations/20261028043018_my_stock_readd_noop.sql`이 없으면 3개가 찬 무료 유저의 다시 넣기가 `free_my_stock_limit`로 거절된다(원격 적용은 사용자 확인 후)
+
+## 잠긴 자리·대기 등록 (#69)
+
+결제 없이 Plus 수요를 잰다: 잠긴 자리·세 번째 줄 잠금 탭 수(일별 합계)와 대기 등록 수(HANDOFF 3-8).
+
+- **자리 고르기**(`lockedSlotOf`, `src/lib/card-view.ts`): 그날 첫 번째 줄 1등 공시(`stock_card.news_line_accession`)의 그 종목 분류가 `earnings`이거나, 그날 거래일의 `earnings_estimate.estimate_day`까지 0~7 달력일이면 `Earnings summary in Plus`, 아니면 `Insider and big holder filings in Plus`. ETF(`coverage.holdings_ticker` 있음)는 없음. `getDashboard`(공용 캐시 안)가 카드마다 한 번 고르고, 모든 viewer·가격 플래그에 같다. 지난 카드(#68)에는 없다
+- **누르기**: 잠긴 자리와 세 번째 줄 잠금은 일반 폼 `POST /waitlist`(`intent=tap`, `slot=earnings_summary|big_holders|related_lock`) → 오늘(동부, DB가 정함) 그 자리 합계 +1(`count_locked_slot_tap`, 유저 값 없음) → 303 `/plus`. 저장이 실패해도 `/plus`는 열린다
+- **`/plus`**: 하나의 설명(`About Plus` + 계획 기능) + `Notify me`. 로그인 전 = `Sign in to use Notify me`(로그인 뒤에는 `/cards`로 돌아온다), 미등록 = `Notify me`(`POST /waitlist`, `intent=notify`), 등록됨 = `You're on the list`, 저장 실패 = `Notify me could not be saved`. 등록 여부는 요청마다 읽는다(카드 캐시에 유저 값 없음). 이메일 입력칸 없음: 출시 알림은 로그인 계정 이메일로 1회(개인정보처리방침)
+- 등록은 `user_profile.waitlisted_at`이 비었을 때만 지금 시각(다시 눌러도 처음 시각). 취소 버튼은 없다
+- 모든 intent는 같은 출처 `Origin`만 받는다(다르거나 없으면 아무것도 쓰지 않고 `/plus`). GET은 405. 로그는 `waitlist: reason=tap_failed|notify_failed|read_failed code=<DB 코드>`와 출처가 다를 때 `waitlist: reason=bad_origin`만(값 없음)
+- 웹 쓰기는 `src/server/my-stocks.ts`와 `src/server/waitlist.ts` 둘뿐(`tests/guards.test.ts`)
+
+### 읽기 쿼리 (Supabase SQL 편집기, 읽기만)
+
+`<공개일>`·`<제외할 user_id>`(Paul·테스트 계정, 쉼표로)는 실행할 때만 채운다. 실제 값을 이 파일에 쓰지 않는다(공개 레포).
+
+```sql
+-- 대기 등록 비율(2단계 판정). 분모 = 공개일 이후 가입해 프로필이 있는 유저, Paul·테스트 계정 제외(U2)
+select count(*) as users,
+       count(p.waitlisted_at) as waitlisted,
+       round(100.0 * count(p.waitlisted_at) / nullif(count(*), 0), 1) as waitlist_pct
+  from public.user_profile p
+  join auth.users u on u.id = p.user_id
+ where u.created_at >= '<공개일 YYYY-MM-DD>'
+   and p.user_id <> all ('{<제외할 user_id>}'::uuid[]);
+
+-- 일별 탭 수(동부 날짜, 자리 종류별)
+select day,
+       coalesce(sum(taps) filter (where slot = 'earnings_summary'), 0) as earnings_summary,
+       coalesce(sum(taps) filter (where slot = 'big_holders'), 0)      as big_holders,
+       coalesce(sum(taps) filter (where slot = 'related_lock'), 0)     as related_lock
+  from public.locked_slot_tap group by day order by day desc;
+
+-- 일별 대기 등록 수(동부 날짜)
+select (waitlisted_at at time zone 'America/New_York')::date as day, count(*)
+  from public.user_profile where waitlisted_at is not null group by 1 order by 1 desc;
+```
 
 ## 가격 표시 플래그 (`PRICE_DISPLAY`, #56)
 

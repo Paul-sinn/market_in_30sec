@@ -3,7 +3,7 @@ import "server-only";
 import type { VerifiedUserId } from "./auth";
 import { db } from "./db";
 
-// 웹의 유일한 DB 쓰기 지점(#37, tests/guards.test.ts). 개수·교체·타임존 규칙은 DB 트리거가 지킨다(ADR-0004)
+// 웹 DB 쓰기 지점 둘 중 하나(#37, tests/guards.test.ts. 다른 하나는 waitlist.ts, #69). 개수·교체·타임존 규칙은 DB 트리거가 지킨다(ADR-0004)
 export const DEFAULT_TIMEZONE = "America/New_York";
 
 /** 없으면 무료 + timezone으로 만들고, 있으면 아무것도 바꾸지 않는다(insert … on conflict do nothing).

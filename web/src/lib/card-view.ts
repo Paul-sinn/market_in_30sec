@@ -7,6 +7,11 @@ type TextLine = { text: string; status: LineStatus };
 export type LineView = TextLine | { status: "locked" };
 /** label = 등락률이 다루는 종가 날짜(#16). 등락률이 지연·미지원이어도 같은 날짜다 */
 export type ChangeView = { text: string; tone: "up" | "down" | "flat" | "delayed" | "unsupported"; label: string };
+/** 잠긴 자리(GLOSSARY LockedSlot, #69): 실적 요약 / 큰손 움직임. 화면 글자는 copy.ts LOCKED_SLOT */
+export type LockedSlot = "earnings_summary" | "big_holders";
+/** 탭 합계 자리 종류(DB locked_slot_tap.slot check와 같다). related_lock = 세 번째 줄 잠금 */
+export const TAP_SLOTS = ["earnings_summary", "big_holders", "related_lock"] as const;
+export type TapSlot = (typeof TAP_SLOTS)[number];
 /** 카드 헤더(#63). status = 첫 번째 줄 상태(색에만 쓴다) */
 export type CardHeaderView = { text: string; status: LineStatus };
 export type CardView = {
@@ -18,6 +23,7 @@ export type CardView = {
   leverageTag: string | null;
   checked: string | null; // "Checked 7:30 AM ET · SEC filings"
   quietFact?: string; // 알아두기 사실 문장(#66). 조용한 날에만, 없으면 키 자체가 없다. 화면은 copy.ts QUIET_FACT(줄 수에 세지 않는 보조 문장)
+  lockedSlot?: LockedSlot; // 잠긴 자리(#69). 모든 viewer 같음. ETF·지난 카드는 키 자체가 없다
 };
 /** 시장 한눈에(#11). on: 3줄(어제 마감, 오늘 지표 일정, 시장 전체 소식), off: 2줄(어제 마감 없음, #56). 모든 플랜·로그인 전이 같다 */
 export type GlanceView = { lines: TextLine[]; checked: string | null };
@@ -88,6 +94,14 @@ export function changeView(pct: number | null, status: LineStatus, previousTradi
   const abs = Math.abs(pct).toFixed(1);
   if (abs === "0.0") return { text: "0.0%", tone: "flat", label }; // -0도 보합
   return pct > 0 ? { text: `+${abs}%`, tone: "up", label } : { text: `−${abs}%`, tone: "down", label };
+}
+
+/** 잠긴 자리 고르기(#69). ETF면 null. 실적 날 = 첫 번째 줄 1등 공시가 실적 분류이거나 추정일까지 0~7 달력일(두 번째 줄 D-N과 같은 기준).
+ *  day·estimateDay는 "YYYY-MM-DD"(날짜만 있는 값은 UTC 자정으로 읽혀 차이가 정확히 하루 단위). 지난 추정일은 실적 날이 아니다 */
+export function lockedSlotOf(card: { etf: boolean; topFilingEarnings: boolean; estimateDay: string | null }, day: string): LockedSlot | null {
+  if (card.etf) return null;
+  const daysLeft = card.estimateDay === null ? NaN : (Date.parse(card.estimateDay) - Date.parse(day)) / 86_400_000;
+  return card.topFilingEarnings || (daysLeft >= 0 && daysLeft <= 7) ? "earnings_summary" : "big_holders";
 }
 
 /** 조용한 날(GLOSSARY QuietDay) = 첫 번째 줄 checked_none. 다른 줄과 무관. 카드 헤더(#63)·알아두기(#66)가 이 값만 쓴다 */

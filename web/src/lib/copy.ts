@@ -63,3 +63,17 @@ export const MORE_MATCHES = "Type more to narrow the list"; // 결과가 SEARCH_
 // 지난 카드(#68, copy-reviewer 검수 대상). 뒤로 링크는 MY_STOCKS, 카드 없는 날은 SUMMARY_TOMORROW·NO_CARDS를 그대로 쓴다
 export const PAST_CARDS = "Past cards"; // 내 종목 카드 아래 링크(화면 읽기 프로그램에는 티커까지)·지난 카드 화면 라벨
 export const PAST_CARDS_IN_PLUS = "Past 90 days in Plus"; // 무료: 오늘 카드 아래 잠금 안내(누르는 곳 없음, 결제 연결 없음). "… in Plus" 잠금 문구 형식
+
+// 잠긴 자리·Notify me(#69, copy-reviewer 검수 대상). UI 라벨이라 2인칭 허용. 원인·기사 기반 이유("Why it moved")·결제·구매를 약속하지 않는다(약관 "Plus is not for sale")
+export const LOCKED_SLOT = {
+  earnings_summary: "Earnings summary in Plus", // 카드의 잠긴 자리(실적 있는 날). "… in Plus" 잠금 문구 형식
+  big_holders: "Insider and big holder filings in Plus", // 그 밖의 날. "moves"는 가격 움직임으로 읽혀 filings
+} as const;
+export const ABOUT_PLUS = "About Plus"; // /plus 설명 화면 제목(잠긴 자리·세 번째 줄 잠금 모두 이 화면)
+export const PLUS_PLANNED =
+  "Plus is not available yet. Planned: earnings summaries, insider and big holder filings, and related company filings. All from SEC filings."; // 설명(모든 자리 같음)
+export const NOTIFY_ME_NOTE = "Tap Notify me and we'll email your sign-in address once when Plus launches."; // 개인정보처리방침 문장과 같게(U1 when)
+export const NOTIFY_ME = "Notify me"; // 대기 등록 버튼(GLOSSARY Waitlist)
+export const ON_THE_LIST = "You're on the list"; // 이미 등록함
+export const SIGN_IN_TO_NOTIFY = "Sign in to use Notify me"; // 로그인 전 버튼(POST /auth/sign-in)
+export const NOTIFY_FAILED = "Notify me could not be saved"; // 등록 저장 실패(LOAD_FAILED와 같은 형식)

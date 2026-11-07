@@ -4,6 +4,8 @@
  * 노출 비교용 유저는 로컬 Auth admin으로 만들고 끝나면 지운다(프로필·내 종목·이력은 cascade).
  * 시장 한눈에(#11) 2099 행 2개는 지우지 못한다(service_role에 delete 권한 없음, 의도된 스키마): 매번 upsert로 덮어쓴다.
  * backend pytest가 public 테이블을 비울 때 같이 지워진다.
+ * 잠긴 자리(#69)의 실적 추정 행(earnings_estimate·earnings_filing)도 service_role이 지울 수 없어 매번 upsert로 덮어쓴다.
+ * 그래서 추정 행이 있는 종목(ESTIMATED)은 커버 범위 행도 지우지 않는다(FK).
  */
 import { randomUUID } from "node:crypto";
 
@@ -15,7 +17,7 @@ import { Dashboard } from "@/components/dashboard";
 import { PastCards } from "@/components/past-cards";
 import { formatTradingDay, myDashboardView } from "@/lib/card-view";
 import type { VerifiedUserId } from "@/server/auth";
-import { getCoverage, getDashboard } from "@/server/cards";
+import { getCardHistory, getCoverage, getDashboard } from "@/server/cards";
 import { exposeCards } from "@/server/exposure";
 import { addMyStock, ensureProfile, getMyQuietFacts, getMyStocks } from "@/server/my-stocks";
 import { getPastCards } from "@/server/past-cards";
@@ -38,6 +40,13 @@ const ACCESSION = "0009999999-99-000066";
 const QUIET_FIRST = "Web Test B makes test widgets"; // ZZWB 1번(공용)
 const QUIET_SECOND = `canary-quiet-second-${randomUUID()}`; // ZZWB 2번: 유저 진도로만 보인다
 const QUIET_PAST = `canary-quiet-past-${randomUUID()}`; // ZZWA 1번: 오늘 ZZWA는 공시가 있어 안 보이고, 조용한 지난 날(2099-10-03)에도 안 보인다
+// 잠긴 자리(#69): ZZWA 1등 공시 = 실적 분류 → 실적 요약. ZZWG 1등 공시 = 인사(같은 공시의 실적 분류는 ZZWA 행에만) → 큰손 움직임.
+// ZZWB 추정일 D-7(연말을 넘는다) → 실적 요약. ZZWF D-8, ZZWC 이전 거래일 추정 행만 → 큰손 움직임. ZZWD ETF(holdings_ticker) → 자리 없음
+const [FILING_A, FILING_G] = ["0009999997-99-000069", "0009999997-99-000070"];
+const ESTIMATE_BASIS = "0009999997-99-000071";
+const ESTIMATED = ["ZZWB", "ZZWC", "ZZWF"];
+const filing = (accession: string) => ({ accession, cik: "0009999997", form: "8-K", accepted_at: AT, items: ["2.02"], trading_day: DAY, payload: "test" });
+const estimate = (ticker: string, trading_day: string, estimate_day: string) => ({ ticker, trading_day, estimate_day, timing: "unknown", basis_accession: ESTIMATE_BASIS });
 
 const glanceRow = (trading_day: string, close: string) => ({
   trading_day,
@@ -94,6 +103,7 @@ const cards = [
     change_pct: 1.3,
     change_status: "checked_found",
     ...line("news_line", "Web Test A reported Q3 results (SEC filing)", "checked_found", "SEC filings"),
+    news_line_accession: FILING_A, // 1등 공시(#69): 실적 분류
     news_line_filing_count: 3, // 카드 헤더(#63): 문장에 +N more가 없어도 저장 건수 그대로(웹은 문장을 파싱하지 않는다)
     ...line("event_line", "Earnings Thu 1/7 after close (D-7)", "checked_found", "Earnings and dividend calendar"),
     ...line("price_fact_line", "Up 5 days in a row", "checked_found", "Daily prices"),
@@ -152,6 +162,7 @@ const cards = [
     change_pct: null,
     change_status: "delayed",
     ...line("news_line", "Web Test G named a new CFO (SEC filing)", "checked_found", "SEC filings"),
+    news_line_accession: FILING_G, // 1등 공시(#69): ZZWG 분류는 인사
     news_line_filing_count: 1,
     leverage_tag: null,
   },
@@ -209,17 +220,43 @@ const cards = [
 ];
 
 async function cleanup() {
-  const q = await admin.from("quiet_fact").delete().in("ticker", TICKERS); // 커버 범위 FK라 먼저
-  if (q.error) throw new Error(`cleanup failed: ${q.error.message}`);
-  const a = await admin.from("stock_card").delete().in("ticker", TICKERS);
-  const b = await admin.from("coverage").delete().in("ticker", TICKERS);
-  if (a.error || b.error) throw new Error(`cleanup failed: ${(a.error ?? b.error)?.message}`);
+  // FK 순서: 카드 → 공시 분류 → 공시, 알아두기·분류 → 커버 범위. 추정 행이 남는 종목의 커버 범위는 지우지 않는다
+  for (const run of [
+    () => admin.from("quiet_fact").delete().in("ticker", TICKERS),
+    () => admin.from("stock_card").delete().in("ticker", TICKERS),
+    () => admin.from("filing_classification").delete().in("accession", [FILING_A, FILING_G]),
+    () => admin.from("sec_filing").delete().in("accession", [FILING_A, FILING_G]),
+    () => admin.from("coverage").delete().in("ticker", TICKERS.filter((t) => !ESTIMATED.includes(t))),
+  ]) {
+    const { error } = await run();
+    if (error) throw new Error(`cleanup failed: ${error.message}`);
+  }
 }
 
 beforeAll(async () => {
   await cleanup();
-  const cov = await admin.from("coverage").insert(TICKERS.map((t) => ({ ticker: t, name: `Web Test ${t.at(-1)}` })));
-  if (cov.error) throw new Error(`coverage insert failed: ${cov.error.message}`);
+  const cov = await admin.from("coverage").upsert(TICKERS.map((t) => ({ ticker: t, name: `Web Test ${t.at(-1)}`, holdings_ticker: t === "ZZWD" ? "ZZWA" : null })));
+  if (cov.error) throw new Error(`coverage upsert failed: ${cov.error.message}`);
+  for (const [table, run] of [
+    ["sec_filing", () => admin.from("sec_filing").insert([filing(FILING_A), filing(FILING_G)])],
+    [
+      "filing_classification",
+      () =>
+        admin.from("filing_classification").insert([
+          { accession: FILING_A, ticker: "ZZWA", kind: "earnings", importance: 5, is_opinion: false },
+          { accession: FILING_G, ticker: "ZZWG", kind: "leadership", importance: 3, is_opinion: false },
+          { accession: FILING_G, ticker: "ZZWA", kind: "earnings", importance: 3, is_opinion: false }, // 같은 공시의 다른 종목 행
+        ]),
+    ],
+    ["earnings_filing", () => admin.from("earnings_filing").upsert({ accession: ESTIMATE_BASIS, cik: "0009999997", accepted_at: AT }, { onConflict: "accession", ignoreDuplicates: true })],
+    [
+      "earnings_estimate",
+      () => admin.from("earnings_estimate").upsert([estimate("ZZWB", DAY, "2100-01-07"), estimate("ZZWF", DAY, "2100-01-08"), estimate("ZZWC", EARLIER, DAY)]),
+    ],
+  ] as const) {
+    const { error } = await run();
+    if (error) throw new Error(`${table} write failed: ${error.message}`);
+  }
   const ins = await admin.from("stock_card").insert(cards, { defaultToNull: false }); // 행마다 키가 달라도 빠진 컬럼은 DB 기본값(publish_suspended = false)
   if (ins.error) throw new Error(`stock_card insert failed: ${ins.error.message}`);
   const glance = await admin.from("market_glance").upsert([glanceRow(DAY, CLOSE), glanceRow(EARLIER, EARLIER_GLANCE)]);
@@ -252,14 +289,14 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
   expect(data.tradingDay).toBe("Thu, Dec 31, 2099");
   // 발행 중단은 읽기에서 거르지 않고 suspended로 담는다: 거르는 곳은 exposeCards 한 곳(#16 D7)
   // 공시 수(#63)는 DB 값 그대로 담는다. 헤더는 exposeCards가 만든다
-  expect(data.cards.map((c) => [c.ticker, c.suspended, c.newsFilingCount])).toEqual([
-    ["ZZWA", false, 3],
-    ["ZZWB", false, null],
-    ["ZZWC", false, null],
-    ["ZZWD", false, null],
-    ["ZZWE", true, null],
-    ["ZZWF", false, null],
-    ["ZZWG", false, 1],
+  expect(data.cards.map((c) => [c.ticker, c.suspended, c.newsFilingCount, c.lockedSlot])).toEqual([
+    ["ZZWA", false, 3, "earnings_summary"],
+    ["ZZWB", false, null, "earnings_summary"],
+    ["ZZWC", false, null, "big_holders"],
+    ["ZZWD", false, null, null],
+    ["ZZWE", true, null, "big_holders"],
+    ["ZZWF", false, null, "big_holders"],
+    ["ZZWG", false, 1, "big_holders"],
   ]);
   expect(exposeCards(data.cards, PLUS_ALL)).toEqual([
     {
@@ -274,6 +311,7 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
       ],
       leverageTag: null,
       checked: "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar · Daily prices",
+      lockedSlot: "earnings_summary",
     },
     {
       ticker: "ZZWB",
@@ -287,6 +325,7 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
       ],
       leverageTag: null,
       checked: "Checked 7:30 AM ET · SEC filings · Earnings and dividend calendar · Daily prices",
+      lockedSlot: "earnings_summary",
     },
     {
       ticker: "ZZWC",
@@ -300,6 +339,7 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
       ],
       leverageTag: "3x · resets daily",
       checked: "Checked 7:30 AM ET · Earnings and dividend calendar", // 지연된 가격 줄의 출처는 빠진다
+      lockedSlot: "big_holders",
     },
     {
       ticker: "ZZWD",
@@ -326,6 +366,7 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
       ],
       leverageTag: null,
       checked: null,
+      lockedSlot: "big_holders",
     },
     {
       ticker: "ZZWG",
@@ -339,6 +380,7 @@ test("가장 최근 거래일의 카드를 종목순으로 화면 모델로(Plus
       ],
       leverageTag: null,
       checked: "Checked 7:30 AM ET · SEC filings",
+      lockedSlot: "big_holders",
     },
   ]);
 });
@@ -488,8 +530,9 @@ test("가격 표시 off(#56)면 DB에 등락률·가격 사실·어제 마감 �
     const data = { tradingDay, glance, cards: exposeCards(cards, viewer) };
     // 알아두기(#66)는 가격 키가 아니다: 로그인 전 조용한 날 카드(ZZWB)는 1번이 붙는다. PLUS_ALL은 진도를 넘기지 않아 없다
     const quiet = (t: string) => (viewer === null && t === "ZZWB" ? ["quietFact"] : []);
+    const slot = (t: string) => (t === "ZZWD" ? [] : ["lockedSlot"]); // 잠긴 자리(#69)는 가격 키가 아니다. ZZWD는 ETF
     expect(data.cards.map((c) => [c.ticker, Object.keys(c).sort(), c.lines.length])).toEqual(
-      ["ZZWA", "ZZWB", "ZZWC", "ZZWD", "ZZWF", "ZZWG"].map((t) => [t, ["checked", "header", "leverageTag", "lines", "name", "ticker", ...quiet(t)].sort(), 2]),
+      ["ZZWA", "ZZWB", "ZZWC", "ZZWD", "ZZWF", "ZZWG"].map((t) => [t, ["checked", "header", "leverageTag", "lines", "name", "ticker", ...quiet(t), ...slot(t)].sort(), 2]),
     );
     const props = JSON.stringify(data);
     const html = renderToStaticMarkup(createElement(Dashboard, { data }));
@@ -631,4 +674,40 @@ test("알아두기: 로그인 전·둘러보기는 조용한 날 카드에만 1�
     expect(p.html).toContain(`Did you know: ${QUIET_FIRST} (Annual report)`);
     for (const secret of [QUIET_SECOND, QUIET_PAST]) expect(JSON.stringify(p.data) + p.html, secret).not.toContain(secret);
   }
+});
+
+// ---- 잠긴 자리(#69): 웹 서버 카드 조회 입구 = getDashboard(공용 캐시 안에서 자리 고르기) → exposeCards ----
+
+test("잠긴 자리: 1등 공시 실적 분류(그 종목 행만)·추정일 D-0~7(그날 거래일 행만)이면 실적 요약, 아니면 큰손 움직임, ETF는 없음. 로그인 전·무료·Plus·가격 on/off 같다", async () => {
+  const slots = (cards: { ticker: string; lockedSlot?: string }[]) => cards.map((c) => [c.ticker, c.lockedSlot ?? "none"]);
+  const EXPECTED = [
+    ["ZZWA", "earnings_summary"], // 1등 공시가 그 종목의 실적 분류
+    ["ZZWB", "earnings_summary"], // 추정일 D-7(2100-01-07, 연말을 넘는다)
+    ["ZZWC", "big_holders"], // 추정 행이 이전 거래일에만
+    ["ZZWD", "none"], // ETF
+    ["ZZWF", "big_holders"], // D-8
+    ["ZZWG", "big_holders"], // 실적 분류가 같은 공시의 다른 종목(ZZWA) 행에만
+  ];
+  const FREE = { plan: "free" as const, stocks: PLUS_ALL.stocks };
+  for (const prices of ["on", undefined]) {
+    vi.stubEnv("PRICE_DISPLAY", prices);
+    const { cards } = await getDashboard();
+    for (const viewer of [PLUS_ALL, FREE, null]) expect(slots(exposeCards(cards, viewer)), `${prices} ${viewer?.plan}`).toEqual(EXPECTED);
+  }
+  // 카드 HTML: 잠긴 자리는 탭 폼(POST /waitlist, intent=tap, 자리 종류), ETF 카드에는 없다
+  const { tradingDay, glance, cards } = await getDashboard();
+  const html = renderToStaticMarkup(createElement(Dashboard, { data: { tradingDay, glance, cards: exposeCards(cards, null) } }));
+  const slotsInHtml = [...html.matchAll(/<input type="hidden" name="slot" value="([^"]+)"\/>/g)].map((m) => m[1]);
+  expect(slotsInHtml.filter((v) => v !== "related_lock")).toEqual(["earnings_summary", "earnings_summary", "big_holders", "big_holders", "big_holders"]);
+  expect(html).toContain("Earnings summary in Plus");
+  expect(html).toContain("Insider and big holder filings in Plus");
+});
+
+test("잠긴 자리는 지난 카드(#68)에 없다: getCardHistory는 늘 null, 지난 카드 화면 모델에 키 없음(실적 날인 ZZWA도)", async () => {
+  const history = await getCardHistory("ZZWA", 90);
+  expect(history.cards.length).toBeGreaterThan(0);
+  expect(history.cards.map((c) => c.card.lockedSlot)).toEqual(history.cards.map(() => null));
+  const view = (await getPastCards(await pastUser("plus", ["ZZWA"]), "ZZWA"))!;
+  expect(view.days.map((d) => "lockedSlot" in d.card!)).toEqual(view.days.map(() => false));
+  expect(renderToStaticMarkup(createElement(PastCards, { view }))).not.toContain("Earnings summary in Plus");
 });

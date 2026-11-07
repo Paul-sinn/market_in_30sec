@@ -1,4 +1,4 @@
-/** 소스 규칙 검사(web-conventions 1절): 비밀값 접두사, 쓰기는 my-stocks만, server-only, 테마 토큰만 */
+/** 소스 규칙 검사(web-conventions 1절): 비밀값 접두사, 쓰기는 my-stocks·waitlist만, server-only, 테마 토큰만 */
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, test } from "vitest";
@@ -12,9 +12,9 @@ test("NEXT_PUBLIC_ 환경 변수 없음", () => {
   expect(files.filter((f) => f.code.includes("NEXT_PUBLIC_")).map((f) => f.path)).toEqual([]);
 });
 
-test("DB 쓰기 호출은 src/server/my-stocks.ts 한 곳(#37)", () => {
+test("DB 쓰기 호출은 src/server/my-stocks.ts(내 종목, #37)와 src/server/waitlist.ts(탭 합계·대기 등록, #69) 두 곳", () => {
   const write = /\.(insert|update|upsert|delete|rpc)\(/;
-  expect(files.filter((f) => write.test(f.code)).map((f) => f.path)).toEqual([join("server", "my-stocks.ts")]);
+  expect(files.filter((f) => write.test(f.code)).map((f) => f.path).sort()).toEqual([join("server", "my-stocks.ts"), join("server", "waitlist.ts")].sort());
 });
 
 test("PostgREST 글자 필터(ilike·like·textSearch·or) 호출 없음: 고르기 검색어는 서버 메모리에서만 비교한다(#58 D10)", () => {
@@ -110,4 +110,16 @@ test("자리표시(PAUL_TODO) 0건", () => {
 test("연락 이메일은 법률 페이지(app/(legal)/) 밖에 쓰지 않는다(사용자 결정 2026-11-04)", () => {
   const email = /[\w.+-]+@(?!example\.test)[\w-]+\.[\w.]+/; // 테스트 유저 도메인 example.test 제외
   expect(files.filter((f) => email.test(f.code) && !f.path.startsWith(join("app", "(legal)"))).map((f) => f.path)).toEqual([]);
+});
+
+// ---- 잠긴 자리·대기 등록(#69) ----
+
+test("/plus 페이지는 공용 카드 캐시를 쓰지 않는다(등록 여부는 유저 값이라 요청마다)", () => {
+  const plus = files.filter((f) => f.path.startsWith(join("app", "plus")));
+  expect(plus.map((f) => f.path)).toContain(join("app", "plus", "page.tsx"));
+  for (const f of plus) expect(f.code, f.path).not.toMatch(/getDashboard|card-cache|["']use cache/);
+});
+
+test("대기 등록에 이메일 입력칸이 없다(로그인 계정 이메일만 쓴다, #69)", () => {
+  expect(files.filter((f) => /type=["']email["']|name=["']email["']/.test(f.code)).map((f) => f.path)).toEqual([]);
 });

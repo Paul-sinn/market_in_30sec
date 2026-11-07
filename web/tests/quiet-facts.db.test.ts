@@ -63,6 +63,7 @@ function stored(ticker: string, kind: Kind, firstQuietFact: string | null): Stor
     suspended: kind === "suspended",
     newsFilingCount: kind === "found" ? 1 : null,
     firstQuietFact,
+    lockedSlot: null, // 잠긴 자리(#69)는 이 테스트 밖(cards.db.test)
   };
 }
 
