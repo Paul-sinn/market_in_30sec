@@ -4,7 +4,7 @@
  */
 export const CONTACT_EMAIL = "pauldevapps@gmail.com"; // 연락·삭제 요청 주소(공개 사이트와 공개 레포에 남는다)
 export const OPERATOR = "Paul Sin"; // 운영자 표기: 개인(LLC 설립 전, HANDOFF 3-9)
-export const LEGAL_UPDATED = "November 6, 2026"; // 두 페이지 본문을 바꾸면 같이 바꾼다
+export const LEGAL_UPDATED = "November 7, 2026"; // 두 페이지 본문을 바꾸면 같이 바꾼다
 
 // 본문 링크: 밑줄(색만으로 구분하지 않게) + 터치 영역 44px
 const LINK = "inline-flex min-h-11 items-center underline underline-offset-4 hover:text-hover";

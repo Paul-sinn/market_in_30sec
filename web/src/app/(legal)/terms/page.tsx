@@ -37,9 +37,10 @@ export default function Terms() {
           or hold any security. Investment decisions are yours; if you need advice, talk to a qualified professional.
         </p>
         <p>
-          Some sentences are written by AI from public filings and checked by automated rules before they appear. They can
-          still contain mistakes. Dates marked (est.) are estimates based on past filings. Background facts marked &quot;Did
-          you know&quot; come from a company&apos;s latest annual report and may no longer be current.
+          Some sentences are written by AI from public filings and government releases and checked by automated rules
+          before they appear. They can still contain mistakes. Dates marked (est.) are estimates based on past filings.
+          Background facts marked &quot;Did you know&quot; come from a company&apos;s latest annual report and may no
+          longer be current.
         </p>
       </Section>
 
