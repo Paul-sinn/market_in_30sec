@@ -737,7 +737,7 @@ describe("시장 한눈에(#11)", () => {
 
 // ---- 이용약관·개인정보처리방침(#62). 정적 페이지: DB를 읽지 않는다(guards.test.ts) ----
 
-const EMAIL = "tlsrudgk13@gmail.com"; // 사용자 결정(2026-11-04): 공개 연락 이메일. 법률 페이지와 이 테스트에만 쓴다
+const EMAIL = "pauldevapps@gmail.com"; // 사용자 결정(2026-11-04): 공개 연락 이메일. 법률 페이지와 이 테스트에만 쓴다
 /** 보이는 글자(엔티티 풀기) */
 const visible = (html: string) => text(html).replaceAll("&#x27;", "'").replaceAll("&amp;", "&").replaceAll("&quot;", '"');
 /** <section id="…">의 보이는 글자 */
