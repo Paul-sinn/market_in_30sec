@@ -1,6 +1,6 @@
 """분기 작업(#60) 합성 SEC 응답 + test_quarterly가 하위 프로세스로만 돌리는 탐침. test_ 접두사가 없어 기본 수집에서 빠진다.
-탐침은 분기 작업 CLI(m30.pipeline.__main__.main --quarterly)를 그대로 돌리고 전송 층 둘(EdgarClient, 연관 종목 #64의 AnthropicLLM)만
-네트워크 없는 대역으로 바꾼다.
+탐침은 분기 작업 CLI(m30.pipeline.__main__.main --quarterly)를 그대로 돌리고 전송 층 둘(EdgarClient, 연관 종목 #64·알아두기 #66의
+AnthropicLLM)만 네트워크 없는 대역으로 바꾼다.
 사용법: python tests/quarterly_probe.py <상황> --quarterly. 끝나면 stderr 마지막 줄에 불러온 가짜 모듈 목록(fake_modules=[…])을 찍는다.
 그래서 가짜 어댑터를 불러오는 테스트 모듈(test_edgar 등)을 import하지 않는다."""
 
@@ -34,6 +34,8 @@ NAME_CANARY = "NameCanary60"  # submissions 회사 이름 자리
 NO_SIC = object()  # annual_submissions: 최상위 "sic" 키를 뺀다
 EVIDENCE_CANARY = "EvidenceCanary64"  # 연관 종목 근거 문장 자리(#64)
 MENTION_CANARY = "MentionCanary64"  # LLM이 뽑은 범위 밖 회사 이름 자리
+FACT_CANARY = "QuietFactCanary"  # 알아두기 사실 문장 자리(#66). 숫자가 있으면 사실이 숫자 규칙에 걸려 저장되지 않는다
+EXCERPT_CANARY = "ExcerptCanary66"  # 알아두기 발췌(Item 1 앞부분) 자리
 
 MAIN_HTML = (
     "<html><head><title>TitleCanary 10-K</title><style>.x {color: red}</style></head><body>\n"
@@ -52,6 +54,7 @@ RELATIONS_HTML = (
     "<html><body>\n<div>Item 1. Business</div>\n"
     f"<p>We compete with Microsoft and {MENTION_CANARY} in {EVIDENCE_CANARY} software.</p>\n"
     + "<p>The Company designs and markets its products worldwide.</p>\n" * 25
+    + f"<p>The Company offers {EXCERPT_CANARY} services.</p>\n"  # 경쟁 문장과 떨어져 연관 종목 발췌에는 없다
     + "<div>Item 1A. Risk Factors</div>\n</body></html>"
 )
 RELATIONS_REPLY = json.dumps({"relations": [
@@ -61,19 +64,33 @@ RELATIONS_REPLY = json.dumps({"relations": [
 ]})
 
 
+# 알아두기(#66): 생성 셋 → 코드 검사가 순위 표현 하나를 막고(rules) → 판정이 하나를 opinion으로(check) → 사실 하나 저장
+QUIET_REPLY = json.dumps({"facts": [
+    {"kind": "markets", "text": f"Apple is the largest {FACT_CANARY} maker"},
+    {"kind": "products", "text": f"Apple makes {FACT_CANARY} phones"},
+    {"kind": "revenue", "text": f"Apple earns revenue from {FACT_CANARY} services"},
+]})
+CHECK_REPLY = json.dumps({"labels": [{"id": 1, "label": "fact"}, {"id": 2, "label": "opinion"}]})
+
+
 class ProbeLLM:
-    """AnthropicLLM 자리(네트워크 없음). 연관 종목 상황에서만 답한다. 그 밖의 상황에서 불리면 AssertionError(실행이 멈춘다).
-    401은 메시지에 키(캐너리)를 넣는다: CLI가 예외 메시지를 찍지 않는지 본다."""
+    """AnthropicLLM 자리(네트워크 없음). 요청의 system으로 연관 종목·알아두기 생성·판정을 나눠 LLM 상황에서만 답한다. 그 밖의 상황에서
+    불리면 AssertionError(실행이 멈춘다). 401은 메시지에 키(캐너리)를 넣는다: CLI가 예외 메시지를 찍지 않는지 본다.
+    llm_denied = 두 단계 다 401, quiet_denied = 알아두기만 401, relations_broken = 모든 응답이 JSON 아님."""
 
     def __init__(self, settings, situation):
         self._settings, self._situation = settings, situation
 
     def complete(self, request):
-        if self._situation == "llm_denied":
+        from m30.pipeline.quiet_facts import QUIET_CHECK_SYSTEM, QUIET_FACT_SYSTEM
+        from m30.pipeline.relations import RELATION_SYSTEM
+
+        reply = {RELATION_SYSTEM: RELATIONS_REPLY, QUIET_FACT_SYSTEM: QUIET_REPLY, QUIET_CHECK_SYSTEM: CHECK_REPLY}[request.system]
+        if self._situation == "llm_denied" or (self._situation == "quiet_denied" and reply is not RELATIONS_REPLY):
             raise AccessDeniedError(f"anthropic http 401 {self._settings.api_key}")
-        if self._situation not in ("relations", "relations_broken"):
+        if self._situation not in ("relations", "relations_broken", "quiet_denied"):
             raise AssertionError("unexpected LLM request")
-        return LLMReply("not json" if self._situation == "relations_broken" else RELATIONS_REPLY, 1200, 60, 900, 0)
+        return LLMReply("not json" if self._situation == "relations_broken" else reply, 1200, 60, 900, 0)
 
 
 def submissions_url(cik):
@@ -149,7 +166,7 @@ def main(situation, args):
         "too_large": {txt_url(MSFT, ACCESSIONS[MSFT]): TooLargeError("sec response too large")},  # EdgarClient가 상한에서 내는 것
         # 라이브러리가 요청 값(연락처)을 예외 메시지에 넣는 경우(http.client의 잘못된 헤더 값처럼)
         "crash": {submissions_url(MSFT): ValueError(f"Invalid header value {os.environ.get('SEC_USER_AGENT')!r}")},
-        **dict.fromkeys(("relations", "relations_broken", "llm_denied"),
+        **dict.fromkeys(("relations", "relations_broken", "llm_denied", "quiet_denied"),
                         {txt_url(AAPL, ACCESSIONS[AAPL]): annual_report_file(ACCESSIONS[AAPL], main=RELATIONS_HTML)}),
     }[situation])
 

@@ -44,6 +44,7 @@ const latest = { data: { trading_day: "2026-10-16" }, error: null };
 const failure = { data: null, error: { message: "permission denied for table stock_card" } };
 const noCards = { data: [], error: null };
 const noGlance = { data: null, error: null }; // maybeSingle: 그날 행 없음
+const noQuiet = { data: [], error: null }; // 알아두기 1번(#66) 행 없음
 const GLANCE_LINES = ["close_line", "indicator_line", "market_news_line"];
 
 beforeEach(() => {
@@ -65,14 +66,15 @@ test("카드 읽기 실패도 에러", async () => {
 test("PostgREST max_rows(1000)에 닿으면 조용히 자르지 않고 에러", async () => {
   respond(latest, { data: Array.from({ length: 1000 }, (_, i) => row(i)), error: null });
   await expect(getDashboard()).rejects.toThrow("1000+ rows");
-  respond(latest, { data: Array.from({ length: 999 }, (_, i) => row(i)), error: null }, noGlance);
+  respond(latest, { data: Array.from({ length: 999 }, (_, i) => row(i)), error: null }, noGlance, noQuiet);
   expect((await getDashboard()).cards).toHaveLength(999);
 });
 
 test("카드가 없으면 시장 한눈에도 읽지 않는다(glance null, No cards yet만)", async () => {
   respond({ data: null, error: null });
-  expect(await getDashboard()).toEqual({ tradingDay: null, glance: null, cards: [] });
+  expect(await getDashboard()).toEqual({ tradingDay: null, day: null, glance: null, cards: [] });
   expect(selects).not.toHaveProperty("market_glance");
+  expect(selects).not.toHaveProperty("quiet_fact");
 });
 
 test("시장 한눈에 읽기 실패도 에러(빈 블록·지연으로 보이지 않게)", async () => {
@@ -81,7 +83,7 @@ test("시장 한눈에 읽기 실패도 에러(빈 블록·지연으로 보이�
 });
 
 test("그날 시장 한눈에 행이 없으면 Update delayed 세 줄, 하단 없음", async () => {
-  respond(latest, noCards, noGlance);
+  respond(latest, noCards, noGlance, noQuiet);
   expect((await getDashboard()).glance).toEqual({ lines: Array(3).fill({ text: "Update delayed", status: "delayed" }), checked: null });
 });
 
@@ -94,7 +96,7 @@ test("시장 한눈에는 줄 컬럼 12개만 select한다: 보류 기록(market
       [`${l}_source_scope`, "Daily prices"],
     ]),
   );
-  respond(latest, noCards, { data: stored, error: null });
+  respond(latest, noCards, { data: stored, error: null }, noQuiet);
   const { glance } = await getDashboard();
   expect(selects.market_glance.split(",")).toEqual(
     GLANCE_LINES.flatMap((l) => [`${l}_text`, `${l}_status`, `${l}_checked_at`, `${l}_source_scope`]),
@@ -120,7 +122,7 @@ test("가격 표시 off면 시장 한눈에는 어제 마감 줄 컬럼을 selec
     market_news_line_checked_at: "2026-10-16T11:30:00Z",
     market_news_line_source_scope: "Official releases",
   };
-  respond(latest, noCards, { data: stored, error: null });
+  respond(latest, noCards, { data: stored, error: null }, noQuiet);
   const { glance } = await getDashboard();
   expect(selects.market_glance.split(",")).toEqual(
     ["indicator_line", "market_news_line"].flatMap((l) => [`${l}_text`, `${l}_status`, `${l}_checked_at`, `${l}_source_scope`]),
@@ -136,8 +138,26 @@ test("가격 표시 off면 시장 한눈에는 어제 마감 줄 컬럼을 selec
 
 test("가격 표시 off에 그날 시장 한눈에 행이 없으면 Update delayed 두 줄, 하단 없음", async () => {
   vi.stubEnv("PRICE_DISPLAY", "off");
-  respond(latest, noCards, noGlance);
+  respond(latest, noCards, noGlance, noQuiet);
   expect((await getDashboard()).glance).toEqual({ lines: Array(2).fill({ text: "Update delayed", status: "delayed" }), checked: null });
+});
+
+test("알아두기 1번(#66)은 카드와 같은 공용 읽기: ticker·text만 select해 종목마다 firstQuietFact, 없으면 null. day는 원래 날짜", async () => {
+  respond(latest, { data: [row(0), row(1)], error: null }, noGlance, { data: [{ ticker: "T1", text: "T1 makes test widgets" }], error: null });
+  const data = await getDashboard();
+  expect(selects.quiet_fact).toBe("ticker, text");
+  expect([data.day, data.tradingDay]).toEqual(["2026-10-16", "Fri, Oct 16, 2026"]);
+  expect(data.cards.map((c) => [c.ticker, c.firstQuietFact])).toEqual([
+    ["T0", null],
+    ["T1", "T1 makes test widgets"],
+  ]);
+});
+
+test("알아두기 1번 읽기 실패·max_rows(1000)도 에러(알아두기 없음으로 보이지 않게)", async () => {
+  respond(latest, noCards, noGlance, { data: null, error: { message: "permission denied for table quiet_fact" } });
+  await expect(getDashboard()).rejects.toThrow("quiet_fact read failed: permission denied");
+  respond(latest, noCards, noGlance, { data: Array.from({ length: 1000 }, (_, i) => ({ ticker: `T${i}`, text: "x" })), error: null });
+  await expect(getDashboard()).rejects.toThrow("quiet_fact has 1000+ rows");
 });
 
 test("환경 변수가 없으면 이름만 말하는 에러(값 없음)", async () => {

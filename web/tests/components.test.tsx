@@ -211,6 +211,27 @@ describe("StockCard", () => {
     expect(cardHeader(html)).toBeNull();
     expect(head(html)).toBe("AAPLApple Inc.+1.3%Thu 10/15 close");
   });
+
+  test("알아두기(#66): 첫 번째 줄 <li> 안, 줄 글자 아래 보조 문단 Did you know: … (Annual report). 줄 수는 그대로", () => {
+    const quiet = card({
+      header: { text: "Quiet day", status: "checked_none" },
+      lines: [{ text: "No new SEC filings found", status: "checked_none" }, ...card().lines.slice(1)],
+      quietFact: "Apple makes phones, computers and wearables",
+    });
+    const html = renderToStaticMarkup(<StockCard card={quiet} />);
+    const items = [...html.matchAll(/<li\b[^>]*>(.*?)<\/li>/g)].map((m) => m[1]);
+    expect(items).toHaveLength(3);
+    const fact = items[0].match(/<p data-quiet-fact[^>]*class="([^"]+)"[^>]*>(.*?)<\/p>/);
+    expect(fact?.[2]).toBe("Did you know: Apple makes phones, computers and wearables (Annual report)");
+    expect(fact?.[1].split(" ")).toEqual(expect.arrayContaining(["text-sm", "text-muted"])); // 본문 14px, surface 위 5.2:1
+    expect(text(items[0]).startsWith("No new SEC filings found")).toBe(true); // 줄 글자 먼저(읽는 순서)
+    expect(html.match(/data-quiet-fact/g)).toHaveLength(1);
+  });
+
+  test("알아두기가 없으면(키 없음) data-quiet-fact 없음", () => {
+    expect(renderToStaticMarkup(<StockCard card={card()} />)).not.toContain("data-quiet-fact");
+    expect(renderToStaticMarkup(<StockCard card={card()} />)).not.toContain("Did you know");
+  });
 });
 
 describe("Dashboard", () => {

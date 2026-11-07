@@ -2,6 +2,7 @@
 
 import dataclasses
 import json
+from datetime import date, timedelta
 
 import pytest
 from psycopg import errors
@@ -116,7 +117,7 @@ def test_RLS가_꺼진_테이블이_없다(admin):
     tables = {"coverage", "stock_card", "sec_filing", "indicator_release", "filing_classification", "hold_queue",
               "stock_card_revision", "user_profile", "my_stock", "my_stock_history", "default_ticker", "pipeline_run",
               "fund_holdings", "morning_notice", "market_glance", "market_news_item", "earnings_filing", "earnings_estimate",
-              "sec_annual_report", "annual_report_mentions", "stock_relation"}
+              "sec_annual_report", "annual_report_mentions", "stock_relation", "quiet_fact"}
     assert tables <= set(public_tables(admin))  # 검사 대상이 비어서 통과하는 것을 막는다
     assert rls_off == []
 
@@ -207,7 +208,8 @@ def test_anon·authenticated는_public_함수를_실행할_수_없다(admin, rol
     functions = [r[0] for r in admin.execute(
         "select p.proname from pg_proc p join pg_namespace n on n.oid = p.pronamespace where n.nspname = 'public'")]
     assert {"keep_card_revision", "republish_from_hold_queue", "user_local_date", "user_profile_timezone",
-            "lock_my_stocks_on_plan_change", "my_stock_rules", "log_my_stock_change", "dispatch_morning_workflow"} <= set(functions)  # 검사 대상이 비어서 통과하지 않게
+            "lock_my_stocks_on_plan_change", "my_stock_rules", "log_my_stock_change", "dispatch_morning_workflow",
+            "my_quiet_facts"} <= set(functions)  # 검사 대상이 비어서 통과하지 않게
     assert executable == []
 
 
@@ -863,3 +865,149 @@ def test_연관_종목_관계·근거_종류는_코드와_DB가_같다(related):
         accession, evidence = (None, None) if basis is RelationBasis.SIC else (OWN[5], OWN[6])
         related.execute(RELATION_SQL, ("MSFT", "AAPL", relation, basis.value, 1, accession, evidence))
         related.execute("delete from public.stock_relation")
+
+
+
+# 알아두기(#66): 종목마다 풀 하나(지우고 다시 씀) + 유저 진도를 세는 DB 함수(진도는 저장하지 않는다)
+QUIET_SQL = "insert into public.quiet_fact (ticker, seq, text, source_accession) values (%s, %s, %s, %s)"
+QUIET_ROW = ("AAPL", 1, "Apple makes phones and computers", ANNUAL_ROW[0])
+
+
+@pytest.fixture
+def quiet(admin):
+    """AAPL·MSFT·NVDA·KO 커버 범위 + 10-K 한 건 + 풀: AAPL 15개, MSFT 3개, KO 15개. NVDA는 풀 없음(ETF처럼)."""
+    admin.execute("insert into public.coverage (ticker, name) values ('AAPL', 'Apple'), ('MSFT', 'Microsoft'), ('NVDA', 'NVIDIA'),"
+                  " ('KO', 'Coca-Cola')")
+    admin.execute(ANNUAL_SQL, ANNUAL_ROW)
+    for ticker, size in (("AAPL", 15), ("MSFT", 3), ("KO", 15)):
+        for seq in range(1, size + 1):
+            admin.execute(QUIET_SQL, (ticker, seq, f"{ticker} fact {seq}", ANNUAL_ROW[0]))
+    return admin
+
+
+def test_알아두기_풀은_서버가_지우고_다시_쓸_수만_있고_진도_함수는_서버만_부른다(quiet):
+    as_service_role(quiet, "delete from public.quiet_fact where ticker = 'MSFT'")
+    as_service_role(quiet, QUIET_SQL, ("MSFT", 1, "Microsoft makes software", ANNUAL_ROW[0]))
+
+    assert service_role_privileges(quiet, "quiet_fact") == ["SELECT", "INSERT", "DELETE"]  # update 없음
+    with pytest.raises(errors.InsufficientPrivilege):
+        as_service_role(quiet, "update public.quiet_fact set text = 'x'")
+    assert quiet.execute("select has_function_privilege('service_role', 'public.my_quiet_facts(uuid, date)', 'EXECUTE')"
+                         ).fetchone()[0] is True
+
+
+@pytest.mark.parametrize(
+    "row, error",
+    [
+        (("AAPL", 16, *QUIET_ROW[2:]), errors.CheckViolation),
+        (("NVDA", 0, *QUIET_ROW[2:]), errors.CheckViolation),
+        (QUIET_ROW, errors.UniqueViolation),  # AAPL 1번은 이미 있다
+        (("NVDA", 1, "", ANNUAL_ROW[0]), errors.CheckViolation),
+        (("NVDA", 1, None, ANNUAL_ROW[0]), errors.NotNullViolation),
+        (("ZZZZ", 1, *QUIET_ROW[2:]), errors.ForeignKeyViolation),
+        (("NVDA", 1, QUIET_ROW[2], "0000320193-25-000999"), errors.ForeignKeyViolation),
+    ],
+    ids=["seq_16", "seq_0", "같은_종목·번호", "빈_문장", "문장_없음", "없는_종목", "저장_안_된_10_K"],
+)
+def test_알아두기는_종목마다_1_15번_하나씩이고_저장된_10_K에만_붙는다(quiet, row, error):
+    with pytest.raises(error):
+        quiet.execute(QUIET_SQL, row)
+
+
+D0 = date(2026, 11, 2)
+
+
+def day(n):
+    return D0 + timedelta(days=n)
+
+
+def card_on(conn, ticker, n, news="checked_none", suspended=False):
+    """ticker의 day(n) 카드. news = 첫 번째 줄 상태, None = 축소판(첫 번째 줄 없음)."""
+    if news is None:
+        conn.execute("insert into public.stock_card (ticker, trading_day, status, change_pct, change_status, publish_suspended)"
+                     " values (%s, %s, 'fallback', null, 'unsupported', %s)", (ticker, day(n), suspended))
+        return
+    conn.execute(
+        "insert into public.stock_card (ticker, trading_day, status, change_pct, change_status, news_line_text, news_line_status,"
+        " news_line_checked_at, news_line_source_scope, publish_suspended)"
+        " values (%s, %s, 'normal', null, 'unsupported', 'x', %s, now(), 'SEC filings', %s)", (ticker, day(n), news, suspended))
+
+
+def history_row(conn, uid, ticker, change, n):
+    """내 종목 이력 한 줄을 넣은 날 day(n)로(유저 현지 날짜). 트리거가 쓴 오늘 줄보다 id가 크다."""
+    as_service_role(conn, "insert into public.my_stock_history (user_id, change, ticker, local_date) values (%s, %s, %s, %s)",
+                    (uid, change, ticker, day(n)))
+
+
+def my_stock(conn, uid, ticker, added=None):
+    """내 종목에 넣고(트리거가 오늘 이력을 쓴다), added가 있으면 넣은 날을 day(added)로."""
+    as_service_role(conn, "insert into public.my_stock (user_id, ticker) values (%s, %s)", (uid, ticker))
+    if added is not None:
+        history_row(conn, uid, ticker, "add", added)
+
+
+def quiet_facts(conn, uid, n):
+    """service_role로 my_quiet_facts(uid, day(n)) → {티커: 사실 문장}."""
+    with conn.transaction(force_rollback=True):
+        conn.execute("set local role service_role")
+        return dict(conn.execute("select ticker, fact from public.my_quiet_facts(%s, %s)", (uid, day(n))).fetchall())
+
+
+def test_알아두기_번호는_마지막으로_넣은_날부터_그날까지_조용한_날_수다(quiet, make_user):
+    uid = make_user("plus")
+    my_stock(quiet, uid, "AAPL", added=1)
+    statuses = {0: "checked_none", 1: "checked_none", 2: "checked_found", 3: "checked_none", 4: "delayed", 5: "unsupported", 6: None,
+                8: "checked_none"}
+    for n, news in statuses.items():
+        card_on(quiet, "AAPL", n, news)
+    card_on(quiet, "AAPL", 7, suspended=True)  # 발행 중단 카드는 아무에게도 안 나갔다
+
+    seen = {n: quiet_facts(quiet, uid, n).get("AAPL") for n in range(10)}
+
+    # 넣기 전 조용한 날(0)·확인함 있음·지연·미지원·축소판·발행 중단은 세지 않는다. 오늘 카드가 조용한 날인지는 웹이 본다(2일에도 1번)
+    assert seen == {0: None, 1: "AAPL fact 1", 2: "AAPL fact 1", 3: "AAPL fact 2", 4: "AAPL fact 2", 5: "AAPL fact 2",
+                    6: "AAPL fact 2", 7: "AAPL fact 2", 8: "AAPL fact 3", 9: "AAPL fact 3"}
+
+
+def test_지웠다가_다시_넣으면_다시_넣은_날부터_1번이고_이미_내_종목을_또_넣으면_그대로다(quiet, make_user):
+    uid = make_user("plus")
+    my_stock(quiet, uid, "AAPL", added=1)
+    for n in range(1, 6):
+        card_on(quiet, "AAPL", n)
+    assert quiet_facts(quiet, uid, 5) == {"AAPL": "AAPL fact 5"}
+
+    history_row(quiet, uid, "AAPL", "remove", 3)
+    history_row(quiet, uid, "AAPL", "add", 3)
+    assert quiet_facts(quiet, uid, 5) == {"AAPL": "AAPL fact 3"}
+
+    as_service_role(quiet, "insert into public.my_stock (user_id, ticker) values (%s, 'AAPL')", (uid,))  # 이력이 생기지 않는다(#38)
+    assert quiet_facts(quiet, uid, 5) == {"AAPL": "AAPL fact 3"}
+
+
+def test_조용한_날이_풀보다_많으면_알아두기가_끝나고_1번으로_돌아가지_않는다(quiet, make_user):
+    uid = make_user("plus")
+    my_stock(quiet, uid, "AAPL", added=0)
+    my_stock(quiet, uid, "MSFT", added=0)
+    for n in range(20):
+        card_on(quiet, "AAPL", n)
+        card_on(quiet, "MSFT", n)
+
+    assert quiet_facts(quiet, uid, 2) == {"AAPL": "AAPL fact 3", "MSFT": "MSFT fact 3"}
+    assert quiet_facts(quiet, uid, 3) == {"AAPL": "AAPL fact 4"}  # MSFT 풀은 3개
+    assert quiet_facts(quiet, uid, 14) == {"AAPL": "AAPL fact 15"}
+    assert quiet_facts(quiet, uid, 15) == {} == quiet_facts(quiet, uid, 19)  # 16번째 조용한 날부터(16행에서 세기를 멈춘다)
+
+
+def test_알아두기_진도는_그_유저의_잠기지_않은_내_종목만_그_유저_이력으로_센다(quiet, make_user):
+    uid, other = make_user("plus"), make_user("plus")
+    for ticker in ("AAPL", "MSFT", "NVDA", "KO"):  # 넣은 순서대로. 무료가 되면 KO가 잠긴다
+        my_stock(quiet, uid, ticker, added=0)
+        card_on(quiet, ticker, 0)
+        card_on(quiet, ticker, 1)
+    my_stock(quiet, other, "AAPL", added=1)
+    my_stock(quiet, other, "MSFT", added=0)
+    as_service_role(quiet, "update public.user_profile set plan = 'free' where user_id = %s", (uid,))
+
+    # NVDA는 풀이 없다(ETF처럼). KO는 잠겼다. 다른 유저의 늦은 이력은 섞이지 않는다
+    assert quiet_facts(quiet, uid, 1) == {"AAPL": "AAPL fact 2", "MSFT": "MSFT fact 2"}
+    assert quiet_facts(quiet, other, 1) == {"AAPL": "AAPL fact 1", "MSFT": "MSFT fact 2"}

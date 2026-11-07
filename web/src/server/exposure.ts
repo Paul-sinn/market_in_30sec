@@ -1,6 +1,6 @@
 import "server-only";
 
-import { cardHeaderView, checkedFooter, formatTradingDay, lineView, type CardView, type PastCardsView, type Stock } from "@/lib/card-view";
+import { cardHeaderView, checkedFooter, formatTradingDay, lineView, QUIET_DAY_STATUS, type CardView, type PastCardsView, type Stock } from "@/lib/card-view";
 
 import type { CardHistory, StoredCard } from "./cards";
 import type { Plan } from "./my-stocks";
@@ -13,15 +13,22 @@ import { priceDisplayOn } from "./price-display";
  * 발행 중단 카드(#16)는 어느 viewer에게도 내보내지 않는다. 내 종목이면 그 자리는 카드 없음과 같다(myDashboardView).
  * 가격 표시 플래그 off(#56)면 모든 viewer에게 change 키 없음, 두 줄(세 번째 줄 = 가격 사실은 원문도 잠금도 없다).
  * 카드 헤더(#63)는 모든 viewer·플래그에 같다: 첫 번째 줄은 늘 무료 범위라 새로 열리는 정보가 없다.
+ * 알아두기(#66)는 조용한 날(첫 번째 줄 checked_none)에만: 잠기지 않은 내 종목은 myQuietFacts(그 유저 진도, 없으면 없음 — 1번으로 돌아가지 않는다),
+ * 그 밖(로그인 전, 모든 플랜의 둘러보기, 잠긴 내 종목)은 공용 1번. 무료·Plus 같고 가격 플래그와 무관. 줄(lines)에 넣지 않는 보조 문장이다.
  * 화면 모델은 허용한 키만 하나씩 옮긴다(펼치기 금지, tests/exposure.test.tsx 화이트리스트).
  */
 type Viewer = { plan: Plan; stocks: { ticker: string; locked: boolean }[] };
 
-export function exposeCards(cards: StoredCard[], viewer: Viewer | null): CardView[] {
-  const full = new Set(viewer?.plan === "plus" ? viewer.stocks.filter((s) => !s.locked).map((s) => s.ticker) : []);
+export function exposeCards(
+  cards: StoredCard[],
+  viewer: Viewer | null,
+  myQuietFacts: ReadonlyMap<string, string> = new Map(), // getMyQuietFacts 결과. 로그인 전·지난 카드는 빈 값
+): CardView[] {
+  const own = new Set((viewer?.stocks ?? []).filter((s) => !s.locked).map((s) => s.ticker));
+  const plus = viewer?.plan === "plus";
   const prices = priceDisplayOn();
   return cards.filter((c) => !c.suspended).map((c) => {
-    const open = full.has(c.ticker);
+    const open = plus && own.has(c.ticker);
     const kept = prices ? c.lines : c.lines.slice(0, 2);
     const shown = open ? kept : kept.slice(0, 2);
     const lines = shown.map((l) => lineView(l && { text: l.text, status: l.status }));
@@ -35,6 +42,10 @@ export function exposeCards(cards: StoredCard[], viewer: Viewer | null): CardVie
     };
     // off면 키 자체를 만들지 않는다(undefined도 아니다): 등락률·종가 날짜 라벨이 이 안에 있다
     if (prices) view.change = { text: c.change.text, tone: c.change.tone, label: c.change.label };
+    if (c.lines[0]?.status === QUIET_DAY_STATUS) {
+      const fact = own.has(c.ticker) ? myQuietFacts.get(c.ticker) : c.firstQuietFact;
+      if (fact) view.quietFact = fact; // 없으면 키 자체를 만들지 않는다
+    }
     return view;
   });
 }

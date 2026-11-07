@@ -31,6 +31,9 @@ _TENS, _UNITS = [w for w in NUMBER_WORDS if w.endswith("ty")], NUMBER_WORDS[:9] 
 # 십 단위-일 단위(twenty-five)는 한 숫자. 다른 하이픈 뒤(twelve-month, ten-for-one)는 \b에서 끊겨 기수만 센다
 NUMBER_WORD = re.compile(rf"\b(({'|'.join(_TENS)})-({'|'.join(_UNITS)})|{'|'.join(NUMBER_WORDS)})\b", re.I)
 ONE_OFF = re.compile(r"\bone-(time|off)\b", re.I)  # 값이 아닌 형용사. 지우고 숫자 단어를 센다
+QUIET_FACT_BANNED = _card["quiet_fact_banned"]
+QUIET_FACT_TAG = re.compile(r"\s*\(Annual report\)$")  # 알아두기 줄 끝 꼬리표(웹이 붙인다). 검사 전에 뗀다
+DIGIT = re.compile(r"\d")
 
 HANGUL = re.compile(r"[가-힣]")
 MAX_WORDS = 15
@@ -100,4 +103,21 @@ def check_arena(line: str) -> list[str]:
     first_person = len(FIRST_PERSON_TRADE.findall(line))
     if trades > first_person:
         issues.append("buy/sell이 1인칭 모의 동작이 아닌 형태로 쓰임")
+    return issues
+
+
+def check_quiet_fact(line: str) -> list[str]:
+    """알아두기(#66) 사실 문장 검사. 위반 이유 목록, 빈 리스트 = 통과. 끝 '(Annual report)'는 있으면 떼고 본다.
+    앞 'Did you know:'는 넣지 않는다(UI 라벨). 종목명은 가리지 않는다(호출하는 쪽이 가린다, check_card와 같다).
+    check_card 전부 + 숫자 0개(숫자 글자 하나라도·숫자 단어, one-time/one-off 제외) + quiet_fact_banned(순위·비교·수량) + 괄호 없음."""
+    body = QUIET_FACT_TAG.sub("", _normalize(line).strip())
+    issues = check_card(body)
+    # 10-K 값은 길게는 1년 묵었다: 연도·서식 이름(8-K)·지수 이름(S&P 500)·기간(52-week)도 숫자 글자라 막는다
+    if DIGIT.search(body) or NUMBER_WORD.search(ONE_OFF.sub("", body)):
+        issues.append("숫자 — 알아두기는 숫자·연도 없음")
+    for term in QUIET_FACT_BANNED:
+        if word_pattern(term).search(body):
+            issues.append(f"순위·비교·수량 '{term}'")
+    if "(" in body or ")" in body:
+        issues.append("괄호 — 출처 꼬리표는 웹이 붙인다")
     return issues

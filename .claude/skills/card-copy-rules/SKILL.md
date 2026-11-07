@@ -46,8 +46,10 @@ AI 없이 첫 번째 줄 상태로 정한다: 확인함·있음 `N new filing(s)
 ### 알아두기 (QuietFact, AI가 분기 작업에서 미리 작성, #66)
 - 조용한 날에만 첫 번째 줄 아래 붙는 보조 문장: `Did you know: <사실> (Annual report)`
 - 그 종목 최신 10-K의 사실 하나: 뭘 파는지, 어디서 돈을 버는지, 어떤 시장에 있는지. 15단어 이내, 중립, 과거·현재형
-- 숫자·연도 금지(10-K 값은 길게는 1년 묵었다). 순위·비교 표현도 금지: `largest`, `second`, `top`, `leading`, `biggest`, `most`, `more than`, `fastest` 등. 순위도 숫자에서 나온 값이라 1년 뒤 틀릴 수 있다
+- 숫자·연도 금지(10-K 값은 길게는 1년 묵었다). 순위·비교 표현도 금지: `largest`, `second`, `top`, `leading`, `biggest`, `most`, `more than`, `fastest` 등. 순위도 숫자에서 나온 값이라 1년 뒤 틀릴 수 있다. 어림 수량(`millions`, `hundreds`, `a dozen`)과 `than` 없는 비교급(`larger`, `better`, `superior`)도 같은 이유로 금지. `higher`·`lower`·`greater`·맨 `more`는 코드가 막지 않는다(`Greater China`, `higher education`은 정상 사실). 판정 프롬프트와 copy-reviewer가 본다
 - 검수(금지어 + 사실/예측 판정)를 통과한 것만 저장한다. 통과 못 한 사실은 빼고 번호를 다시 매긴다(억지로 채우지 않음)
+- 동사는 `makes`·`offers`·`provides`. `sells`는 카드 금지어 `sell`에 걸린다(#66 U1: 금지어에 예외를 두지 않는다). 피봇 문서 예시는 `Did you know: NVIDIA makes chips for data centers and gaming (Annual report)`로 읽는다
+- 검사: 서버 `check_quiet_fact`(카드 규칙 전부 + 숫자 0개 — 숫자 글자 하나라도·숫자 단어, `one-time` 제외 + 순위·비교·수량 표현 + 괄호 없음). 순위·비교·수량 목록은 `card.toml` `quiet_fact_banned`(알아두기 전용, 원형만. 수량 단어는 첫 번째 줄과 공유하는 `number_words`에 넣지 않는다). 사실 문장만 넣고 앞 `Did you know:`는 넣지 않는다(UI 라벨이라 2인칭 `you`가 카드 규칙에 걸린다. copy-reviewer가 라벨로 본다). 끝 `(Annual report)`는 있어도 뗀다. 예시 파일 `backend/tests/copy_examples/quiet_fact_pass.txt`·`quiet_fact_block.txt`
 
 ### 두 번째 줄 (EventLine, 코드 템플릿)
 `Earnings Thu 10/15 after close (D-2)` / 추정일이면 `(est.)` / `Ex-dividend 12/21 · $0.70/share` / 0보다 크고 $0.0001 미만이면 `<$0.0001/share`
@@ -103,6 +105,7 @@ buy, sell, should, bullish, bearish, likely to rise, upside, downside, opportuni
 ```bash
 python3 .claude/skills/card-copy-rules/scripts/check_copy.py --mode card  _workspace/lines.txt
 python3 .claude/skills/card-copy-rules/scripts/check_copy.py --mode arena _workspace/talk.txt
+python3 .claude/skills/card-copy-rules/scripts/check_copy.py --mode quiet-fact _workspace/facts.txt   # 알아두기 사실 문장(#66)
 ```
 
 스크립트는 서버 패키지 `backend/src/m30/copy_rules/`를 불러 쓰는 실행기다. 규칙은 서버에 한 벌만 있다. 표준 라이브러리만 쓰므로 uv 없이 `python3`(3.13 이상)로 돈다. 종료 코드 1은 "위반 있음"과 "실행 오류"(데이터 파일 깨짐 등) 둘 다다. 출력 끝에 `위반 N줄`이 없으면 오류로 본다.
@@ -118,6 +121,7 @@ python3 .claude/skills/card-copy-rules/scripts/check_copy.py --mode arena _works
 
 - 정상 문구가 위반으로 잡히면(오탐) **문구를 비틀지 말고 검사기를 고친다.** 판정 로직은 `backend/src/m30/copy_rules/__init__.py`, 금지어 목록은 같은 폴더의 `card.toml`(카드·시장 한눈에·아침 알림)·`arena.toml`(어디서나 차단, 카드도 함께 검사)에 있다. `scripts/check_copy.py`는 실행기라 고칠 곳이 아니다. 그리고 그 문구를 `backend/tests/copy_examples/card_pass.txt`에 추가한다(카드 문장이면 `# ---- 카드 문장이 아닌 검사기 경계 예시 ----` 줄 **위**, 카드에 쓰지 않을 경계 예시면 그 아래). 이유: 오탐을 피하려고 문구를 바꾸면 규칙이 아니라 검사기의 빈틈이 문장을 정하게 되고, 같은 오탐이 다음 문구에서 또 난다(실제로 숫자 표기·buyback·시각에서 세 번 반복됐다).
 - 위반 문구가 통과하면(미탐) 검사기를 고치고 그 문구를 `backend/tests/copy_examples/card_block.txt`에 추가한다.
+- 알아두기 사실 문장의 오탐·미탐은 `quiet_fact_pass.txt`·`quiet_fact_block.txt`에 같은 방식으로 추가한다(검사기는 종목명을 가리지 않으므로 이름에 금지어·숫자가 든 종목 `Best Buy`·`3M`은 예시 파일에 넣지 않는다. 그 경우는 `test_quiet_facts.py`가 이름을 가려 본다).
 - 검사기를 고친 뒤에는 서버 테스트로 기존 판정이 깨지지 않았는지 확인한다(DB 없이 돈다):
 
 ```bash
@@ -130,7 +134,7 @@ cd backend && uv run pytest -q tests/test_copy_rules.py   # 통과 예시는 위
 - 출처 꼬리표가 실제 출처와 맞는가, 목록(`(Company)`·`(SEC filing)`, 알아두기는 `(Annual report)`) 밖 꼬리표가 없는가
 - 연관 소식이 관계와 사실만 말하는가: 내 종목에 대한 영향·좋고 나쁨이 문장 전체로 읽히지 않는가(ADR-0005). 관계 단어가 코드가 넘긴 관계와 같은가
 - 카드 문장이 인과를 말하지 않는가(`after`·`due to`·`as`로 원인을 붙이기), 기사 내용이 섞이지 않았는가
-- 알아두기에 숫자·연도·순위·비교가 없는가(`one of the largest`처럼 돌려 쓴 순위 포함)
+- 알아두기에 숫자·연도·순위·비교·수량이 없는가(`one of the largest`처럼 돌려 쓴 순위, `millions of`처럼 말로 쓴 수량 포함)
 - 전문용어가 없는가(공시 서식 이름 8-K·10-Q·Item 2.02 포함 — 검사기는 값으로 세지 않을 뿐 통과시킨다)
 - 단어 하나는 괜찮아도 문장 전체가 권유로 읽히는가
 

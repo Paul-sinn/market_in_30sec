@@ -38,6 +38,7 @@ const stored = (third: StoredLine | null, over: Partial<StoredCard> = {}): Store
   leverageTag: null,
   suspended: false,
   newsFilingCount: 1, // 첫 번째 줄이 다룬 공시 수(#63)
+  firstQuietFact: null, // 알아두기 1번(#66). 첫 번째 줄이 확인함·있음이라 있어도 안 보인다
   ...over,
 });
 
@@ -301,6 +302,100 @@ describe("카드 헤더(#63): 첫 번째 줄 상태와 저장 건수로만 정�
   });
 });
 
+describe("알아두기(#66): 조용한 날에만 한 문장. 잠기지 않은 내 종목은 그 유저 진도, 그 밖(로그인 전·둘러보기·잠긴 내 종목)은 1번", () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  const FIRST = `canary-quiet-first-${randomUUID()}`; // 공용 1번(getDashboard가 카드에 담는다)
+  const MINE = `canary-quiet-mine-${randomUUID()}`; // 그 유저 진도의 오늘 번호(getMyQuietFacts)
+  const PROGRESS = new Map([["AAPL", MINE]]);
+  const QUIET = line("No new SEC filings found", "checked_none", "SEC filings");
+  const EVENT = line("No confirmed events found", "checked_none", "Earnings and dividend calendar");
+  const quiet = (over: Partial<StoredCard> = {}) =>
+    stored(THIRD["사실 있음"], { lines: [QUIET, EVENT, THIRD["사실 있음"]], newsFilingCount: null, firstQuietFact: FIRST, ...over });
+  const fact = (card: StoredCard, viewer: MyStocks | null, progress?: ReadonlyMap<string, string>) => exposeCards([card], viewer, progress)[0];
+
+  const WHO: [string, MyStocks | null, string][] = [
+    ["로그인 전", null, FIRST], // 진도를 받아도(실제로는 빈 값) 쓰지 않는다
+    ["무료 내 종목", my("free", "AAPL"), MINE],
+    ["무료 둘러보기", my("free", "MSFT"), FIRST],
+    ["Plus 내 종목", my("plus", "AAPL"), MINE],
+    ["Plus 둘러보기", my("plus", "MSFT"), FIRST],
+    ["무료 잠긴 내 종목", my("free", "AAPL", true), FIRST],
+    ["Plus 잠긴 내 종목", my("plus", "AAPL", true), FIRST],
+  ];
+
+  for (const [who, viewer, want] of WHO) {
+    test(`${who}: 조용한 날 → ${want === MINE ? "그 유저 진도의 문장" : "1번"}, 무료·Plus 같다`, () => {
+      expect(fact(quiet(), viewer, PROGRESS).quietFact).toBe(want);
+    });
+  }
+
+  test("잠기지 않은 내 종목인데 진도에 없으면(넣기 전·풀 끝·풀 없음) 알아두기 없음: 1번으로 돌아가지 않는다", () => {
+    for (const viewer of [my("free", "AAPL"), my("plus", "AAPL")]) {
+      expect("quietFact" in fact(quiet(), viewer, new Map())).toBe(false);
+      expect("quietFact" in fact(quiet(), viewer)).toBe(false); // 셋째 인자 기본값(지난 카드가 이렇게 부른다)
+      expect("quietFact" in fact(quiet(), viewer, new Map([["MSFT", MINE]]))).toBe(false); // 다른 종목의 진도는 쓰지 않는다
+    }
+  });
+
+  test("조용한 날이 아니면(확인함·있음, 지연, 미지원, 축소판) 1번·진도가 있어도 모든 viewer에게 없다", () => {
+    const firsts: StoredCard["lines"][0][] = [
+      line("Apple named a new CFO (Company)", "checked_found", "SEC filings"),
+      line("Update delayed", "delayed", "SEC filings"),
+      line("Not covered yet", "unsupported", null),
+      null, // 축소판
+    ];
+    for (const first of firsts) {
+      for (const [who, viewer] of WHO) {
+        const view = fact(quiet({ lines: [first, EVENT, THIRD["사실 있음"]], newsFilingCount: 1 }), viewer, PROGRESS);
+        expect("quietFact" in view, `${who} ${first?.status ?? "축소판"}`).toBe(false);
+      }
+    }
+  });
+
+  test("풀 없는 종목(ETF 등, 1번 null)은 둘러보기·로그인 전에도 없다", () => {
+    for (const [who, viewer, want] of WHO) {
+      const view = fact(quiet({ firstQuietFact: null }), viewer, PROGRESS);
+      expect(view.quietFact, who).toBe(want === MINE ? MINE : undefined);
+      if (want !== MINE) expect("quietFact" in view, who).toBe(false);
+    }
+  });
+
+  test("카드 줄 수는 그대로(보조 문장): 가격 표시 on 3줄·off 2줄, 알아두기는 가격 플래그와 무관", () => {
+    for (const [who, viewer, want] of WHO) {
+      vi.stubEnv("PRICE_DISPLAY", "on");
+      const on = fact(quiet(), viewer, PROGRESS);
+      vi.stubEnv("PRICE_DISPLAY", "off");
+      const off = fact(quiet(), viewer, PROGRESS);
+      expect([on.lines.length, on.quietFact], who).toEqual([3, want]);
+      expect([off.lines.length, off.quietFact, "change" in off], who).toEqual([2, want, false]);
+    }
+  });
+
+  test("화이트리스트: 알아두기가 있으면 키 목록에 quietFact(문자열)만 더해진다", () => {
+    const KEYS = ["change", "checked", "header", "leverageTag", "lines", "name", "ticker"];
+    for (const [who, viewer] of WHO) {
+      const view = fact(quiet(), viewer, PROGRESS);
+      expect(Object.keys(view).sort(), who).toEqual([...KEYS, "quietFact"].sort());
+      expect(typeof view.quietFact, who).toBe("string");
+    }
+  });
+
+  test("다른 viewer의 진도 문장은 화면 모델(RSC props)·HTML에 없고, 보이는 문장은 Did you know: … (Annual report)", () => {
+    const coverage = [{ ticker: "AAPL", name: "Apple Inc." }];
+    for (const [who, viewer, want] of WHO) {
+      const cards = exposeCards([quiet()], viewer, want === MINE ? PROGRESS : new Map());
+      const data = { tradingDay: "Fri, Oct 16, 2026", glance: null, cards };
+      const mine = viewer ? myDashboardView(cards, coverage, viewer, undefined) : undefined;
+      const html = renderToStaticMarkup(<Dashboard data={data} mine={mine} />);
+      const other = want === MINE ? FIRST : MINE;
+      expect(JSON.stringify({ data, mine }), who).not.toContain(other);
+      expect(html, who).not.toContain(other);
+      expect(html, who).toContain(`Did you know: ${want} (Annual report)`);
+    }
+  });
+});
+
 describe("지난 카드(#68): 한 종목의 날짜별 카드. Plus = 받은 날 전부, 무료 = 오늘만 + 잠금 안내", () => {
   afterEach(() => vi.unstubAllEnvs());
 
@@ -373,6 +468,19 @@ describe("지난 카드(#68): 한 종목의 날짜별 카드. Plus = 받은 날 
         expect(card!.lines, plan).toHaveLength(2);
       }
       expect(JSON.stringify(view), plan).not.toMatch(new RegExp(`${OLD}|Up 5 days|Daily prices|\\+1\\.3%`));
+    }
+  });
+
+  test("알아두기(#66)는 지난 카드에 없다: 조용한 날 카드에 1번이 담겨 와도(읽기는 null을 담는다) 유저 진도를 넘기지 않는다", () => {
+    const FACT = `canary-past-quiet-${randomUUID()}`;
+    const QUIET = line("No new SEC filings found", "checked_none", "SEC filings");
+    const quiet = stored(THIRD["사실 있음"], { lines: [QUIET, null, null], newsFilingCount: null, firstQuietFact: FACT });
+    const days = { today: TODAY, cards: [{ day: TODAY, card: quiet }, { day: "2026-10-14", card: quiet }] };
+    for (const plan of ["free", "plus"] as const) {
+      const view = exposePastCards(AAPL, days, my(plan, "AAPL"));
+      expect(view.days.length, plan).toBe(plan === "plus" ? 2 : 1);
+      for (const d of view.days) expect("quietFact" in d.card!, plan).toBe(false);
+      expect(JSON.stringify(view), plan).not.toContain(FACT);
     }
   });
 

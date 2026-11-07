@@ -8,7 +8,7 @@ import { getVerifiedUserId } from "@/server/auth";
 import { getDashboardCached } from "@/server/card-cache";
 import { getCoverage } from "@/server/cards";
 import { exposeCards } from "@/server/exposure";
-import { getMyStocks } from "@/server/my-stocks";
+import { getMyQuietFacts, getMyStocks } from "@/server/my-stocks";
 
 export default function CardsPage({ searchParams }: PageProps<"/cards">) {
   return (
@@ -21,11 +21,12 @@ export default function CardsPage({ searchParams }: PageProps<"/cards">) {
 async function Cards({ searchParams }: Pick<PageProps<"/cards">, "searchParams">) {
   await connection(); // 요청 때마다 DB·세션을 읽는다. 빌드 때 읽지 않는다
   const [stored, userId, query] = await Promise.all([getDashboardCached(), getVerifiedUserId(), searchParams]); // 카드 읽기만 공용 캐시(#62)
-  // 내 종목·플랜은 Auth에 확인한 유저 id로만 읽는다(#38, #9)
-  const mine = userId && (await Promise.all([getCoverage(), getMyStocks(userId)]));
+  // 내 종목·플랜·알아두기 진도(#66)는 Auth에 확인한 유저 id로만, 캐시 밖에서 요청마다 읽는다(#38, #9). 진도는 캐시된 카드와 같은 거래일로 센다
+  const mine =
+    userId && (await Promise.all([getCoverage(), getMyStocks(userId), stored.day ? getMyQuietFacts(userId, stored.day) : new Map<string, string>()]));
   // 줄 노출 판단(#9)은 컴포넌트로 넘기기 전에. 아래로는 exposeCards가 만든 화면 모델만 내려간다(잠긴 줄은 props·HTML에 없다)
   // 시장 한눈에(#11)는 플랜 구분이 없는 공용 데이터라 그대로 넘긴다
-  const data = { tradingDay: stored.tradingDay, glance: stored.glance, cards: exposeCards(stored.cards, mine ? mine[1] : null) };
+  const data = { tradingDay: stored.tradingDay, glance: stored.glance, cards: exposeCards(stored.cards, mine ? mine[1] : null, mine ? mine[2] : undefined) };
   return (
     <>
       <AuthControl signedIn={userId !== null} failed={query.sign_in === "failed"} />

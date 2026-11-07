@@ -19,6 +19,7 @@ NEWSLINE_MODEL = "claude-haiku-5-5"  # 첫 번째 줄. 출시 전 claude-sonnet-
 REVIEW_MODEL = "claude-haiku-5-5"  # 사실/예측 판정. 출시 전 claude-sonnet-5-5 (HANDOFF 3-6)
 GLANCE_MODEL = "claude-haiku-5-5"  # 시장 한눈에 소식 줄. 출시 전 claude-opus-5-5 (HANDOFF 3-6)
 RELATION_MODEL = "claude-sonnet-5-5"  # 연관 종목 추출(분기 작업, #64). 10-K마다 한 번이라 개발 중에도 Sonnet
+QUIET_FACT_MODEL = "claude-sonnet-5-5"  # 알아두기 생성(분기 작업, #66). 10-K마다 한 번이라 개발 중에도 Sonnet
 LLM_KEY_VAR = "ANTHROPIC_API_KEY"  # Anthropic 키는 이 환경 변수에서만 읽는다
 SEC_UA_VAR = "SEC_USER_AGENT"  # SEC 공정 접근: 이름 + 연락 이메일. 값은 사용자가 셸·secrets에만 넣는다
 TIINGO_KEY_VAR = "TIINGO_API_KEY"  # 시세(#18). 유료 구독 전에는 비어 있다 → 운영 모드는 시세 없이 돈다

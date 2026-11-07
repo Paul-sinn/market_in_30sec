@@ -17,7 +17,7 @@ import { formatTradingDay, myDashboardView } from "@/lib/card-view";
 import type { VerifiedUserId } from "@/server/auth";
 import { getCoverage, getDashboard } from "@/server/cards";
 import { exposeCards } from "@/server/exposure";
-import { addMyStock, ensureProfile, getMyStocks } from "@/server/my-stocks";
+import { addMyStock, ensureProfile, getMyQuietFacts, getMyStocks } from "@/server/my-stocks";
 import { getPastCards } from "@/server/past-cards";
 
 import { admin, createTestUser, deleteTestUsers } from "./local-supabase";
@@ -33,6 +33,11 @@ const EARLIER_GLANCE = `canary-earlier-glance-${randomUUID()}`; // 이전 거래
 const PAST_OLDEST = `canary-past-oldest-${randomUUID()}`; // 2099-10-03(범위 첫날)의 세 번째 줄
 const PAST_OUTSIDE = `canary-past-outside-${randomUUID()}`; // 2099-10-02(범위 밖)
 const PAST_SUSPENDED = `canary-past-suspended-${randomUUID()}`; // 2099-12-29 발행 중단
+// 알아두기(#66): 테스트 10-K 한 행(고정 접수번호, service_role에 delete 권한 없음: upsert do nothing)에 붙은 사실
+const ACCESSION = "0009999999-99-000066";
+const QUIET_FIRST = "Web Test B makes test widgets"; // ZZWB 1번(공용)
+const QUIET_SECOND = `canary-quiet-second-${randomUUID()}`; // ZZWB 2번: 유저 진도로만 보인다
+const QUIET_PAST = `canary-quiet-past-${randomUUID()}`; // ZZWA 1번: 오늘 ZZWA는 공시가 있어 안 보이고, 조용한 지난 날(2099-10-03)에도 안 보인다
 
 const glanceRow = (trading_day: string, close: string) => ({
   trading_day,
@@ -150,6 +155,16 @@ const cards = [
     news_line_filing_count: 1,
     leverage_tag: null,
   },
+  // 알아두기(#66): ZZWB는 어제·오늘 조용한 날 → 오늘 넣은 유저는 2번
+  {
+    ticker: "ZZWB",
+    trading_day: EARLIER,
+    status: "normal",
+    change_pct: null,
+    change_status: "delayed",
+    ...line("news_line", "No new SEC filings found", "checked_none", "SEC filings"),
+    leverage_tag: null,
+  },
   // 이전 거래일 카드는 화면에 나오지 않는다
   {
     ticker: "ZZWA",
@@ -194,6 +209,8 @@ const cards = [
 ];
 
 async function cleanup() {
+  const q = await admin.from("quiet_fact").delete().in("ticker", TICKERS); // 커버 범위 FK라 먼저
+  if (q.error) throw new Error(`cleanup failed: ${q.error.message}`);
   const a = await admin.from("stock_card").delete().in("ticker", TICKERS);
   const b = await admin.from("coverage").delete().in("ticker", TICKERS);
   if (a.error || b.error) throw new Error(`cleanup failed: ${(a.error ?? b.error)?.message}`);
@@ -207,6 +224,16 @@ beforeAll(async () => {
   if (ins.error) throw new Error(`stock_card insert failed: ${ins.error.message}`);
   const glance = await admin.from("market_glance").upsert([glanceRow(DAY, CLOSE), glanceRow(EARLIER, EARLIER_GLANCE)]);
   if (glance.error) throw new Error(`market_glance upsert failed: ${glance.error.message}`);
+  const report = await admin
+    .from("sec_annual_report")
+    .upsert({ accession: ACCESSION, cik: "0009999999", accepted_at: AT, body: "Item 1. Business" }, { onConflict: "accession", ignoreDuplicates: true });
+  if (report.error) throw new Error(`sec_annual_report upsert failed: ${report.error.message}`);
+  const facts = await admin.from("quiet_fact").insert([
+    { ticker: "ZZWB", seq: 1, text: QUIET_FIRST, source_accession: ACCESSION },
+    { ticker: "ZZWB", seq: 2, text: QUIET_SECOND, source_accession: ACCESSION },
+    { ticker: "ZZWA", seq: 1, text: QUIET_PAST, source_accession: ACCESSION },
+  ]);
+  if (facts.error) throw new Error(`quiet_fact insert failed: ${facts.error.message}`);
 });
 
 const created: string[] = [];
@@ -459,8 +486,10 @@ test("가격 표시 off(#56)면 DB에 등락률·가격 사실·어제 마감 �
   expect(glance).toEqual({ lines: GLANCE.lines.slice(1), checked: "Checked 7:20 AM ET · Economic calendar" });
   for (const viewer of [PLUS_ALL, null]) {
     const data = { tradingDay, glance, cards: exposeCards(cards, viewer) };
+    // 알아두기(#66)는 가격 키가 아니다: 로그인 전 조용한 날 카드(ZZWB)는 1번이 붙는다. PLUS_ALL은 진도를 넘기지 않아 없다
+    const quiet = (t: string) => (viewer === null && t === "ZZWB" ? ["quietFact"] : []);
     expect(data.cards.map((c) => [c.ticker, Object.keys(c).sort(), c.lines.length])).toEqual(
-      ["ZZWA", "ZZWB", "ZZWC", "ZZWD", "ZZWF", "ZZWG"].map((t) => [t, ["checked", "header", "leverageTag", "lines", "name", "ticker"], 2]),
+      ["ZZWA", "ZZWB", "ZZWC", "ZZWD", "ZZWF", "ZZWG"].map((t) => [t, ["checked", "header", "leverageTag", "lines", "name", "ticker", ...quiet(t)].sort(), 2]),
     );
     const props = JSON.stringify(data);
     const html = renderToStaticMarkup(createElement(Dashboard, { data }));
@@ -511,6 +540,11 @@ test("지난 카드: Plus 내 종목 = 오늘 포함 최근 90일(달력일) 최
   const all = JSON.stringify(view);
   expect(all).not.toContain(PAST_OUTSIDE);
   expect(all).not.toContain(PAST_SUSPENDED);
+  // 알아두기(#66)는 지난 카드에 없다: 2099-10-03은 조용한 날이고 ZZWA 1번이 있어도
+  expect(view.days[2].card!.header).toEqual({ text: "Quiet day", status: "checked_none" });
+  expect(view.days.map((d) => "quietFact" in d.card!)).toEqual([false, false, false]);
+  expect(all).not.toContain(QUIET_PAST);
+  expect(renderToStaticMarkup(createElement(PastCards, { view }))).not.toContain("Did you know");
 });
 
 test("지난 카드: 무료 내 종목 = 오늘만 + 잠금 안내. 지난 날 문구는 화면 모델·HTML에 없다", async () => {
@@ -546,4 +580,55 @@ test("지난 카드: 가격 표시 off면 모든 날 카드에 가격 키가 없
     [false, 2],
   ]);
   for (const price of ["+1.3%", "9.9%", "Up 5 days in a row", PAST_OLDEST, "Daily prices"]) expect(JSON.stringify(view), price).not.toContain(price);
+});
+
+// ---- 알아두기(#66): 웹 서버 카드 조회 입구 = getDashboard(공용 1번, 캐시 안) + getMyQuietFacts(유저 진도, 캐시 밖) → exposeCards ----
+
+test("알아두기: getDashboard는 원래 거래일(day)과 카드마다 1번(firstQuietFact, 없으면 null)만 담는다. 2번부터는 공용 결과에 없다", async () => {
+  const data = await getDashboard();
+  expect(data.day).toBe(DAY);
+  expect(data.cards.map((c) => [c.ticker, c.firstQuietFact])).toEqual([
+    ["ZZWA", QUIET_PAST],
+    ["ZZWB", QUIET_FIRST],
+    ["ZZWC", null],
+    ["ZZWD", null],
+    ["ZZWE", null],
+    ["ZZWF", null],
+    ["ZZWG", null],
+  ]);
+  expect(JSON.stringify(data)).not.toContain(QUIET_SECOND);
+});
+
+test("알아두기: 로그인 전·둘러보기는 조용한 날 카드에만 1번, 잠기지 않은 내 종목은 그 유저 진도(넣은 날부터 조용한 날 2일 = 2번). 무료·Plus 같다", async () => {
+  // 오늘(2026) 넣음: 2099 조용한 날은 전부 넣은 뒤라 센다
+  const [freeMine, plusMine, freeBrowse] = [await pastUser("free", ["ZZWB"]), await pastUser("plus", ["ZZWB"]), await pastUser("free", ["ZZWA"])];
+  const { tradingDay, glance, cards, day } = await getDashboard();
+  const coverage = await getCoverage();
+  const page = async (id: VerifiedUserId | null) => {
+    // /cards 페이지와 같은 순서: 공용 카드 → 내 종목·진도(요청마다) → 노출 판단 → 컴포넌트
+    const my = id && (await getMyStocks(id));
+    const progress = id ? await getMyQuietFacts(id, day!) : undefined;
+    const data = { tradingDay, glance, cards: exposeCards(cards, my || null, progress) };
+    const mine = my ? myDashboardView(data.cards, coverage, my, undefined) : undefined;
+    return { progress, data, html: renderToStaticMarkup(createElement(Dashboard, { data, mine })) };
+  };
+  const shown = (p: Awaited<ReturnType<typeof page>>) => p.data.cards.filter((c) => c.quietFact).map((c) => [c.ticker, c.quietFact]);
+
+  for (const id of [freeMine, plusMine]) {
+    const p = await page(id);
+    expect([...p.progress!]).toEqual([["ZZWB", QUIET_SECOND]]);
+    expect(shown(p)).toEqual([["ZZWB", QUIET_SECOND]]);
+    expect(p.html).toContain(`Did you know: ${QUIET_SECOND} (Annual report)`);
+    expect(p.html).not.toContain(QUIET_FIRST); // 내 종목 카드는 둘러보기에 다시 나오지 않는다
+  }
+  // ZZWA는 내 종목이고 진도상 1번이지만 오늘은 공시가 있는 날: 없음. ZZWB는 둘러보기라 1번
+  const browse = await page(freeBrowse);
+  expect([...browse.progress!]).toEqual([["ZZWA", QUIET_PAST]]); // 함수는 오늘 카드 상태를 보지 않는다(exposeCards가 거른다)
+  expect(shown(browse)).toEqual([["ZZWB", QUIET_FIRST]]);
+  const out = await page(null);
+  expect(shown(out)).toEqual([["ZZWB", QUIET_FIRST]]);
+  for (const p of [browse, out]) {
+    expect(p.html).toContain(`Did you know: ${QUIET_FIRST} (Annual report)`);
+    for (const secret of [QUIET_SECOND, QUIET_PAST]) expect(JSON.stringify(p.data) + p.html, secret).not.toContain(secret);
+  }
 });

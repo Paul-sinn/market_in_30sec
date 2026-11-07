@@ -1,0 +1,42 @@
+# 걸려야 하는 알아두기 사실 문장 (quiet-fact 모드, #66)
+# 티켓 #66 순위·비교 표현 8개
+Apple is the largest maker of smartphones
+Apple is the second-largest maker of smartphones
+Apple is a top maker of smartphones
+Apple is a leading maker of smartphones
+Apple is the biggest maker of smartphones
+Apple earns most of its revenue from phones
+Apple offers more than phones and computers
+Apple is the fastest growing phone maker
+# 돌려 쓴 순위·비교
+Apple is one of the largest phone makers
+Apple is larger than its rivals
+Apple is a market leader in smartphones
+# than 없는 비교급(#66 수정 1)
+Apple makes larger phones
+Apple makes bigger screens
+Apple makes better chips
+Apple makes faster chips
+Apple makes smaller computers
+Apple offers a superior service
+# 수량 어림(#66 수정 1: 숫자 단어 목록 밖, 복수형 포함)
+Apple serves millions of customers worldwide
+Apple makes chips for a billion devices
+Apple handles trillions of payments
+Apple has thousands of employees
+Apple has hundreds of stores
+Apple operates in dozens of countries
+# 숫자·연도(숫자 글자 하나라도, 숫자 단어 포함)
+Apple was founded in 1976
+Apple operates in three regions
+Apple files an 8-K for its results
+Apple is part of the S&P 500
+Apple keeps a 52-week product cycle
+# 카드 규칙(금지어 U1·감정 동사·2인칭·15단어)
+NVIDIA sells chips for data centers and gaming (Annual report)
+Apple shares soared after the phone launch
+Apple makes phones you can carry anywhere
+Apple makes phones, computers, tablets, watches, headphones, speakers, chargers and cables for customers around the world
+# 괄호(꼬리표는 웹이 붙인다)
+Apple makes phones (iPhone) and computers
+Apple makes phones and computers (SEC filing)

@@ -37,6 +37,8 @@ from quarterly_probe import (
     BODY_CANARY,
     COMPANIES,
     EVIDENCE_CANARY,
+    EXCERPT_CANARY,
+    FACT_CANARY,
     MENTION_CANARY,
     GOOGL,
     MAIN_HTML,
@@ -61,7 +63,7 @@ class NoCallLLM:
 
 
 def run(store, get, coverage=COMPANIES):
-    """커버 범위를 심고 분기 작업 한 번. sleep은 기록만(다시 시도를 실제로 기다리지 않는다). 연관 종목 요약은 test_relations가 본다."""
+    """커버 범위를 심고 분기 작업 한 번. sleep은 기록만(다시 시도를 실제로 기다리지 않는다). 연관 종목·알아두기 요약은 test_relations·test_quiet_facts가 본다."""
     store.upsert_coverage(coverage)
     sleeps = []
     return run_quarterly(store, reports=EdgarAnnualReportSource(get), llm=NoCallLLM(), sleep=sleeps.append), sleeps
@@ -72,7 +74,7 @@ def test_분기_작업은_커버_범위_회사마다_최신_10_K_원문과_접�
 
     summary, _ = run(store, get)
 
-    assert summary == QuarterlySummary(3, 3, 0, 0, 3, 0, (), (), (), ANY)
+    assert summary == QuarterlySummary(3, 3, 0, 0, 3, 0, (), (), (), ANY, ANY)
     assert store.latest_annual_reports() == {AAPL: ACCESSIONS[AAPL], MSFT: ACCESSIONS[MSFT], GOOGL: ACCESSIONS[GOOGL]}
     report = store.annual_report(ACCESSIONS[MSFT])
     assert (report.accession, report.cik) == (ACCESSIONS[MSFT], MSFT)
@@ -91,7 +93,7 @@ def test_ETF는_CIK가_있어도_요청하지_않는다(store):
     summary, _ = run(store, get, coverage=[c for c in COMPANIES if c.holdings_ticker])
 
     assert get.urls == []
-    assert summary == QuarterlySummary(0, 0, 0, 0, 0, 0, (), (), (), ANY)
+    assert summary == QuarterlySummary(0, 0, 0, 0, 0, 0, (), (), (), ANY, ANY)
     assert store.coverage_sics() == {}  # SPY·XLK sic는 null
 
 
@@ -120,7 +122,7 @@ def test_같은_입력으로_두_번_실행하면_두_번째는_submissions만_�
     summary, _ = run(store, get)
 
     assert get.urls == [submissions_url(AAPL), submissions_url(MSFT), submissions_url(GOOGL)]  # 전체 제출 파일(.txt) 0
-    assert summary == QuarterlySummary(3, 0, 3, 0, 3, 0, (), (), (), ANY)
+    assert summary == QuarterlySummary(3, 0, 3, 0, 3, 0, (), (), (), ANY, ANY)
     assert stored_rows(admin) == before and len(before) == 3
 
 
@@ -398,8 +400,8 @@ def run_probe(settings, situation, *args, seed=True, env=None):
                        cwd=BACKEND, env=env, capture_output=True, text=True, timeout=60)
     out = r.stdout + r.stderr
     names = [c.name for c in COMPANIES]  # 커버 범위 회사 이름(연관 종목 요청의 filing_company)
-    leaked = [c for c in (KEY_CANARY, UA_CANARY, BODY_CANARY, NAME_CANARY, EVIDENCE_CANARY, MENTION_CANARY, "DbCanary60",
-                          settings.database_url, *names) if c in out]
+    leaked = [c for c in (KEY_CANARY, UA_CANARY, BODY_CANARY, NAME_CANARY, EVIDENCE_CANARY, MENTION_CANARY, FACT_CANARY,
+                          EXCERPT_CANARY, "DbCanary60", settings.database_url, *names) if c in out]
     assert not leaked
     assert out.endswith("fake_modules=[]\n")  # 실행한 분기 작업 경로 어디서도 가짜 어댑터를 불러오지 않았다
     return r.returncode, out.splitlines()[:-1]
@@ -412,7 +414,15 @@ EXTRACT_LINE = ("relations: extracted=0 deferred=0 json_invalid=- no_item1={} no
                 " llm_calls=0/200 tokens=in:0,out:0,cache_read:0,cache_write:0")
 TABLE_LINE = ("relations: tickers={0} changed=0 rows=0 own_10k=0(-) reverse_10k=0(-) sic=0(-) under3={0} mentions=0 matched=0"
               " unmatched=0 ambiguous=0 self=0")
-QUIET = [QUIET_LINE, EXTRACT_LINE.format(3), TABLE_LINE.format(4)]
+# 알아두기 한 줄(#66). 탐침 10-K(MAIN_HTML)는 Item 1이 짧아 no_item1 = 저장된 10-K 수, LLM 0회, 풀 0
+FACTS_LINE = ("quiet_facts: made=0 facts=0 deferred=0 json_invalid=- no_item1={0} empty=0 dropped=format:0,rules:0,check:0"
+              " llm_calls=0/400 tokens=in:0,out:0,cache_read:0,cache_write:0 pools=0/{1}")
+QUIET = [QUIET_LINE, EXTRACT_LINE.format(3), TABLE_LINE.format(4), FACTS_LINE.format(3, 4)]
+# 연관 종목 상황: AAPL 10-K만 Item 1이 길다
+RELATED_LINES = ["relations: extracted=1 deferred=0 json_invalid=- no_item1=2 no_section=0 truncated=0 invalid_mentions=1"
+                 " llm_calls=1/200 tokens=in:1200,out:60,cache_read:900,cache_write:0",
+                 "relations: tickers=4 changed=2 rows=2 own_10k=1(50%) reverse_10k=1(50%) sic=0(0%) under3=4 mentions=2"
+                 " matched=1 unmatched=1 ambiguous=0 self=0"]
 
 
 @pytest.mark.parametrize(
@@ -421,36 +431,44 @@ QUIET = [QUIET_LINE, EXTRACT_LINE.format(3), TABLE_LINE.format(4)]
         ("quiet", True, 0, QUIET),
         ("failures", True, 1, ["!!! FAILED: failures=1 companies=3 !!!", "failed: annual_report/0000789019=retries_exhausted",
                                "quarterly companies=3 new=2 unchanged=0 no_annual_report=0 sic=3 sic_missing=0",
-                               EXTRACT_LINE.format(2), TABLE_LINE.format(4)]),
+                               EXTRACT_LINE.format(2), TABLE_LINE.format(4), FACTS_LINE.format(2, 4)]),
         ("rate_limited", True, 1, ["!!! FAILED: failures=1 companies=3 !!!", "failed: annual_report/0000789019=retries_exhausted",
                                    "RATE LIMITED (429, retried): annual_report",
                                    "quarterly companies=3 new=2 unchanged=0 no_annual_report=0 sic=3 sic_missing=0",
-                                   EXTRACT_LINE.format(2), TABLE_LINE.format(4)]),
+                                   EXTRACT_LINE.format(2), TABLE_LINE.format(4), FACTS_LINE.format(2, 4)]),
         ("denied", True, 1, ["!!! FAILED: failures=3 companies=3 !!!", f"failed: {DENIED}", "ACCESS DENIED (not retried): annual_report",
                              "quarterly companies=3 new=0 unchanged=0 no_annual_report=0 sic=0 sic_missing=0",
-                             EXTRACT_LINE.format(0), TABLE_LINE.format(4)]),
+                             EXTRACT_LINE.format(0), TABLE_LINE.format(4), FACTS_LINE.format(0, 4)]),
         ("too_large", True, 1, ["!!! FAILED: failures=1 companies=3 !!!", "failed: annual_report/0000789019=too_large",
                                 "quarterly companies=3 new=2 unchanged=0 no_annual_report=0 sic=3 sic_missing=0",
-                                EXTRACT_LINE.format(2), TABLE_LINE.format(4)]),
+                                EXTRACT_LINE.format(2), TABLE_LINE.format(4), FACTS_LINE.format(2, 4)]),
         ("empty", False, 1, ["!!! FAILED: failures=0 companies=0 !!!",  # 빈·잘못된 DB
                              "quarterly companies=0 new=0 unchanged=0 no_annual_report=0 sic=0 sic_missing=0",
-                             EXTRACT_LINE.format(0), TABLE_LINE.format(0)]),
+                             EXTRACT_LINE.format(0), TABLE_LINE.format(0), FACTS_LINE.format(0, 0)]),
         # 연관 종목(#64): AAPL 10-K만 Item 1이 길다. 응답 = Microsoft(맞음) + 범위 밖 이름(캐너리). 이름·근거 문장은 찍지 않는다
-        ("relations", True, 0, [QUIET_LINE,
-                                "relations: extracted=1 deferred=0 json_invalid=- no_item1=2 no_section=0 truncated=0 invalid_mentions=1"
-                                " llm_calls=1/200 tokens=in:1200,out:60,cache_read:900,cache_write:0",
-                                "relations: tickers=4 changed=2 rows=2 own_10k=1(50%) reverse_10k=1(50%) sic=0(0%) under3=4 mentions=2"
-                                " matched=1 unmatched=1 ambiguous=0 self=0"]),
+        # 알아두기(#66): 사실 셋 중 순위 하나는 코드 검사, 하나는 판정에서 빠져 하나 저장. 사실 문장·발췌는 찍지 않는다
+        ("relations", True, 0, [QUIET_LINE, *RELATED_LINES,
+                                "quiet_facts: made=1 facts=1 deferred=0 json_invalid=- no_item1=2 empty=0 dropped=format:0,rules:1,check:1"
+                                " llm_calls=2/400 tokens=in:2400,out:120,cache_read:1800,cache_write:0 pools=1/4"]),
         ("relations_broken", True, 0, [QUIET_LINE,  # 두 번 다 깨진 JSON은 실패가 아니다(다음 실행이 다시 부른다)
                                        f"relations: extracted=0 deferred=0 json_invalid={AAPL} no_item1=2 no_section=0 truncated=0"
                                        " invalid_mentions=0 llm_calls=2/200 tokens=in:2400,out:120,cache_read:1800,cache_write:0",
-                                       TABLE_LINE.format(4)]),
-        ("llm_denied", True, 1, ["!!! FAILED: failures=1 companies=3 !!!", f"failed: llm/{AAPL}=access_denied",
+                                       TABLE_LINE.format(4),
+                                       f"quiet_facts: made=0 facts=0 deferred=0 json_invalid={AAPL} no_item1=2 empty=0"
+                                       " dropped=format:0,rules:0,check:0 llm_calls=2/400 tokens=in:2400,out:120,cache_read:1800,"
+                                       "cache_write:0 pools=0/4"]),
+        # 두 단계가 따로 부르고 따로 남긴다(연관 종목 → 알아두기 순)
+        ("llm_denied", True, 1, ["!!! FAILED: failures=2 companies=3 !!!", f"failed: llm/{AAPL}=access_denied, llm/{AAPL}=access_denied",
                                  "ACCESS DENIED (not retried): llm", QUIET_LINE,
                                  "relations: extracted=0 deferred=0 json_invalid=- no_item1=2 no_section=0 truncated=0 invalid_mentions=0"
-                                 " llm_calls=1/200 tokens=in:0,out:0,cache_read:0,cache_write:0", TABLE_LINE.format(4)]),
+                                 " llm_calls=1/200 tokens=in:0,out:0,cache_read:0,cache_write:0", TABLE_LINE.format(4),
+                                 FACTS_LINE.format(2, 4).replace("llm_calls=0/", "llm_calls=1/")]),
+        ("quiet_denied", True, 1, ["!!! FAILED: failures=1 companies=3 !!!", f"failed: llm/{AAPL}=access_denied",
+                                   "ACCESS DENIED (not retried): llm", QUIET_LINE, *RELATED_LINES,
+                                   FACTS_LINE.format(2, 4).replace("llm_calls=0/", "llm_calls=1/")]),
     ],
-    ids=["정상", "503_4번", "429_4번", "SEC_403", "크기_상한_초과", "커버_범위_0", "연관_종목", "연관_종목_JSON_깨짐", "LLM_401"],
+    ids=["정상", "503_4번", "429_4번", "SEC_403", "크기_상한_초과", "커버_범위_0", "연관_종목", "연관_종목_JSON_깨짐", "LLM_401",
+         "알아두기_LLM_401"],
 )
 def test_분기_작업_CLI는_코드·건수·CIK만_찍고_실패한_실행이면_1로_끝난다(settings, admin, situation, seed, exit_code, lines):
     assert run_probe(settings, situation, seed=seed) == (exit_code, lines)
@@ -464,7 +482,7 @@ def test_분기_작업_CLI는_10_K_원문·회사_이름·연락처·DB_주소�
     assert run_probe(settings, "crash") == (1, [
         "!!! FAILED: failures=1 companies=3 !!!", "failed: annual_report/0000789019=unexpected:ValueError",
         "quarterly companies=3 new=0 unchanged=2 no_annual_report=0 sic=2 sic_missing=0", EXTRACT_LINE.format(3),
-        TABLE_LINE.format(4)])
+        TABLE_LINE.format(4), FACTS_LINE.format(3, 4)])
 
 
 def test_분기_작업_CLI는_연관_종목의_회사_이름·근거_문장·LLM_응답을_찍지_않는다(settings, store):
@@ -473,6 +491,13 @@ def test_분기_작업_CLI는_연관_종목의_회사_이름·근거_문장·LLM
     [report] = store.latest_mentions().values()
     assert EVIDENCE_CANARY in report.mentions[0].evidence and MENTION_CANARY in {m.name for m in report.mentions}
     assert [r.related_ticker for r in store.list_relations()["AAPL"]] == ["MSFT"]
+
+
+def test_분기_작업_CLI는_알아두기_사실_문장·발췌를_찍지_않는다(settings, store, admin):
+    assert run_probe(settings, "relations")[0] == 0  # 캐너리·회사 이름 검사는 run_probe
+    # 사실 문장 캐너리가 실제로 지나간 실행이다(발췌 캐너리는 그 10-K Item 1 안에 있다)
+    assert admin.execute("select ticker, seq, text from public.quiet_fact").fetchall() == [("AAPL", 1, f"Apple makes {FACT_CANARY} phones")]
+    assert EXCERPT_CANARY in store.annual_report(ACCESSIONS[AAPL]).body
 
 
 def test_분기_작업_중_DB_오류는_예외_이름만_찍고_1로_끝난다(settings, admin):
