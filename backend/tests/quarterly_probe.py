@@ -1,5 +1,6 @@
 """분기 작업(#60) 합성 SEC 응답 + test_quarterly가 하위 프로세스로만 돌리는 탐침. test_ 접두사가 없어 기본 수집에서 빠진다.
-탐침은 분기 작업 CLI(m30.pipeline.__main__.main --quarterly)를 그대로 돌리고 전송 층 EdgarClient 하나만 네트워크 없는 대역으로 바꾼다.
+탐침은 분기 작업 CLI(m30.pipeline.__main__.main --quarterly)를 그대로 돌리고 전송 층 둘(EdgarClient, 연관 종목 #64의 AnthropicLLM)만
+네트워크 없는 대역으로 바꾼다.
 사용법: python tests/quarterly_probe.py <상황> --quarterly. 끝나면 stderr 마지막 줄에 불러온 가짜 모듈 목록(fake_modules=[…])을 찍는다.
 그래서 가짜 어댑터를 불러오는 테스트 모듈(test_edgar 등)을 import하지 않는다."""
 
@@ -13,6 +14,7 @@ import psycopg
 
 from m30.adapters import AccessDeniedError, RateLimitedError, TooLargeError, TransientSourceError
 from m30.adapters.edgar import ANNUAL_REPORT_FILE_MAX, QUARTERLY_INTERVAL, SUBMISSION_TEXT_URL, SUBMISSIONS_URL, Throttle
+from m30.llm import LLMReply
 from m30.models import Coverage
 
 RESPONSES = Path(__file__).resolve().parent / "edgar_responses"
@@ -30,6 +32,8 @@ ACCEPTED = "20251031180502"  # 헤더 접수 시각(동부 벽시계). submissio
 BODY_CANARY = "BodyCanary60"  # 10-K 본문 자리. 공개 로그에 나오면 샌 것
 NAME_CANARY = "NameCanary60"  # submissions 회사 이름 자리
 NO_SIC = object()  # annual_submissions: 최상위 "sic" 키를 뺀다
+EVIDENCE_CANARY = "EvidenceCanary64"  # 연관 종목 근거 문장 자리(#64)
+MENTION_CANARY = "MentionCanary64"  # LLM이 뽑은 범위 밖 회사 이름 자리
 
 MAIN_HTML = (
     "<html><head><title>TitleCanary 10-K</title><style>.x {color: red}</style></head><body>\n"
@@ -41,6 +45,35 @@ MAIN_HTML = (
     "<div>Item 1A. Risk Factors</div>\n"
     "</body></html>"
 )
+
+
+# 연관 종목(#64): Item 1이 ITEM1_MIN보다 긴 10-K. 첫 문장(번호 1)이 경쟁 문장이다
+RELATIONS_HTML = (
+    "<html><body>\n<div>Item 1. Business</div>\n"
+    f"<p>We compete with Microsoft and {MENTION_CANARY} in {EVIDENCE_CANARY} software.</p>\n"
+    + "<p>The Company designs and markets its products worldwide.</p>\n" * 25
+    + "<div>Item 1A. Risk Factors</div>\n</body></html>"
+)
+RELATIONS_REPLY = json.dumps({"relations": [
+    {"name": "Microsoft", "relation": "competitor", "sentence": 1},
+    {"name": MENTION_CANARY, "relation": "customer", "sentence": 1},  # 저장되지만 커버 범위 밖이라 맞지 않는다
+    {"name": "Samsung", "relation": "competitor", "sentence": 1},  # 문장에 없는 이름: 버림
+]})
+
+
+class ProbeLLM:
+    """AnthropicLLM 자리(네트워크 없음). 연관 종목 상황에서만 답한다. 그 밖의 상황에서 불리면 AssertionError(실행이 멈춘다).
+    401은 메시지에 키(캐너리)를 넣는다: CLI가 예외 메시지를 찍지 않는지 본다."""
+
+    def __init__(self, settings, situation):
+        self._settings, self._situation = settings, situation
+
+    def complete(self, request):
+        if self._situation == "llm_denied":
+            raise AccessDeniedError(f"anthropic http 401 {self._settings.api_key}")
+        if self._situation not in ("relations", "relations_broken"):
+            raise AssertionError("unexpected LLM request")
+        return LLMReply("not json" if self._situation == "relations_broken" else RELATIONS_REPLY, 1200, 60, 900, 0)
 
 
 def submissions_url(cik):
@@ -116,6 +149,8 @@ def main(situation, args):
         "too_large": {txt_url(MSFT, ACCESSIONS[MSFT]): TooLargeError("sec response too large")},  # EdgarClient가 상한에서 내는 것
         # 라이브러리가 요청 값(연락처)을 예외 메시지에 넣는 경우(http.client의 잘못된 헤더 값처럼)
         "crash": {submissions_url(MSFT): ValueError(f"Invalid header value {os.environ.get('SEC_USER_AGENT')!r}")},
+        **dict.fromkeys(("relations", "relations_broken", "llm_denied"),
+                        {txt_url(AAPL, ACCESSIONS[AAPL]): annual_report_file(ACCESSIONS[AAPL], main=RELATIONS_HTML)}),
     }[situation])
 
     def get(url):
@@ -132,9 +167,10 @@ def main(situation, args):
         return SimpleNamespace(get=get)
 
     patch(cli, "EdgarClient", client)
+    patch(cli, "AnthropicLLM", lambda settings: ProbeLLM(settings, situation))  # settings = load_llm_settings()가 읽은 키(캐너리)
     patch(collect, "RETRY_DELAYS", (0.0, 0.0, 0.0))  # 503 다시 시도를 실제로 기다리지 않는다
     if situation == "db_error":
-        def run_quarterly(store, *, reports):  # 실행 중 DB 연결이 끊김: 메시지에 라이브러리가 넣은 값(키 캐너리)
+        def run_quarterly(store, *, reports, llm):  # 실행 중 DB 연결이 끊김: 메시지에 라이브러리가 넣은 값(키 캐너리)
             raise psycopg.OperationalError(f"server closed the connection {os.environ.get('ANTHROPIC_API_KEY')}")
 
         patch(cli, "run_quarterly", run_quarterly)

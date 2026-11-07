@@ -13,6 +13,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import ANY
 
 import pytest
 
@@ -35,6 +36,8 @@ from quarterly_probe import (
     ACCESSIONS,
     BODY_CANARY,
     COMPANIES,
+    EVIDENCE_CANARY,
+    MENTION_CANARY,
     GOOGL,
     MAIN_HTML,
     MSFT,
@@ -50,11 +53,18 @@ from quarterly_probe import (
 from test_edgar import UA, RecordedGet
 
 
+class NoCallLLM:
+    """LLM 자리. 여기 10-K 본문(MAIN_HTML)은 Item 1이 ITEM1_MIN보다 짧아 연관 종목 단계(#64)가 LLM을 부르지 않는다(no_item1)."""
+
+    def complete(self, request):
+        raise AssertionError("unexpected LLM request")
+
+
 def run(store, get, coverage=COMPANIES):
-    """커버 범위를 심고 분기 작업 한 번. sleep은 기록만(다시 시도를 실제로 기다리지 않는다)."""
+    """커버 범위를 심고 분기 작업 한 번. sleep은 기록만(다시 시도를 실제로 기다리지 않는다). 연관 종목 요약은 test_relations가 본다."""
     store.upsert_coverage(coverage)
     sleeps = []
-    return run_quarterly(store, reports=EdgarAnnualReportSource(get), sleep=sleeps.append), sleeps
+    return run_quarterly(store, reports=EdgarAnnualReportSource(get), llm=NoCallLLM(), sleep=sleeps.append), sleeps
 
 
 def test_분기_작업은_커버_범위_회사마다_최신_10_K_원문과_접수_시각을_저장하고_sic를_채운다(store):
@@ -62,7 +72,7 @@ def test_분기_작업은_커버_범위_회사마다_최신_10_K_원문과_접�
 
     summary, _ = run(store, get)
 
-    assert summary == QuarterlySummary(3, 3, 0, 0, 3, 0, (), (), ())
+    assert summary == QuarterlySummary(3, 3, 0, 0, 3, 0, (), (), (), ANY)
     assert store.latest_annual_reports() == {AAPL: ACCESSIONS[AAPL], MSFT: ACCESSIONS[MSFT], GOOGL: ACCESSIONS[GOOGL]}
     report = store.annual_report(ACCESSIONS[MSFT])
     assert (report.accession, report.cik) == (ACCESSIONS[MSFT], MSFT)
@@ -81,7 +91,7 @@ def test_ETF는_CIK가_있어도_요청하지_않는다(store):
     summary, _ = run(store, get, coverage=[c for c in COMPANIES if c.holdings_ticker])
 
     assert get.urls == []
-    assert summary == QuarterlySummary(0, 0, 0, 0, 0, 0, (), (), ())
+    assert summary == QuarterlySummary(0, 0, 0, 0, 0, 0, (), (), (), ANY)
     assert store.coverage_sics() == {}  # SPY·XLK sic는 null
 
 
@@ -110,7 +120,7 @@ def test_같은_입력으로_두_번_실행하면_두_번째는_submissions만_�
     summary, _ = run(store, get)
 
     assert get.urls == [submissions_url(AAPL), submissions_url(MSFT), submissions_url(GOOGL)]  # 전체 제출 파일(.txt) 0
-    assert summary == QuarterlySummary(3, 0, 3, 0, 3, 0, (), (), ())
+    assert summary == QuarterlySummary(3, 0, 3, 0, 3, 0, (), (), (), ANY)
     assert stored_rows(admin) == before and len(before) == 3
 
 
@@ -310,7 +320,7 @@ class ContractStub:
 def test_출처가_계약_밖_값을_주면_invalid_data로_그_회사만_실패한다(store, listing, report):
     store.upsert_coverage(COMPANIES)
 
-    summary = run_quarterly(store, reports=ContractStub(listing, report), sleep=lambda _: None)
+    summary = run_quarterly(store, reports=ContractStub(listing, report), llm=NoCallLLM(), sleep=lambda _: None)
 
     assert summary.failures == (SourceFailure(Source.ANNUAL_REPORT, MSFT, FailureReason.INVALID_DATA),)
     assert MSFT not in store.latest_annual_reports() and len(store.latest_annual_reports()) == 2
@@ -387,7 +397,9 @@ def run_probe(settings, situation, *args, seed=True, env=None):
     r = subprocess.run([sys.executable, "tests/quarterly_probe.py", situation, "--quarterly", *args],
                        cwd=BACKEND, env=env, capture_output=True, text=True, timeout=60)
     out = r.stdout + r.stderr
-    leaked = [c for c in (KEY_CANARY, UA_CANARY, BODY_CANARY, NAME_CANARY, "DbCanary60", settings.database_url) if c in out]
+    names = [c.name for c in COMPANIES]  # 커버 범위 회사 이름(연관 종목 요청의 filing_company)
+    leaked = [c for c in (KEY_CANARY, UA_CANARY, BODY_CANARY, NAME_CANARY, EVIDENCE_CANARY, MENTION_CANARY, "DbCanary60",
+                          settings.database_url, *names) if c in out]
     assert not leaked
     assert out.endswith("fake_modules=[]\n")  # 실행한 분기 작업 경로 어디서도 가짜 어댑터를 불러오지 않았다
     return r.returncode, out.splitlines()[:-1]
@@ -395,46 +407,80 @@ def run_probe(settings, situation, *args, seed=True, env=None):
 
 QUIET_LINE = "quarterly companies=3 new=3 unchanged=0 no_annual_report=0 sic=3 sic_missing=0"
 DENIED = ", ".join(f"annual_report/{cik}=access_denied" for cik in (AAPL, MSFT, GOOGL))
+# 연관 종목 두 줄(#64). 탐침 10-K(MAIN_HTML)는 Item 1이 짧아 no_item1 = 저장된 10-K 수, LLM 0회. 같은 업종 회사가 없어 행 0
+EXTRACT_LINE = ("relations: extracted=0 deferred=0 json_invalid=- no_item1={} no_section=0 truncated=0 invalid_mentions=0"
+                " llm_calls=0/200 tokens=in:0,out:0,cache_read:0,cache_write:0")
+TABLE_LINE = ("relations: tickers={0} changed=0 rows=0 own_10k=0(-) reverse_10k=0(-) sic=0(-) under3={0} mentions=0 matched=0"
+              " unmatched=0 ambiguous=0 self=0")
+QUIET = [QUIET_LINE, EXTRACT_LINE.format(3), TABLE_LINE.format(4)]
 
 
 @pytest.mark.parametrize(
     "situation, seed, exit_code, lines",
     [
-        ("quiet", True, 0, [QUIET_LINE]),
+        ("quiet", True, 0, QUIET),
         ("failures", True, 1, ["!!! FAILED: failures=1 companies=3 !!!", "failed: annual_report/0000789019=retries_exhausted",
-                               "quarterly companies=3 new=2 unchanged=0 no_annual_report=0 sic=3 sic_missing=0"]),
+                               "quarterly companies=3 new=2 unchanged=0 no_annual_report=0 sic=3 sic_missing=0",
+                               EXTRACT_LINE.format(2), TABLE_LINE.format(4)]),
         ("rate_limited", True, 1, ["!!! FAILED: failures=1 companies=3 !!!", "failed: annual_report/0000789019=retries_exhausted",
                                    "RATE LIMITED (429, retried): annual_report",
-                                   "quarterly companies=3 new=2 unchanged=0 no_annual_report=0 sic=3 sic_missing=0"]),
+                                   "quarterly companies=3 new=2 unchanged=0 no_annual_report=0 sic=3 sic_missing=0",
+                                   EXTRACT_LINE.format(2), TABLE_LINE.format(4)]),
         ("denied", True, 1, ["!!! FAILED: failures=3 companies=3 !!!", f"failed: {DENIED}", "ACCESS DENIED (not retried): annual_report",
-                             "quarterly companies=3 new=0 unchanged=0 no_annual_report=0 sic=0 sic_missing=0"]),
+                             "quarterly companies=3 new=0 unchanged=0 no_annual_report=0 sic=0 sic_missing=0",
+                             EXTRACT_LINE.format(0), TABLE_LINE.format(4)]),
         ("too_large", True, 1, ["!!! FAILED: failures=1 companies=3 !!!", "failed: annual_report/0000789019=too_large",
-                                "quarterly companies=3 new=2 unchanged=0 no_annual_report=0 sic=3 sic_missing=0"]),
+                                "quarterly companies=3 new=2 unchanged=0 no_annual_report=0 sic=3 sic_missing=0",
+                                EXTRACT_LINE.format(2), TABLE_LINE.format(4)]),
         ("empty", False, 1, ["!!! FAILED: failures=0 companies=0 !!!",  # 빈·잘못된 DB
-                             "quarterly companies=0 new=0 unchanged=0 no_annual_report=0 sic=0 sic_missing=0"]),
+                             "quarterly companies=0 new=0 unchanged=0 no_annual_report=0 sic=0 sic_missing=0",
+                             EXTRACT_LINE.format(0), TABLE_LINE.format(0)]),
+        # 연관 종목(#64): AAPL 10-K만 Item 1이 길다. 응답 = Microsoft(맞음) + 범위 밖 이름(캐너리). 이름·근거 문장은 찍지 않는다
+        ("relations", True, 0, [QUIET_LINE,
+                                "relations: extracted=1 deferred=0 json_invalid=- no_item1=2 no_section=0 truncated=0 invalid_mentions=1"
+                                " llm_calls=1/200 tokens=in:1200,out:60,cache_read:900,cache_write:0",
+                                "relations: tickers=4 changed=2 rows=2 own_10k=1(50%) reverse_10k=1(50%) sic=0(0%) under3=4 mentions=2"
+                                " matched=1 unmatched=1 ambiguous=0 self=0"]),
+        ("relations_broken", True, 0, [QUIET_LINE,  # 두 번 다 깨진 JSON은 실패가 아니다(다음 실행이 다시 부른다)
+                                       f"relations: extracted=0 deferred=0 json_invalid={AAPL} no_item1=2 no_section=0 truncated=0"
+                                       " invalid_mentions=0 llm_calls=2/200 tokens=in:2400,out:120,cache_read:1800,cache_write:0",
+                                       TABLE_LINE.format(4)]),
+        ("llm_denied", True, 1, ["!!! FAILED: failures=1 companies=3 !!!", f"failed: llm/{AAPL}=access_denied",
+                                 "ACCESS DENIED (not retried): llm", QUIET_LINE,
+                                 "relations: extracted=0 deferred=0 json_invalid=- no_item1=2 no_section=0 truncated=0 invalid_mentions=0"
+                                 " llm_calls=1/200 tokens=in:0,out:0,cache_read:0,cache_write:0", TABLE_LINE.format(4)]),
     ],
-    ids=["정상", "503_4번", "429_4번", "SEC_403", "크기_상한_초과", "커버_범위_0"],
+    ids=["정상", "503_4번", "429_4번", "SEC_403", "크기_상한_초과", "커버_범위_0", "연관_종목", "연관_종목_JSON_깨짐", "LLM_401"],
 )
 def test_분기_작업_CLI는_코드·건수·CIK만_찍고_실패한_실행이면_1로_끝난다(settings, admin, situation, seed, exit_code, lines):
     assert run_probe(settings, situation, seed=seed) == (exit_code, lines)
 
 
 def test_분기_작업_CLI는_10_K_원문·회사_이름·연락처·DB_주소를_찍지_않는다(settings, store):
-    assert run_probe(settings, "quiet") == (0, [QUIET_LINE])  # 캐너리 검사는 run_probe
+    assert run_probe(settings, "quiet") == (0, QUIET)  # 캐너리 검사는 run_probe
     assert BODY_CANARY in store.annual_report(ACCESSIONS[AAPL]).body  # 본문 캐너리가 실제로 지나간 실행이다
 
     # 예외 메시지에 연락처. 앞 실행이 받은 10-K는 다시 받지 않는다
     assert run_probe(settings, "crash") == (1, [
         "!!! FAILED: failures=1 companies=3 !!!", "failed: annual_report/0000789019=unexpected:ValueError",
-        "quarterly companies=3 new=0 unchanged=2 no_annual_report=0 sic=2 sic_missing=0"])
+        "quarterly companies=3 new=0 unchanged=2 no_annual_report=0 sic=2 sic_missing=0", EXTRACT_LINE.format(3),
+        TABLE_LINE.format(4)])
+
+
+def test_분기_작업_CLI는_연관_종목의_회사_이름·근거_문장·LLM_응답을_찍지_않는다(settings, store):
+    assert run_probe(settings, "relations")[0] == 0  # 캐너리·회사 이름 검사는 run_probe
+    # 두 캐너리가 실제로 지나간 실행이다: 근거 문장과 범위 밖 이름이 저장됐다
+    [report] = store.latest_mentions().values()
+    assert EVIDENCE_CANARY in report.mentions[0].evidence and MENTION_CANARY in {m.name for m in report.mentions}
+    assert [r.related_ticker for r in store.list_relations()["AAPL"]] == ["MSFT"]
 
 
 def test_분기_작업_중_DB_오류는_예외_이름만_찍고_1로_끝난다(settings, admin):
     assert run_probe(settings, "db_error") == (1, ["RUN FAILED: OperationalError"])
 
 
-@pytest.mark.parametrize("missing", ["SEC_USER_AGENT", "SUPABASE_DB_URL"])
-def test_분기_작업_CLI는_SEC_USER_AGENT가_없으면_DB에_붙기_전에_변수_이름만_찍고_2로_끝난다(settings, missing):
+@pytest.mark.parametrize("missing", ["SEC_USER_AGENT", "SUPABASE_DB_URL", "ANTHROPIC_API_KEY"])
+def test_분기_작업_CLI는_설정이_없으면_DB·SEC·LLM에_닿기_전에_변수_이름만_찍고_2로_끝난다(settings, missing):
     env = {"SUPABASE_DB_URL": UNREACHABLE_DB, missing: None}  # 연결을 시도하면 host_not_found(exit 1)로 끝났을 주소
 
     assert run_probe(settings, "quiet", seed=False, env=env) == (2, [f"{missing} is not set"])

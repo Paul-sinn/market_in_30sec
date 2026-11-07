@@ -6,7 +6,7 @@ import json
 import pytest
 from psycopg import errors
 
-from m30.models import IMPORTANCE_MAX, Coverage, HoldStage, HoldState, NewsKind
+from m30.models import IMPORTANCE_MAX, Coverage, HoldStage, HoldState, NewsKind, Relation, RelationBasis
 from test_collect_classify import AAPL, FRI, MSFT, filing, label, reply, run, scenario
 
 CARD_SQL = (
@@ -116,7 +116,7 @@ def test_RLS가_꺼진_테이블이_없다(admin):
     tables = {"coverage", "stock_card", "sec_filing", "indicator_release", "filing_classification", "hold_queue",
               "stock_card_revision", "user_profile", "my_stock", "my_stock_history", "default_ticker", "pipeline_run",
               "fund_holdings", "morning_notice", "market_glance", "market_news_item", "earnings_filing", "earnings_estimate",
-              "sec_annual_report"}
+              "sec_annual_report", "annual_report_mentions", "stock_relation"}
     assert tables <= set(public_tables(admin))  # 검사 대상이 비어서 통과하는 것을 막는다
     assert rls_off == []
 
@@ -771,3 +771,95 @@ def test_업종_코드는_네_자리_숫자만_받는다(admin, sic, ok):
     else:
         with pytest.raises(errors.CheckViolation):
             admin.execute(sql, (sic,))
+
+
+# 연관 종목(#64): 10-K 언급(추가만)과 종목별 연관 종목(종목 단위로 지우고 다시 씀)
+MENTIONS_SQL = "insert into public.annual_report_mentions (accession, mentions) values (%s, %s)"
+RELATION_COLUMNS = "ticker, related_ticker, relation, basis, rank, source_accession, evidence"
+RELATION_SQL = f"insert into public.stock_relation ({RELATION_COLUMNS}) values (%s, %s, %s, %s, %s, %s, %s)"
+OWN = ("AAPL", "MSFT", "competitor", "own_10k", 1, ANNUAL_ROW[0], "We compete with Microsoft.")
+PEER = ("AAPL", "DELL", "peer", "sic", 2, None, None)
+
+
+@pytest.fixture
+def related(admin):
+    """AAPL·MSFT·DELL 커버 범위 + AAPL 10-K 한 건."""
+    admin.execute("insert into public.coverage (ticker, name) values ('AAPL', 'Apple'), ('MSFT', 'Microsoft'), ('DELL', 'Dell')")
+    admin.execute(ANNUAL_SQL, ANNUAL_ROW)
+    return admin
+
+
+def test_10_K_언급은_서버가_추가만_하고_연관_종목은_지우고_다시_쓸_수만_있다(related):
+    as_service_role(related, MENTIONS_SQL, (ANNUAL_ROW[0], "[]"))
+    as_service_role(related, RELATION_SQL, OWN)
+
+    assert service_role_privileges(related, "annual_report_mentions") == ["SELECT", "INSERT"]  # 같은 10-K는 다시 뽑지 않는다
+    assert service_role_privileges(related, "stock_relation") == ["SELECT", "INSERT", "DELETE"]  # update 없음
+    with pytest.raises(errors.UniqueViolation):
+        related.execute(MENTIONS_SQL, (ANNUAL_ROW[0], "[]"))
+    for sql in ("update public.annual_report_mentions set mentions = '[]'", "delete from public.annual_report_mentions",
+                "update public.stock_relation set rank = 2"):
+        with pytest.raises(errors.InsufficientPrivilege):
+            as_service_role(related, sql)
+    as_service_role(related, "delete from public.stock_relation")
+
+
+def test_연관_종목은_종목당_순위_1_5_하나씩이라_5개를_넘을_수_없고_같은_상대는_한_번이다(related):
+    related.execute("insert into public.coverage (ticker, name) values ('HPQ', 'HP'), ('IBM', 'IBM'), ('ORCL', 'Oracle'),"
+                    " ('CSCO', 'Cisco')")
+    for rank, other in enumerate(("MSFT", "DELL", "HPQ", "IBM", "ORCL"), 1):
+        related.execute(RELATION_SQL, ("AAPL", other, "peer", "sic", rank, None, None))
+
+    with pytest.raises(errors.CheckViolation):
+        related.execute(RELATION_SQL, ("AAPL", "CSCO", "peer", "sic", 6, None, None))
+    with pytest.raises(errors.UniqueViolation):
+        related.execute(RELATION_SQL, ("AAPL", "CSCO", "peer", "sic", 5, None, None))
+    related.execute("delete from public.stock_relation where rank = 5")
+    with pytest.raises(errors.UniqueViolation):  # 같은 상대는 빈 순위로도 다시 못 넣는다
+        related.execute(RELATION_SQL, ("AAPL", "MSFT", "competitor", "own_10k", 5, OWN[5], OWN[6]))
+
+
+@pytest.mark.parametrize(
+    "row, error",
+    [
+        ((*OWN[:2], "partner", *OWN[3:]), errors.CheckViolation),
+        ((*OWN[:3], "news", *OWN[4:]), errors.CheckViolation),
+        ((*OWN[:4], 0, *OWN[5:]), errors.CheckViolation),
+        ((*PEER[:3], "own_10k", *PEER[4:]), errors.CheckViolation),  # 같은 업종은 공시 근거가 아니다
+        ((*OWN[:2], "peer", *OWN[3:]), errors.CheckViolation),  # 공시 근거 관계가 peer
+        ((*PEER[:5], OWN[5], OWN[6]), errors.CheckViolation),  # 같은 업종에 접수번호
+        ((*OWN[:6], None), errors.CheckViolation),  # 접수번호 있는데 근거 문장 없음
+        ((*OWN[:5], None, OWN[6]), errors.CheckViolation),  # own_10k인데 접수번호 없음
+        ((*OWN[:6], ""), errors.CheckViolation),
+        (("AAPL", "AAPL", *OWN[2:]), errors.CheckViolation),  # 자기 자신
+        (("AAPL", "ZZZZ", *OWN[2:]), errors.ForeignKeyViolation),  # 커버 범위 밖 상대
+        (("ZZZZ", "AAPL", *OWN[2:]), errors.ForeignKeyViolation),
+        ((*OWN[:5], "0000320193-25-000999", OWN[6]), errors.ForeignKeyViolation),  # 저장 안 된 10-K
+    ],
+    ids=["관계_값_밖", "근거_종류_값_밖", "순위_0", "peer인데_own_10k", "own_10k인데_peer", "sic에_접수번호", "근거_문장_없음",
+         "접수번호_없음", "빈_근거_문장", "자기_자신", "없는_상대_티커", "없는_종목", "없는_접수번호"],
+)
+def test_연관_종목의_관계·근거가_어긋나면_DB가_거부한다(related, row, error):
+    with pytest.raises(error):
+        related.execute(RELATION_SQL, row)
+
+
+@pytest.mark.parametrize("mentions, error", [('{"name": "Microsoft"}', errors.CheckViolation), ('"[]"', errors.CheckViolation),
+                                             (None, errors.NotNullViolation)], ids=["객체", "문자열", "없음"])
+def test_10_K_언급은_배열만_받고_저장된_10_K에만_붙는다(related, mentions, error):
+    with pytest.raises(error):
+        related.execute(MENTIONS_SQL, (ANNUAL_ROW[0], mentions))
+    with pytest.raises(errors.ForeignKeyViolation):
+        related.execute(MENTIONS_SQL, ("0000320193-25-000999", "[]"))
+
+
+def test_연관_종목_관계·근거_종류는_코드와_DB가_같다(related):
+    for relation in Relation:
+        basis, accession, evidence = ("sic", None, None) if relation is Relation.PEER else ("own_10k", OWN[5], OWN[6])
+        related.execute(RELATION_SQL, ("MSFT", "AAPL", relation.value, basis, 1, accession, evidence))
+        related.execute("delete from public.stock_relation")
+    for basis in RelationBasis:
+        relation = "peer" if basis is RelationBasis.SIC else "customer"
+        accession, evidence = (None, None) if basis is RelationBasis.SIC else (OWN[5], OWN[6])
+        related.execute(RELATION_SQL, ("MSFT", "AAPL", relation, basis.value, 1, accession, evidence))
+        related.execute("delete from public.stock_relation")

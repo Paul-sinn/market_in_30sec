@@ -1,6 +1,6 @@
 """python -m m30.pipeline 2026-10-16 --scenario scenarios/first_card.json   로컬 개발: 가짜 출처, 로컬 DB만
 python -m m30.pipeline --production [YYYY-MM-DD]                          운영: 실제·미연결 출처, 원격 DB 허용, 비우면 오늘(ET)
-python -m m30.pipeline --quarterly                                        분기 작업(#60): 새 10-K 원문·업종 코드. 실제 SEC, 원격 DB 허용
+python -m m30.pipeline --quarterly                                        분기 작업(#60·#64): 새 10-K 원문·업종 코드·연관 종목. 실제 SEC·Sonnet, 원격 DB 허용
 둘 다 --quality: 실제 Haiku로 돌리고 카드 문장·초안·보류함·분류를 찍는다. 로컬 DB만(#14)"""
 
 import argparse
@@ -368,10 +368,11 @@ def _run_production(day: date, now: datetime, quality: bool, say: _Report) -> in
 
 
 def _quarterly() -> int:
-    """분기 작업(#60): 설정 → DB 연결 → run_quarterly(실제 SEC, 초당 1회) → 요약 → exit 코드. 아침 실행 잠금·실행 기록·Discord 없음.
-    운영 가드는 _run_production과 같다: 설정 누락 2, 6543 2, 연결 실패 1(이유 코드), 그 밖 예외 RUN FAILED 1."""
-    try:  # DB·SEC에 닿기 전에. 메시지에는 변수 이름만 있다
-        settings, edgar_settings = load_settings(), load_edgar_settings()
+    """분기 작업(#60·#64): 설정 → DB 연결 → run_quarterly(실제 SEC 초당 1회, 연관 종목은 실제 Sonnet) → 요약 → exit 코드.
+    아침 실행 잠금·실행 기록·Discord 없음. 운영 가드는 _run_production과 같다: 설정 누락 2(ANTHROPIC_API_KEY 포함: 키 없이 돌면
+    연관 종목이 조용히 멈추므로 시작하지 않는다), 6543 2, 연결 실패 1(이유 코드), 그 밖 예외 RUN FAILED 1."""
+    try:  # DB·SEC·LLM에 닿기 전에. 메시지에는 변수 이름만 있다
+        settings, edgar_settings, llm_settings = load_settings(), load_edgar_settings(), load_llm_settings()
     except ConfigError as e:
         print(e, file=sys.stderr)
         return 2
@@ -379,7 +380,7 @@ def _quarterly() -> int:
     try:
         with connect(settings) as conn:
             get = EdgarClient(edgar_settings, throttle=Throttle(QUARTERLY_INTERVAL), max_bytes=ANNUAL_REPORT_FILE_MAX).get
-            summary = run_quarterly(CardStore(conn), reports=EdgarAnnualReportSource(get))
+            summary = run_quarterly(CardStore(conn), reports=EdgarAnnualReportSource(get), llm=AnthropicLLM(llm_settings))
     except (ConfigError, DBConnectError) as e:  # 우리가 쓴 문구(변수 이름·포트만): 6543 거부, 연결 실패
         print(e, file=sys.stderr)
         return 2 if isinstance(e, ConfigError) else 1
@@ -393,17 +394,31 @@ def _quarterly() -> int:
 
 
 def _print_quarterly(summary: QuarterlySummary) -> None:
-    """결과 코드·건수·CIK만(공개 로그): 10-K 글자·회사 이름·URL·연락처·예외 메시지를 찍지 않는다. 형식은 _print_summary와 같다."""
+    """결과 코드·건수·CIK만(공개 로그): 10-K 글자·회사 이름·근거 문장·LLM 응답·URL·연락처·예외 메시지를 찍지 않는다.
+    형식은 _print_summary와 같다. 실패·차단 줄은 10-K 수집과 연관 종목(LLM)을 합친다."""
+    relations = summary.relations
+    failures = summary.failures + relations.failures
     if quarterly_failed(summary):
-        print(f"!!! FAILED: failures={len(summary.failures)} companies={summary.companies} !!!")
-        if summary.failures:
-            print("failed: " + ", ".join(_failure(f.source, f.subject, f.reason, f.error) for f in summary.failures))
-    if summary.access_denied:
-        print(f"ACCESS DENIED (not retried): {', '.join(summary.access_denied)}")
-    if summary.rate_limited:
-        print(f"RATE LIMITED (429, retried): {', '.join(summary.rate_limited)}")
+        print(f"!!! FAILED: failures={len(failures)} companies={summary.companies} !!!")
+        if failures:
+            print("failed: " + ", ".join(_failure(f.source, f.subject, f.reason, f.error) for f in failures))
+    if denied := sorted(set(summary.access_denied) | set(relations.access_denied)):
+        print(f"ACCESS DENIED (not retried): {', '.join(denied)}")
+    if limited := sorted(set(summary.rate_limited) | set(relations.rate_limited)):
+        print(f"RATE LIMITED (429, retried): {', '.join(limited)}")
     print(f"quarterly companies={summary.companies} new={summary.new} unchanged={summary.unchanged}"
           f" no_annual_report={summary.no_annual_report} sic={summary.sic} sic_missing={summary.sic_missing}")
+    tokens = relations.llm_tokens
+    print(f"relations: extracted={relations.extracted} deferred={relations.deferred}"
+          f" json_invalid={','.join(relations.json_invalid) or '-'} no_item1={relations.no_item1} no_section={relations.no_section}"
+          f" truncated={relations.truncated} invalid_mentions={relations.invalid_mentions}"
+          f" llm_calls={relations.llm_calls}/{relations.llm_call_limit} tokens=in:{tokens['input_tokens']},out:{tokens['output_tokens']}"
+          f",cache_read:{tokens['cache_read_tokens']},cache_write:{tokens['cache_write_tokens']}")
+    rows = sum(relations.basis.values())
+    share = " ".join(f"{b}={n}({round(100 * n / rows)}%)" if rows else f"{b}={n}(-)" for b, n in relations.basis.items())
+    m = relations.matches
+    print(f"relations: tickers={relations.tickers} changed={relations.changed} rows={rows} {share} under3={relations.under3}"
+          f" mentions={m.mentions} matched={m.matched} unmatched={m.unmatched} ambiguous={m.ambiguous} self={m.self_named}")
 
 
 if __name__ == "__main__":

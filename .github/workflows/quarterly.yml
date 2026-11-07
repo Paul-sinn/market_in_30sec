@@ -1,6 +1,6 @@
 name: quarterly-job
 
-# 분기 작업(#60): 커버 범위 회사의 새 10-K 원문 + 업종 코드. 아침 실행(morning.yml)과 따로 돈다: DB 잠금·실행 기록·concurrency 그룹이 다르다.
+# 분기 작업(#60·#64): 커버 범위 회사의 새 10-K 원문 + 업종 코드 + 연관 종목(Sonnet). 아침 실행(morning.yml)과 따로 돈다: DB 잠금·실행 기록·concurrency 그룹이 다르다.
 # 레포가 공개라 이 로그도 공개다. CLI는 결과 코드·건수·CIK만 찍는다. run:은 한 줄, secrets는 env:로만 넘긴다(주입 방지)
 on:
   schedule:
@@ -34,3 +34,4 @@ jobs:
         env:
           SUPABASE_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
           SEC_USER_AGENT: ${{ secrets.SEC_USER_AGENT }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

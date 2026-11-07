@@ -12,10 +12,13 @@ DB_URL_VAR = "SUPABASE_DB_URL"
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 # 모델 ID는 이 파일에만 둔다. 개발 중엔 전부 haiku. #6·#7·#11이 여기에 상수를 더한다
+# 모델별 "사고 끄기" thinking.type: 모델마다 받는 값이 달라 Sonnet 5.5는 disabled에 400(2026-11-06). 새 모델은 실제 API로 확인해 더한다
+THINKING_OFF = {"claude-haiku-5-5": "disabled", "claude-sonnet-5-5": "between_tools"}
 CLASSIFY_MODEL = "claude-haiku-5-5"
 NEWSLINE_MODEL = "claude-haiku-5-5"  # 첫 번째 줄. 출시 전 claude-sonnet-5-5 (HANDOFF 3-6)
 REVIEW_MODEL = "claude-haiku-5-5"  # 사실/예측 판정. 출시 전 claude-sonnet-5-5 (HANDOFF 3-6)
 GLANCE_MODEL = "claude-haiku-5-5"  # 시장 한눈에 소식 줄. 출시 전 claude-opus-5-5 (HANDOFF 3-6)
+RELATION_MODEL = "claude-sonnet-5-5"  # 연관 종목 추출(분기 작업, #64). 10-K마다 한 번이라 개발 중에도 Sonnet
 LLM_KEY_VAR = "ANTHROPIC_API_KEY"  # Anthropic 키는 이 환경 변수에서만 읽는다
 SEC_UA_VAR = "SEC_USER_AGENT"  # SEC 공정 접근: 이름 + 연락 이메일. 값은 사용자가 셸·secrets에만 넣는다
 TIINGO_KEY_VAR = "TIINGO_API_KEY"  # 시세(#18). 유료 구독 전에는 비어 있다 → 운영 모드는 시세 없이 돈다
