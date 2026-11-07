@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 
 from m30.adapters import SourceError, TransientSourceError, error_for_status
-from m30.config import LLMSettings
+from m30.config import THINKING_OFF, LLMSettings
 from m30.llm import LLMReply, LLMRequest
 
 API_URL = "https://api.anthropic.com/v1/messages"
@@ -50,11 +50,13 @@ class AnthropicLLM:
 
     def _http_request(self, request: LLMRequest) -> urllib.request.Request:
         """헤더(키 포함)는 이 프레임 안에서만 만든다. Request의 repr에는 헤더가 없다."""
+        if request.model not in THINKING_OFF:  # 확인 안 된 모델은 보내지 않는다: 테스트·live에서 바로 드러나 표에 더하게 한다
+            raise ValueError("no thinking-off setting for model")
         payload = {
             "model": request.model,
             "max_tokens": request.max_tokens,
             # Haiku 5.5는 기본이 적응형 사고: 답 크기로 잡은 max_tokens(200·50)를 사고에 다 쓰면 text 블록 없이 끝난다(#14)
-            "thinking": {"type": "disabled"},
+            "thinking": {"type": THINKING_OFF[request.model]},
             # 캐시 표시: Haiku 5.5는 우리 지시문 길이에서도 캐시를 만들고 읽는다(#14 M0). 최소 길이보다 짧으면 API가 표시를 무시한다
             "system": [{"type": "text", "text": request.system, "cache_control": {"type": "ephemeral"}}],
             "messages": [{"role": "user", "content": request.user}],

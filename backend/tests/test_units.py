@@ -24,7 +24,7 @@ from m30.adapters.prices import DailyBar
 from m30.config import ET, ConfigError, is_local_db, load_discord_settings, load_llm_settings, load_settings
 from m30.copy_rules import ALWAYS_BANNED, CARD_BANNED, EMOTION_VERBS, RELATED_LABEL, SOURCE_TAG, check_card, check_related
 from m30.db.store import connect_failure_reason
-from m30 import notify
+from m30 import config, notify
 from m30.coverage import coverage_name, load_etfs
 from m30.llm import LLMReply, LLMRequest
 from m30.llm.anthropic import AnthropicLLM
@@ -540,13 +540,15 @@ def test_Anthropic_클라이언트는_HTTPS_주소만_받는다():
         AnthropicLLM(load_llm_settings({"ANTHROPIC_API_KEY": "k"}), url="http://api.anthropic.com/v1/messages")
 
 
-def anthropic_complete(monkeypatch, urlopen):
+def anthropic_complete(monkeypatch, urlopen, model="claude-haiku-5-5"):
     """urllib.request.urlopen 자리에 urlopen(request, timeout)을 끼우고 요청 하나를 보낸다(네트워크 없음)."""
     monkeypatch.setattr(urllib.request, "urlopen", urlopen)
-    return AnthropicLLM(load_llm_settings({"ANTHROPIC_API_KEY": "k"})).complete(LLMRequest("claude-haiku-5-5", "sys", "usr", 200))
+    return AnthropicLLM(load_llm_settings({"ANTHROPIC_API_KEY": "k"})).complete(LLMRequest(model, "sys", "usr", 200))
 
 
-def test_Anthropic_요청은_사고를_끄고_응답의_사고_블록은_버리고_text_블록만_이어_붙인다(monkeypatch):
+# 2026-11-06 실제 API: Sonnet 5.5는 {"type": "disabled"}에 400("between_tools"로 보내라), Haiku 5.5는 disabled로 200
+@pytest.mark.parametrize("model, thinking", [("claude-haiku-5-5", "disabled"), ("claude-sonnet-5-5", "between_tools")])
+def test_Anthropic_요청은_모델별_값으로_사고를_끄고_응답의_사고_블록은_버리고_text_블록만_이어_붙인다(monkeypatch, model, thinking):
     sent = []
     content = [{"type": "thinking", "thinking": "x", "signature": "s"}, {"type": "text", "text": "a"}, {"type": "text", "text": "b"}]
 
@@ -554,12 +556,30 @@ def test_Anthropic_요청은_사고를_끄고_응답의_사고_블록은_버리�
         sent.append(json.loads(request.data))
         return io.BytesIO(json.dumps({"content": content}).encode())
 
-    assert anthropic_complete(monkeypatch, urlopen).text == "ab"
+    assert anthropic_complete(monkeypatch, urlopen, model).text == "ab"
     # 사고를 켜 두면 Haiku 5.5가 답 크기로 잡은 max_tokens를 사고에 다 써 text 없이 끝난다(PR #32)
     # system은 캐시 표시를 단 블록 하나: Haiku 5.5는 우리 지시문 길이(1,393·1,605토큰)에서 캐시를 만들고 읽었다(#14 M0)
-    assert sent == [{"model": "claude-haiku-5-5", "max_tokens": 200, "thinking": {"type": "disabled"},
+    assert sent == [{"model": model, "max_tokens": 200, "thinking": {"type": thinking},
                      "system": [{"type": "text", "text": "sys", "cache_control": {"type": "ephemeral"}}],
                      "messages": [{"role": "user", "content": "usr"}]}]
+
+
+def test_사고_끄기_값이_표에_없는_모델이면_요청을_보내기_전에_값_없이_멈춘다(monkeypatch):
+    sent = []
+
+    def urlopen(request, timeout):
+        sent.append(request)
+        return io.BytesIO(json.dumps({"content": [{"type": "text", "text": "ok"}]}).encode())
+
+    with pytest.raises(ValueError, match="^no thinking-off setting for model$"):  # 새 모델(opus 등)은 실제 API로 확인해 표에 더한다
+        anthropic_complete(monkeypatch, urlopen, "claude-opus-5-5")
+    assert sent == []
+
+
+def test_config의_모든_모델_상수는_사고_끄기_표에_있다():
+    models = {name: value for name, value in vars(config).items() if name.endswith("_MODEL")}
+    assert models  # 상수를 실제로 찾았다
+    assert {name for name, value in models.items() if value not in config.THINKING_OFF} == set()
 
 
 @pytest.mark.parametrize(
