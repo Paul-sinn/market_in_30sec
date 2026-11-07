@@ -57,9 +57,9 @@ IMPORTANCE_MAX = 5  # U2 = B. 내부 중요도 1~5, 클수록 중요. 바꾸면 
 class EarningsEstimate:
     """GLOSSARY EarningsEstimate. earnings_estimate 한 행의 값(#57)."""
 
-    day: date  # 추정일 = basis 접수일(동부) + 364일. 거래일보다 앞이면 "지남"
+    day: date  # 추정일 = basis 접수일(동부) + 364일, 휴장일이면 다음 거래일(#89). 거래일보다 앞이면 "지남"
     timing: EarningsTiming | None  # None = unknown(날짜만). DB 'unknown'
-    basis_accession: str  # 작년 같은 분기 실적 공시
+    basis_accession: str  # 작년 같은 분기의 대표 실적 공시(그 분기의 가장 늦은 공시, #89)
 
 
 class UnclassifiedReason(StrEnum):

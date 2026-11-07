@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta
 
 import pytest
 
+from m30 import trading_day
 from m30.adapters import Source, error_for_status
 from m30.adapters.edgar import SUBMISSION_TEXT_URL, SUBMISSIONS_URL, EdgarEarningsFilingSource
 from m30.adapters.events import Earnings, EarningsTiming
@@ -149,6 +150,103 @@ def test_범위_시작_04시_전_공시는_쓰지_않는다(store, at, line):
     run(store, dataclasses.replace(changed(), earnings_filings={"0000078003": {a: datetime.fromisoformat(t) for a, t in late}}))
 
     assert event_line(store, "PFE") == line
+
+
+# 한 분기에 실적 공시가 둘인 회사(#89, TSLA 모양): 분기 초 09시대 판매 대수 8-K + 약 20일 뒤 16시대 실적 8-K(둘 다 Item 2.02).
+# 26-000016·046717·049213·064366·066738은 #57 실측 기록의 접수번호·시각, 나머지는 같은 모양으로 채운 값
+TSLA_CIK = "0001318605"
+TESLA = {
+    "0001628280-25-000401": "2025-04-02T09:00:00-04:00", "0001628280-25-000422": "2025-04-22T16:30:00-04:00",
+    "0001628280-25-000702": "2025-07-02T09:00:00-04:00", "0001628280-25-000723": "2025-07-23T16:30:00-04:00",
+    "0001628280-25-001002": "2025-10-02T09:00:00-04:00", "0001628280-25-001022": "2025-10-22T16:30:00-04:00",
+    "0001628280-26-000016": "2026-01-02T09:20:13-05:00", "0001628280-26-000128": "2026-01-28T16:30:00-05:00",
+    "0001628280-26-000402": "2026-04-02T09:00:00-04:00", "0001628280-26-000422": "2026-04-22T16:30:00-04:00",
+    "0001628280-26-046717": "2026-07-02T09:01:26-04:00", "0001628280-26-049213": "2026-07-22T16:35:52-04:00",
+    "0001628280-26-064366": "2026-10-02T09:04:26-04:00", "0001628280-26-066738": "2026-10-21T16:41:42-04:00",
+}
+
+
+def tesla():
+    return dataclasses.replace(changed(), coverage=[Coverage("TSLA", "Tesla, Inc.", cik=TSLA_CIK)],
+                               earnings_filings={TSLA_CIK: {a: datetime.fromisoformat(t) for a, t in TESLA.items()}})
+
+
+@pytest.mark.parametrize(
+    "day, line, row",
+    [
+        # 수정 전: 판매 대수 공시를 따라가 Fri 1/1(휴장일), 시점은 09시대·16시대가 섞여 없음
+        (date(2026, 11, 6), "Earnings Wed 1/27 after close (est.) (D-82)",
+         EarningsEstimate(date(2027, 1, 27), EarningsTiming.AFTER_CLOSE, "0001628280-26-000128")),
+        # 되돌려 보기: 판매 대수 공시 날. 수정 전에는 작년 판매 대수 공시(+364 = 하루 전)로 추정해 No confirmed events found
+        (date(2026, 10, 2), "Earnings Wed 10/21 after close (est.) (D-19)",
+         EarningsEstimate(date(2026, 10, 21), EarningsTiming.AFTER_CLOSE, "0001628280-25-001022")),
+        (date(2026, 7, 2), "Earnings Wed 7/22 after close (est.) (D-20)",
+         EarningsEstimate(date(2026, 7, 22), EarningsTiming.AFTER_CLOSE, "0001628280-25-000723")),
+    ],
+    ids=["2026-11-06", "2026-10-02", "2026-07-02"],
+)
+def test_한_분기에_실적_공시가_둘이면_늦은_공시를_그_분기_실적_발표로_보고_추정한다(store, day, line, row):
+    run(store, tesla(), day)
+
+    assert event_line(store, "TSLA", day) == (line, LineStatus.CHECKED_FOUND, SEC)
+    assert store.list_earnings_estimates(day)["TSLA"] == row
+
+
+@pytest.mark.parametrize(
+    "day, line, row",
+    [
+        # 되돌려 보기: 실적 공시 날. 그 분기 판매 대수 공시만 범위에 있다. 수정 전 Fri 1/1(차이 −72·−71일)
+        (date(2026, 10, 21), "Earnings Wed 10/21 after close (est.) (D-0)",
+         EarningsEstimate(date(2026, 10, 21), EarningsTiming.AFTER_CLOSE, "0001628280-25-001022")),
+        (date(2026, 7, 22), "Earnings Wed 7/22 after close (est.) (D-0)",
+         EarningsEstimate(date(2026, 7, 22), EarningsTiming.AFTER_CLOSE, "0001628280-25-000723")),
+    ],
+    ids=["2026-10-21", "2026-07-22"],
+)
+def test_이번_분기_앞_공시만_들어왔으면_작년_같은_분기의_늦은_공시로_이번_분기를_추정한다(store, day, line, row):
+    run(store, tesla(), day)
+
+    assert event_line(store, "TSLA", day) == (line, LineStatus.CHECKED_FOUND, SEC)
+    assert store.list_earnings_estimates(day)["TSLA"] == row
+
+
+@pytest.mark.parametrize(
+    "prelim",
+    [
+        ("0000320193-25-000091", "2025-10-09T07:00:00-04:00"),  # 작년 같은 분기. 수정 전: 사전 발표 +364 = 10/8 지남 → No confirmed events found
+        ("0000320193-26-000061", "2026-07-09T07:00:00-04:00"),  # 지난 분기. 수정 전: 07:00이 섞여 시점 없음
+    ],
+    ids=["last_year_quarter", "last_quarter"],
+)
+def test_같은_분기에_사전_발표_뒤_본_발표가_있으면_본_발표로만_추정일과_장_전_장_후를_정한다(store, prelim):
+    run(store, changed(add=[prelim]))  # AAPL 본 발표는 전부 16:30
+
+    assert event_line(store, "AAPL") == ("Earnings Thu 10/29 after close (est.) (D-13)", LineStatus.CHECKED_FOUND, SEC)
+    assert store.list_earnings_estimates(FRI)["AAPL"] == EarningsEstimate(
+        date(2026, 10, 29), EarningsTiming.AFTER_CLOSE, "0000320193-25-000101")
+
+
+# 분기마다 2일 09:00에 공시하는 회사. 기준 2026-01-02(Fri) + 364 = 2027-01-01(Fri, 휴장일)
+NEW_YEAR = {"0000078003-25-000101": "2025-10-02T09:00:00-04:00", "0000078003-26-000001": "2026-01-02T09:00:00-05:00",
+            "0000078003-26-000041": "2026-04-02T09:00:00-04:00", "0000078003-26-000071": "2026-07-02T09:00:00-04:00",
+            "0000078003-26-000101": "2026-10-02T09:00:00-04:00"}
+
+
+def test_추정일이_휴장일이면_다음_거래일로_옮기고_D_N도_그날로_센다(store):
+    run(store, dataclasses.replace(
+        changed(), earnings_filings={"0000078003": {a: datetime.fromisoformat(t) for a, t in NEW_YEAR.items()}}))
+
+    assert event_line(store, "PFE") == ("Earnings Mon 1/4 before open (est.) (D-80)", LineStatus.CHECKED_FOUND, SEC)
+    assert store.list_earnings_estimates(FRI)["PFE"] == EarningsEstimate(
+        date(2027, 1, 4), EarningsTiming.BEFORE_OPEN, "0000078003-26-000001")
+
+
+def test_추정일의_해가_휴장일_표_밖이면_옮기지_않고_카드를_만든다(store, monkeypatch):
+    monkeypatch.setattr(trading_day, "CALENDAR_YEARS", range(2025, 2027))  # NYSE가 내년 휴장일을 아직 안 실은 때
+    run(store, dataclasses.replace(
+        changed(), earnings_filings={"0000078003": {a: datetime.fromisoformat(t) for a, t in NEW_YEAR.items()}}))
+
+    assert event_line(store, "PFE") == ("Earnings Fri 1/1 before open (est.) (D-77)", LineStatus.CHECKED_FOUND, SEC)
 
 
 def stored_times(admin):

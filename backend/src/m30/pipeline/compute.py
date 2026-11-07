@@ -2,6 +2,7 @@
 
 import re
 from collections.abc import Iterable, Mapping, Sequence
+from contextlib import suppress
 from datetime import date, datetime, time, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from itertools import pairwise
@@ -11,7 +12,7 @@ from m30.adapters.holdings import HoldingsReport
 from m30.adapters.prices import DailyBar
 from m30.config import ET
 from m30.models import Coverage, EarningsEstimate, FundHoldings, LineStatus
-from m30.trading_day import previous_trading_day
+from m30.trading_day import CalendarError, is_trading_day, previous_trading_day
 
 
 def round_pct(value: Decimal) -> Decimal:
@@ -100,28 +101,52 @@ YEAR_SAME_WEEKDAY = timedelta(days=364)
 NEXT_MIN = timedelta(days=45)  # 최근 실적 공시 뒤 이만큼 안의 추정은 그 공시 자신의 작년 짝이다
 NEXT_MAX = timedelta(days=150)  # 이보다 먼 추정은 작년 같은 분기 공시가 빠져 한 분기를 건너뛴 것이다
 TIMING_MIN_FILINGS = 4  # "지난 4개 분기"
+# 앞 공시와 이 간격 안이면 같은 분기(#89). 실측(#57): 같은 분기 19·20일(TSLA 판매 대수 → 실적), 분기 사이 77일 이상(KO)
+SAME_QUARTER = timedelta(days=45)
 MARKET_OPEN, MARKET_CLOSE = time(9, 30), time(16, 0)  # 동부. 전 = < MARKET_OPEN, 후 = >= MARKET_CLOSE(조기 마감일도 16:00)
 
 
 def earnings_estimate(accepted: Mapping[str, datetime]) -> EarningsEstimate | None:
     """accepted = 접수번호 → 헤더 접수 시각(tz-aware). 호출부가 earnings_window로 거른 실적 공시. 날짜는 전부 동부 날짜.
-    r = (접수 시각, 접수번호)가 가장 늦은 공시. b(작년 같은 분기) = 날짜 + 364일 > r 날짜 + NEXT_MIN인 가장 이른 공시.
+    분기 묶기(#89): (접수 시각, 접수번호) 순으로 앞 공시와 SAME_QUARTER 안이면 같은 분기. 분기의 가장 늦은 공시 = 대표 공시
+    (그 분기 실적 발표). 아래는 전부 대표 공시만 센다: 판매 대수·사전 발표 공시는 날짜·시점에 쓰지 않는다.
+    r = 마지막 분기의 대표 공시. b(작년 같은 분기) = 날짜 + 364일 > r 날짜 + NEXT_MIN인 가장 이른 대표 공시.
+    단 b 앞 분기(r 분기의 작년 짝)가 공시 둘 이상이고 r 날짜 − 364일이 그 분기의 마지막 공시보다 그 앞 공시에 가까우면
+    r 분기는 앞 공시만 들어온 것이다 → b = 그 짝 분기의 대표 공시(이번 분기 발표를 추정), 시점은 r 분기를 빼고 센다.
     b 날짜 + 364일 > r 날짜 + NEXT_MAX면 None(작년 같은 분기 공시가 없다: 이력 1년 미만이거나 한 분기가 빠짐). 비어도 None.
-    day = b 날짜 + 364일(같은 요일). 거래일과 비교하지 않는다(지났는지는 줄이 정한다).
-    timing: [b, r] 공시가 TIMING_MIN_FILINGS건 이상이고 전부 MARKET_OPEN 전이면 BEFORE_OPEN, 전부 MARKET_CLOSE 이후면 AFTER_CLOSE, 아니면 None.
-    shortcut: 분기를 공시 1건으로 센다(한 분기에 실적 공시가 둘이면 더 센다), 기록(#57)에서 어긋남이 보이면 분기 묶기를 더한다"""
+    day = b 날짜 + 364일(같은 요일), 휴장일이면 다음 거래일(해가 달력 표 밖이면 옮기지 않는다). 거래일과 비교하지 않는다(지났는지는 줄이 정한다).
+    timing: [b, r] 대표 공시가 TIMING_MIN_FILINGS건 이상이고 전부 MARKET_OPEN 전이면 BEFORE_OPEN, 전부 MARKET_CLOSE 이후면 AFTER_CLOSE, 아니면 None.
+    shortcut: 작년 같은 분기에 없던 앞 공시(올해 처음 낸 사전 발표)만 들어온 동안은 다음 분기를 추정한다, 기록에서 그런 종목이 보이면 고친다"""
     if not accepted:
         return None
     order = sorted(accepted, key=lambda a: (accepted[a], a))
     et = {a: accepted[a].astimezone(ET) for a in order}
-    recent = et[order[-1]].date()
-    # r 자신은 항상 조건을 만족한다. 날짜는 시각 순이라 조건을 만족하는 공시는 order의 뒤쪽 한 덩어리 = [b, r]
-    start = next(i for i, a in enumerate(order) if et[a].date() + YEAR_SAME_WEEKDAY > recent + NEXT_MIN)
-    basis = order[start]
+    quarters = [[order[0]]]
+    for prev, a in pairwise(order):
+        if et[a].date() - et[prev].date() <= SAME_QUARTER:
+            quarters[-1].append(a)
+        else:
+            quarters.append([a])
+    reps = [q[-1] for q in quarters]
+    recent = et[reps[-1]].date()
+    # r 자신은 항상 조건을 만족한다. 날짜는 시각 순이라 조건을 만족하는 대표 공시는 reps의 뒤쪽 한 덩어리 = [b, r]
+    start = next(i for i, a in enumerate(reps) if et[a].date() + YEAR_SAME_WEEKDAY > recent + NEXT_MIN)
+    end = len(reps)
+    if start > 0 and len(last_year := quarters[start - 1]) > 1:
+        # r을 작년으로 옮긴 날이 작년 같은 분기의 마지막 공시보다 그 앞 공시에 가깝다 = 이번 분기는 앞 공시만 들어왔다
+        r_last_year = recent - YEAR_SAME_WEEKDAY
+        if r_last_year - et[last_year[-2]].date() < et[last_year[-1]].date() - r_last_year:
+            start, end = start - 1, end - 1
+    basis = reps[start]
     day = et[basis].date() + YEAR_SAME_WEEKDAY
     if day > recent + NEXT_MAX:
         return None
-    times = [et[a].time() for a in order[start:]]
+    with suppress(CalendarError):  # 해가 달력 표 밖(NYSE가 아직 안 실음)이면 옮기지 않는다: 아침 실행을 멈추지 않게
+        moved = day
+        while not is_trading_day(moved):
+            moved += timedelta(days=1)
+        day = moved
+    times = [et[a].time() for a in reps[start:end]]
     timing = None
     if len(times) >= TIMING_MIN_FILINGS:
         if all(t < MARKET_OPEN for t in times):
