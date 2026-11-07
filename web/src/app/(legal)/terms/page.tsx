@@ -17,8 +17,8 @@ export default function Terms() {
 
       <Section id="service" title="The Service">
         <p>
-          Every trading day, the Service shows a morning card for each stock in its coverage — a selection of U.S.-listed
-          stocks and ETFs — and a short market overview.
+          Every trading day, the Service shows morning cards for the stocks users have picked and for a set of default
+          stocks, all from a selection of U.S.-listed stocks and ETFs, along with a short market overview.
         </p>
         <p>
           The Service is free. Plus is not for sale, and we do not take any payments. The Service may show Plus features as

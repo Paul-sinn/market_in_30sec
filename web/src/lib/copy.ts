@@ -50,7 +50,7 @@ export const REMOVE = "Remove"; // 같음("Remove AAPL")
 export const SWAPS_LEFT = (n: number) => `Swaps left today: ${n}`; // 무료만. 프로필 타임존 자정 기준
 /** POST /my-stocks 결과 코드(/cards?my_stock=…) → 문구. 여기 없는 코드는 문구를 그리지 않는다 */
 export const MY_STOCK_NOTICE = {
-  free_swap_limit: "Free plan can swap stocks 3 times a day. Plus has no limit.", // HANDOFF 3-2
+  free_swap_limit: "Free plan can swap stocks 3 times a day. Swaps reset tomorrow.", // HANDOFF 3-2. 리셋 = 프로필 타임존 자정(user_local_date)
   free_my_stock_limit: "Free plan can pick 3 stocks. Remove one to add another.",
   failed: "My stocks could not be updated", // 그 밖의 실패(LOAD_FAILED·SIGN_IN_FAILED와 같은 형식)
 } as const;
@@ -72,7 +72,7 @@ export const LOCKED_SLOT = {
 } as const;
 export const ABOUT_PLUS = "About Plus"; // /plus 설명 화면 제목(잠긴 자리·세 번째 줄 잠금 모두 이 화면)
 export const PLUS_PLANNED =
-  "Plus is not available yet. Planned: earnings summaries, insider and big holder filings, and related company filings. All from SEC filings."; // 설명(모든 자리 같음)
+  "Plus is not available yet. Planned: any number of covered stocks, earnings summaries, insider and big holder filings, related company filings, and past cards from the last 90 days. All from SEC filings."; // 설명(모든 자리 같음). 목록은 HANDOFF Plus 정의(판매 전 계획)
 export const NOTIFY_ME_NOTE = "Tap Notify me and we'll email your sign-in address once when Plus launches."; // 개인정보처리방침 문장과 같게(U1 when)
 export const NOTIFY_ME = "Notify me"; // 대기 등록 버튼(GLOSSARY Waitlist)
 export const ON_THE_LIST = "You're on the list"; // 이미 등록함

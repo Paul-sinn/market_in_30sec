@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 import type { CardView, ChangeView, LineView, TapSlot } from "@/lib/card-view";
 import { LOCKED_SLOT, QUIET_FACT, RELATED_IN_PLUS, SUMMARY_TOMORROW } from "@/lib/copy";
 
@@ -18,20 +20,28 @@ export const LINE_TONE: Record<LineView["status"], string> = {
 };
 
 /** 잠긴 자리·세 번째 줄 잠금 누르기(#69): POST /waitlist가 그날 그 자리 합계를 1 올리고 /plus 설명으로 보낸다.
- *  일반 폼이라 JS 없이 돌고, 유저 값을 싣지 않는다(카드는 모든 viewer에게 같다). 터치 영역 44px, 누를 수 있다는 표시는 테두리·밑줄(hover 없는 폰) */
-function TapForm({ slot, className, children }: { slot: TapSlot; className: string; children: React.ReactNode }) {
+ *  일반 폼이라 JS 없이 돌고, 유저 값을 싣지 않는다(카드는 모든 viewer에게 같다). 터치 영역 44px, 누를 수 있다는 표시는 테두리·밑줄(hover 없는 폰).
+ *  sample = 랜딩 샘플 카드(#70): 같은 모양의 /plus 링크. 랜딩 방문이 탭 합계에 섞이지 않게 세지 않는다(프리페치도 없음: /plus 요청 제한) */
+function TapForm({ slot, sample, className, children }: { slot: TapSlot; sample: boolean; className: string; children: React.ReactNode }) {
+  const look = `flex min-h-11 w-full cursor-pointer items-center text-left hover:text-foreground ${className}`;
+  if (sample)
+    return (
+      <Link href="/plus" prefetch={false} className={look}>
+        {children}
+      </Link>
+    );
   return (
     <form method="post" action="/waitlist">
       <input type="hidden" name="intent" value="tap" />
       <input type="hidden" name="slot" value={slot} />
-      <button type="submit" className={`flex min-h-11 w-full cursor-pointer items-center text-left hover:text-foreground ${className}`}>
+      <button type="submit" className={look}>
         {children}
       </button>
     </form>
   );
 }
 
-export function StockCard({ card }: { card: CardView }) {
+export function StockCard({ card, sample = false }: { card: CardView; sample?: boolean }) {
   return (
     <article className="flex h-full flex-col bg-surface p-6">
       {/* 한 줄에 안 들어가면(긴 종목명·지연 문구) 등락률 묶음이 다음 줄 오른쪽으로 내려간다 */}
@@ -66,7 +76,7 @@ export function StockCard({ card }: { card: CardView }) {
             className={`border-t border-border wrap-break-word ${line.status === "locked" ? "" : "py-3 last:pb-0"} ${LINE_TONE[line.status]}`}
           >
             {line.status === "locked" ? (
-              <TapForm slot="related_lock" className="py-1 underline underline-offset-4">
+              <TapForm slot="related_lock" sample={sample} className="py-1 underline underline-offset-4">
                 {RELATED_IN_PLUS(line.count)}
               </TapForm>
             ) : (
@@ -84,7 +94,7 @@ export function StockCard({ card }: { card: CardView }) {
       {/* 잠긴 자리(#69): 줄 수에 세지 않는다. ETF·지난 카드에는 없다 */}
       {card.lockedSlot && (
         <div className="mt-4">
-          <TapForm slot={card.lockedSlot} className="border border-muted px-4 py-2 text-muted">
+          <TapForm slot={card.lockedSlot} sample={sample} className="border border-muted px-4 py-2 text-muted">
             {LOCKED_SLOT[card.lockedSlot]}
           </TapForm>
         </div>

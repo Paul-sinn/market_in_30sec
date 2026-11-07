@@ -2,10 +2,10 @@ import { NOT_INVESTMENT_ADVICE } from "@/lib/copy";
 
 import { Brand } from "./brand";
 
-// 절대 경로만: 어느 경로에서 눌러도 같은 곳. 웹에 없는 기능은 시안처럼 랜딩 안 앵커로. 연락·삭제는 법률 페이지의 절(#62, id 고정)
+// 절대 경로만: 어느 경로에서 눌러도 같은 곳. Product는 랜딩 안 앵커. 연락·삭제는 법률 페이지의 절(#62, id 고정).
+// 웹에 없는 기능(아침 알림·위젯·아레나·요금)은 칸을 두지 않는다(#70)
 const COLUMNS = [
-  ["Product", [["The card", "/#card"], ["Morning push", "/#how"], ["Lock screen widget", "/#how"], ["Pricing", "/#pricing"]]],
-  ["AI Arena", [["How calls are graded", "/#arena"], ["The agents", "/#arena"], ["Records", "/#arena"]]],
+  ["Product", [["The card", "/#card"], ["How it works", "/#how"], ["Plus", "/#plus"]]],
   ["Support", [["Request a stock", "/terms#contact"], ["Contact", "/terms#contact"], ["Delete my account", "/privacy#delete"]]],
   ["Legal", [["Terms of service", "/terms"], ["Privacy", "/privacy"]]],
 ] as const;
@@ -35,8 +35,8 @@ export function SiteFooter() {
         </div>
         <div className="flex flex-wrap justify-between gap-4 border-t border-surface pt-6 text-xs">
           <p className="max-w-190">
-            {/* 가격 문장은 가격 표시가 꺼져 있어 뺐다(#62). 다시 켜면 되살린다 */}
-            For informational purposes only. {NOT_INVESTMENT_ADVICE}. Arena trades are simulated with virtual money.
+            {/* 가격 문장은 가격 표시가 꺼져 있어 뺐다(#62). 아레나 문장은 아레나가 웹에 없어 뺐다(#70). 다시 켜면 되살린다 */}
+            For informational purposes only. {NOT_INVESTMENT_ADVICE}.
           </p>
         </div>
       </div>

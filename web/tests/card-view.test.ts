@@ -255,7 +255,7 @@ describe("myDashboardView: 로그인한 대시보드(#38)", () => {
 
   test("결과 코드 → 고정 문구(HANDOFF 3-2 리터럴), 모르는 값은 문구 없음", () => {
     const notice = (result: unknown) => myDashboardView([], [], { stocks: [], swapsLeft: 3 }, result).notice;
-    expect(notice("free_swap_limit")).toBe("Free plan can swap stocks 3 times a day. Plus has no limit.");
+    expect(notice("free_swap_limit")).toBe("Free plan can swap stocks 3 times a day. Swaps reset tomorrow.");
     expect(notice("free_my_stock_limit")).toBe("Free plan can pick 3 stocks. Remove one to add another.");
     expect(notice("failed")).toBe("My stocks could not be updated");
     for (const other of [undefined, "", "ok", "constructor", "__proto__", "toString", ["failed"], "<script>"]) {

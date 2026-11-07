@@ -2,13 +2,14 @@
  * 랜딩(#27). 사용자 시안 design-system/user-mockup/landing.dc.html을 토큰으로 옮겼다. DB를 읽지 않는 정적 페이지.
  * 시안 문구는 규칙·사실과 어긋나는 곳만 고쳤다(목록: _workspace/issue-27/01_web-dev_report.md 5절, 04_web-dev_report.md).
  * 가격 숫자·가격 사실 설명은 뺐다(#62, 스토리 24: 가격 표시 off). 샘플은 피봇 카드 줄.
+ * #70: 웹에 없는 것(요금·체험·결제, 아레나, Apple 로그인, 위젯·아침 알림)을 뺐다. Plus는 판매 전 + 계획 기능 + Notify me만(약관 service 절)
  */
 import Link from "next/link";
 
 import { Brand } from "@/components/brand";
 import { StockCard } from "@/components/stock-card";
 import type { CardView } from "@/lib/card-view";
-import { APP_NAME, CHECKED_PREFIX, NEW_FILINGS, OPEN_CARDS, QUIET_DAY } from "@/lib/copy";
+import { ABOUT_PLUS, CHECKED_PREFIX, NEW_FILINGS, OPEN_CARDS, PLUS_PLANNED, QUIET_DAY } from "@/lib/copy";
 
 const WRAP = "mx-auto max-w-7xl px-8";
 const LABEL = "text-label font-semibold tracking-widest uppercase";
@@ -20,20 +21,23 @@ const CTA = `${BUTTON} min-h-12 px-8 text-sm`;
 const NAV_LINK = "inline-flex min-h-12 items-center text-nav font-semibold tracking-wider uppercase hover:text-hover";
 
 // 샘플 카드: 카드와 같은 컴포넌트·같은 규칙의 문구(card-copy-rules 검사기 통과). 가격 표시 off 카드처럼 change 키 없음(#62).
-// 세 번째 줄은 Plus가 보는 연관 소식(#67 전이라 lines에 둔다). 하단은 실제 카드처럼 확인된 줄의 범위(전부 SEC filings)
+// 무료로 보이는 그대로(exposeCards): 세 번째 줄은 건수 잠금, 주식엔 잠긴 자리, 조용한 주식엔 알아두기 1번. 잠금은 sample이라 /plus 링크(#70).
+// 하단은 실제 카드처럼 확인된 줄의 범위(잠긴 줄 제외, 전부 SEC filings)
 const CHECKED = `${CHECKED_PREFIX} 7:30 AM ET · SEC filings`;
+const AAPL_NEWS = "Apple named a new CFO +2 more (SEC filing)";
 const SAMPLES = [
   {
     ticker: "AAPL",
     name: "Apple",
     header: { text: NEW_FILINGS(3), status: "checked_found" }, // 첫 번째 줄 1등 + 2 more
     lines: [
-      { text: "Apple named a new CFO +2 more (SEC filing)", status: "checked_found" },
+      { text: AAPL_NEWS, status: "checked_found" },
       { text: "Earnings Thu 10/15 after close (est.) (D-2)", status: "checked_found" },
-      { text: "Supplier Broadcom reported quarterly results (SEC filing)", status: "checked_found" },
+      { status: "locked", count: 2 },
     ],
     leverageTag: null,
     checked: CHECKED,
+    lockedSlot: "earnings_summary", // 추정 실적일까지 2일(7일 이내)
   },
   {
     ticker: "QQQ",
@@ -54,10 +58,12 @@ const SAMPLES = [
     lines: [
       { text: "No new SEC filings found", status: "checked_none" },
       { text: "No confirmed events found", status: "checked_none" },
-      { text: "No major related filings found", status: "checked_none" },
+      { status: "locked" }, // 0건은 건수 없이
     ],
     leverageTag: null,
     checked: CHECKED,
+    quietFact: "Coca-Cola makes beverage concentrates and syrups for bottling partners",
+    lockedSlot: "big_holders",
   },
 ] satisfies CardView[];
 
@@ -74,52 +80,8 @@ const CARD_LINES = [
   [
     "03",
     "Related updates",
-    "Same-day filings from a competitor, customer, supplier or peer. The relationship and the fact — never what it means for your stock.",
+    "Same-day filings from a competitor, customer, supplier or peer. The relationship and the fact — never what it means for your stock. Free cards don't show the filings themselves.",
   ],
-] as const;
-
-const ARENA_DAY = [
-  ["Before the open", "Each agent publishes its calls — new trades and every position it holds."],
-  ["At the close", "Calls are graded against the day's open — new trades and held positions alike. Flat days don't count."],
-  ["Next morning", "Yesterday's verdicts arrive alongside today's calls. Misses can't be deleted."],
-] as const;
-
-const AGENTS = [
-  ["A", "Aggressive", "Rides trends. Blunt. Owns the misses.", "12–9", "bg-agent-a text-agent-a-ink"],
-  ["S", "Steady", "Value and risk first. One reason at a time.", "11–10", "bg-agent-s text-agent-s-ink"],
-] as const;
-
-const PLANS = [
-  {
-    label: "Free",
-    price: "$0",
-    note: "No card needed. No ads.",
-    features: [
-      "Up to 3 stocks, 3 swaps a day",
-      "What happened and what's next, on every card",
-      "Market at a glance and the morning push",
-      "Arena verdicts and records",
-      "Monthly report headline",
-    ],
-    cta: [OPEN_CARDS, "/cards", "border border-background text-background"],
-    border: "border-hover",
-  },
-  {
-    label: "Plus · billed yearly",
-    badge: "3-day free trial",
-    price: "$79.99",
-    per: " / year",
-    note: "About $0.22 a day · or $9.99 monthly",
-    features: [
-      "Every stock in coverage, unlimited swaps",
-      "Related updates on every card",
-      "Today's Arena calls and agent talk",
-      "Monthly report by stock vs. S&P 500 (SPY)",
-      "Everything in Free",
-    ],
-    cta: [OPEN_CARDS, "/cards", "bg-accent text-foreground"],
-    border: "border-background",
-  },
 ] as const;
 
 export default function Landing() {
@@ -137,11 +99,8 @@ export default function Landing() {
             <a href="#how" className={NAV_LINK}>
               How it works
             </a>
-            <a href="#arena" className={NAV_LINK}>
-              AI Arena
-            </a>
-            <a href="#pricing" className={NAV_LINK}>
-              Pricing
+            <a href="#plus" className={NAV_LINK}>
+              Plus
             </a>
           </div>
           {/* 시안 높이 40px → 터치 영역 44px */}
@@ -163,8 +122,7 @@ export default function Landing() {
                 in 30 seconds.
               </h1>
               <p className="max-w-130 text-lg text-dim">
-                One card per stock each morning: what happened, what&apos;s scheduled, and what related companies filed.
-                Facts from SEC filings — no tips, no hype.
+                One card per stock each morning: what happened and what&apos;s next. Facts from SEC filings — no tips, no hype.
               </p>
               <div className="flex flex-wrap gap-4 pt-2">
                 <Link href="/cards" className={`${CTA} bg-accent`}>
@@ -173,28 +131,6 @@ export default function Landing() {
                 <a href="#card" className={`${CTA} border border-foreground`}>
                   See a sample card
                 </a>
-              </div>
-            </div>
-            <div className="flex grow basis-80 justify-center">
-              <div
-                role="img"
-                aria-label="Lock screen showing the morning push"
-                className="flex h-140 w-75 flex-col items-center overflow-hidden rounded-phone border-10 border-black bg-linear-172/srgb from-dusk-1 via-dusk-2 via-58% to-dusk-3 px-3.5 pt-14"
-              >
-                <p className="text-md font-medium">Tuesday, October 13</p>
-                <p className="text-clock font-semibold tabular-nums">8:00</p>
-                <div className="mt-10 w-full rounded-push bg-foreground/82 px-3.5 py-3 text-background">
-                  <div className="flex items-center gap-2 text-xs text-push-meta">
-                    <span className="flex size-5 items-center justify-center rounded-icon bg-accent text-micro font-bold text-foreground">
-                      30s
-                    </span>
-                    <span>{APP_NAME}</span>
-                    <span className="ml-auto">now</span>
-                  </div>
-                  <p className="mt-1.5 leading-snug font-medium">
-                    Today: Apple named a new CFO. No new SEC filings for QQQ or KO.
-                  </p>
-                </div>
               </div>
             </div>
           </div>
@@ -220,8 +156,9 @@ export default function Landing() {
               <p className={`${LABEL} text-dim`}>The card</p>
               <h2 className={H2}>Three lines. One fact each.</h2>
               <p className="max-w-120 text-base text-dim">
-                Each card checks the latest SEC filings for one stock. Never more than three lines — and on a quiet day,
-                the card says so instead of filling space.
+                Each card checks the latest SEC filings for one stock and says up top what it found: new filings or a quiet
+                day. Never more than three lines. On a quiet day, it may add one background fact from the company&apos;s
+                annual report.
               </p>
               <ol className="mt-2 flex flex-col border-b border-surface">
                 {CARD_LINES.map(([num, title, body]) => (
@@ -240,7 +177,7 @@ export default function Landing() {
             </div>
             <div className="flex min-w-0 grow basis-105 flex-col gap-4">
               {SAMPLES.map((card) => (
-                <StockCard key={card.ticker} card={card} />
+                <StockCard key={card.ticker} card={card} sample />
               ))}
               <p className="text-xs text-dim">Sample cards. Figures are illustrative.</p>
             </div>
@@ -254,7 +191,21 @@ export default function Landing() {
               <h2 className={H2}>Set up once. Read every morning.</h2>
             </div>
             <div className="flex flex-wrap gap-8">
-              <Step num="01" title="Pick up to three stocks" body="Anything in the S&P 500 plus about 50 popular ETFs. Plus removes the limit.">
+              <Step
+                num="01"
+                title="See the latest cards right away"
+                body="No account for the first look. Sign in with Google to pick your own stocks."
+              >
+                <div className="flex h-55 flex-col justify-center gap-3 bg-surface px-8 py-6">
+                  <div className="flex items-baseline gap-3">
+                    <span className="text-lg font-bold">AAPL</span>
+                    <span className="flex-1 text-muted">Apple</span>
+                  </div>
+                  <div className="h-px bg-border" />
+                  <p>{AAPL_NEWS}</p>
+                </div>
+              </Step>
+              <Step num="02" title="Pick up to three stocks" body="From the S&P 500 and popular ETFs, with up to three swaps a day.">
                 <div className="flex h-55 flex-wrap items-center justify-center gap-2 bg-surface p-6">
                   {["AAPL", "QQQ", "KO"].map((t) => (
                     <span key={t} className="border border-foreground px-5 py-3 text-base font-bold">
@@ -266,118 +217,32 @@ export default function Landing() {
                 </div>
               </Step>
               <Step
-                num="02"
-                title="See today's card right away"
-                body="No account for the first look. Sign in with Apple or Google to keep the list."
-              >
-                <div className="flex h-55 flex-col justify-center gap-3 bg-surface px-8 py-6">
-                  <div className="flex items-baseline gap-3">
-                    <span className="text-lg font-bold">AAPL</span>
-                    <span className="flex-1 text-muted">Apple</span>
-                  </div>
-                  <div className="h-px bg-border" />
-                  <p>{SAMPLES[0].lines[0].text}</p>
-                </div>
-              </Step>
-              <Step
                 num="03"
-                title="Choose a morning time"
-                body="One sentence arrives on the lock screen. Skip it and it lands 30 minutes before the open."
+                title="Come back each trading day"
+                body="New cards are ready by 7:45 AM ET."
               >
                 <div className="flex h-55 flex-col items-center justify-center gap-2 bg-surface">
-                  <p className="text-price font-medium tabular-nums">8:00 AM</p>
-                  <p className={`${LABEL} text-muted`}>Local time · after 7:45 AM ET</p>
+                  <p className="text-price font-medium tabular-nums">7:45 AM</p>
+                  <p className={`${LABEL} text-muted`}>ET · Every trading day</p>
                 </div>
               </Step>
             </div>
           </div>
         </section>
 
-        <section id="arena" aria-label="AI Arena" className="bg-accent">
-          <div className={`${WRAP} flex flex-col gap-6 py-24`}>
-            <p className={LABEL}>AI Arena · mock trading</p>
-            <h2 className={`max-w-220 ${H2}`}>
-              Two AI agents trade play money. Every call is graded at the close — and stays on the record.
-            </h2>
-            <p className="max-w-160 text-base">
-              $10,000 of virtual cash each, long only, daily prices only. Their calls and talk live inside the Arena tab —
-              never on the cards.
+        {/* 시안의 흰 요금 섹션 자리. 문장은 약관 service 절·방침 use 절·/plus 설명과 같은 말(가격·체험·결제 없음) */}
+        <section id="plus" aria-label="Plus" className="bg-foreground text-background">
+          <div className={`${WRAP} flex flex-col items-start gap-6 py-24`}>
+            <p className={`${LABEL} text-ink-muted`}>Plus</p>
+            <h2 className={H2}>Free to use. No payments.</h2>
+            <p className="max-w-160 text-base">{PLUS_PLANNED}</p>
+            <p className="max-w-160 text-base text-ink-muted">
+              Sign in and tap Notify me on the About Plus page. We&apos;ll email your sign-in address once when Plus launches.
             </p>
-          </div>
-        </section>
-
-        <section aria-label="Agents" className="py-24">
-          <div className={`${WRAP} flex flex-col gap-16`}>
-            <div className="flex flex-wrap gap-8">
-              {AGENTS.map(([initial, name, style, record, avatar]) => (
-                <article key={name} className="flex min-w-0 grow basis-105 flex-col gap-6 bg-surface p-6">
-                  {/* 한 줄에 안 들어가면(좁은 폭) Sample 알약이 다음 줄 오른쪽으로. 묶음 기본 폭 192px이 아바타·간격·이름(약 173px)보다 커서 같은 줄일 때 이름과 닿지 않는다 */}
-                  <div className="flex flex-wrap items-center gap-x-4 gap-y-3">
-                    <div className="flex min-w-0 grow basis-48 items-center gap-4">
-                      <span
-                        aria-hidden="true"
-                        className={`flex size-14 shrink-0 items-center justify-center rounded-full text-xl font-bold ${avatar}`}
-                      >
-                        {initial}
-                      </span>
-                      <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <h3 className="text-lg leading-heading font-bold">{name}</h3>
-                        <p className="text-muted">{style}</p>
-                      </div>
-                    </div>
-                    <span className={`${PILL} ml-auto bg-background`}>Sample</span>
-                  </div>
-                  <div className="flex flex-col gap-1 border-t border-border pt-6">
-                    <p className="text-stat font-bold tabular-nums">{record}</p>
-                    <p className={`${LABEL} text-muted`}>Hits – misses</p>
-                  </div>
-                </article>
-              ))}
-            </div>
-            <dl className="flex flex-col border-b border-surface">
-              {ARENA_DAY.map(([when, what]) => (
-                <div key={when} className="flex flex-wrap gap-x-8 gap-y-2 border-t border-surface py-6">
-                  <dt className={`shrink-0 basis-50 ${NUM} uppercase`}>{when}</dt>
-                  <dd className="grow basis-100 text-base">{what}</dd>
-                </div>
-              ))}
-            </dl>
-          </div>
-        </section>
-
-        <section id="pricing" aria-label="Pricing" className="bg-foreground text-background">
-          <div className={`${WRAP} flex flex-col gap-12 py-24`}>
-            <div className="flex flex-col gap-4">
-              <p className={`${LABEL} text-ink-muted`}>Pricing</p>
-              <h2 className={H2}>Free to start. Plus when three isn&apos;t enough.</h2>
-            </div>
-            <div className="flex flex-wrap gap-8">
-              {PLANS.map((plan) => (
-                <article key={plan.label} className={`flex min-w-0 grow basis-95 flex-col gap-6 border p-8 ${plan.border}`}>
-                  <div className="flex flex-col gap-2">
-                    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-                      <h3 className={`${LABEL} text-ink-muted`}>{plan.label}</h3>
-                      {"badge" in plan && <span className={`${PILL} bg-ink-line`}>{plan.badge}</span>}
-                    </div>
-                    <p className="text-price font-medium">
-                      {plan.price}
-                      {"per" in plan && <span className="text-lg tracking-normal text-ink-muted">{plan.per}</span>}
-                    </p>
-                    <p className="text-ink-muted">{plan.note}</p>
-                  </div>
-                  <ul className="flex flex-col border-t border-hover">
-                    {plan.features.map((f) => (
-                      <li key={f} className="border-b border-ink-line py-3">
-                        {f}
-                      </li>
-                    ))}
-                  </ul>
-                  <a href={plan.cta[1]} className={`mt-auto ${CTA} focus-visible:outline-background ${plan.cta[2]}`}>
-                    {plan.cta[0]}
-                  </a>
-                </article>
-              ))}
-            </div>
+            {/* 프리페치 없음: /plus 요청 제한(#62)을 쓰지 않게 */}
+            <Link href="/plus" prefetch={false} className={`${CTA} mt-2 bg-background text-foreground focus-visible:outline-background`}>
+              {ABOUT_PLUS}
+            </Link>
           </div>
         </section>
 
@@ -387,7 +252,6 @@ export default function Landing() {
             <Link href="/cards" className={`${CTA} bg-accent`}>
               {OPEN_CARDS}
             </Link>
-            <p className="text-xs text-dim">Private web preview for now.</p>
           </div>
         </section>
       </main>

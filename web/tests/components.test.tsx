@@ -272,14 +272,20 @@ test("모든 페이지(루트 레이아웃) 하단에 Not investment advice. 하
   const footer = html.slice(html.indexOf("<footer"));
   expect(hrefs(footer).length).toBeGreaterThan(0);
   for (const h of hrefs(footer)) expect(h, h).toMatch(/^\/((#[a-z]+)?|terms(#[a-z-]+)?|privacy(#[a-z-]+)?)$/); // 어느 경로에서 눌러도 같은 곳
-  // 가격 표시가 꺼져 있어 사실이 아닌 가격 문장은 없다(#62, 스토리 24)
-  expect(text(footer)).toContain("For informational purposes only. Not investment advice. Arena trades are simulated with virtual money.");
-  expect(text(footer)).not.toMatch(/Prices are daily closes|SPY|QQQ/);
+  // 가격 표시가 꺼져 있어 사실이 아닌 가격 문장은 없다(#62, 스토리 24). 아레나는 웹에 없다(#70)
+  expect(text(footer)).toContain("For informational purposes only. Not investment advice.");
+  expect(text(footer)).not.toMatch(/Prices are daily closes|SPY|QQQ|Arena|virtual money/);
 });
 
-test("하단 Legal: Terms of service → /terms, Privacy → /privacy. Support: Request a stock·Contact → /terms#contact, Delete my account → /privacy#delete(#62)", () => {
-  const links = Object.fromEntries([...renderToStaticMarkup(<SiteFooter />).matchAll(/<a[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/g)].map((m) => [m[2], m[1]]));
+test("하단 Product: 랜딩 앵커 셋(#70, 웹에 없는 알림·위젯·아레나 칸 없음). Legal: Terms of service → /terms, Privacy → /privacy. Support: Request a stock·Contact → /terms#contact, Delete my account → /privacy#delete(#62)", () => {
+  const html = renderToStaticMarkup(<SiteFooter />);
+  expect([...html.matchAll(/<h2[^>]*>([^<]*)<\/h2>/g)].map((m) => m[1])).toEqual(["Product", "Support", "Legal"]);
+  const links = Object.fromEntries([...html.matchAll(/<a[^>]*href="([^"]*)"[^>]*>([^<]*)<\/a>/g)].map((m) => [m[2], m[1]]));
+  expect(Object.keys(links)).toHaveLength(8);
   expect(links).toMatchObject({
+    "The card": "/#card",
+    "How it works": "/#how",
+    Plus: "/#plus",
     "Terms of service": "/terms",
     Privacy: "/privacy",
     "Request a stock": "/terms#contact",
@@ -295,95 +301,122 @@ test("하단 Legal: Terms of service → /terms, Privacy → /privacy. Support: 
 const hrefs = (html: string) => [...html.matchAll(/<a[^>]*href="([^"]*)"/g)].map((m) => m[1]);
 const targets = (html: string) => [...html.matchAll(/<(a|button)\b[^>]*>/g)].map((m) => m[0]);
 
-describe("랜딩 / (#27 사용자 시안)", () => {
+describe("랜딩 / (#27 사용자 시안, #70 1단계 기능)", () => {
   const html = renderToStaticMarkup(<Landing />);
-  const page = text(html).replaceAll("&#x27;", "'").replaceAll("&amp;", "&");
+  const plain = (h: string) => text(h).replaceAll("&#x27;", "'").replaceAll("&amp;", "&").replaceAll("&quot;", '"');
+  const page = plain(html);
+  const footerHtml = renderToStaticMarkup(<SiteFooter />);
+  /** [href, 보이는 글자] */
+  const links = (h: string) => [...h.matchAll(/<a\b[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g)].map((m) => [m[1], plain(m[2])]);
 
-  test("시안 섹션 전부 + 머리 메뉴 앵커가 가리키는 섹션이 있다", () => {
-    for (const id of ["top", "card", "how", "arena", "pricing", "get"]) expect(html).toContain(`id="${id}"`);
+  test("섹션 + 머리 메뉴·하단 Product 앵커가 가리키는 섹션이 있다", () => {
+    for (const id of ["top", "card", "how", "plus", "get"]) expect(html).toContain(`id="${id}"`);
     for (const h of hrefs(html).filter((h) => h.startsWith("#"))) expect(html, h).toContain(`id="${h.slice(1)}"`);
+    const footerAnchors = hrefs(footerHtml).filter((h) => h.startsWith("/#"));
+    expect(footerAnchors.length).toBeGreaterThan(0);
+    for (const h of footerAnchors) expect(html, h).toContain(`id="${h.slice(2)}"`);
   });
 
-  test("샘플 카드: 피봇 카드 줄(첫 번째 줄·추정 실적일·연관 소식, #62), 폐기 문구 없음, 안내 문구 유지", () => {
-    expect(lines(html)).toEqual([
+  test("지금 제공하지 않는 것을 약속하지 않는다(#70): 가격·체험·결제, 아레나, Apple 로그인, 위젯·푸시·아침 알림, 무제한, 미리보기 안내", () => {
+    for (const t of [page, plain(footerHtml)]) {
+      expect(t).not.toMatch(/\$|trial|billed|\/ year|yearly|monthly|per month|subscribe|upgrade|checkout|pricing/i);
+      expect(t).not.toMatch(/arena|agents?\b|mock trad|virtual money|verdict|hits – misses/i);
+      expect(t).not.toMatch(/with Apple|Apple or Google|App Store|iPhone/i);
+      expect(t).not.toMatch(/widget|lock screen|push|notification|morning time|8:00/i);
+      expect(t).not.toMatch(/unlimited|removes the limit|no limit|preview|monthly report|vs\. S&P/i);
+    }
+    expect(html).not.toMatch(/id="(arena|pricing)"/);
+  });
+
+  test("로그인은 Google만(약관 accounts 절과 같다)", () => {
+    expect(page).toContain("Sign in with Google");
+  });
+
+  test("샘플 카드: 무료로 보이는 실제 카드 문구(#62·#63·#66·#67·#69). 잠금은 같은 글자의 /plus 링크, 탭 폼 없음", () => {
+    expect(lines(html).map(([s, t]) => [s, t.replace(/Did you know: .*$/, "")])).toEqual([
       ["checked_found", "Apple named a new CFO +2 more (SEC filing)"],
       ["checked_found", "Earnings Thu 10/15 after close (est.) (D-2)"],
-      ["checked_found", "Supplier Broadcom reported quarterly results (SEC filing)"],
-      ["checked_none", "No new SEC filings found"], // 조용한 날 샘플: 헤더 Quiet day와 같은 첫 번째 줄
+      ["locked", "2 related updates in Plus"],
+      ["checked_none", "No new SEC filings found"], // ETF 조용한 날: 헤더 Quiet day와 같은 첫 번째 줄
       ["unsupported", "Not covered yet"],
-      ["unsupported", "Not covered yet"],
+      ["unsupported", "Not covered yet"], // ETF는 연관 소식이 없어 모든 viewer에게 미지원
       ["checked_none", "No new SEC filings found"],
       ["checked_none", "No confirmed events found"],
-      ["checked_none", "No major related filings found"],
+      ["locked", "Related updates in Plus"], // 0건·지연은 건수 없이
     ]);
-    // 카드마다 하단 확인 줄(실제 카드와 같은 모양)
-    expect(page.match(/Checked 7:30 AM ET · SEC filings/g)).toHaveLength(3);
-    for (const old of ["No major news today", "No events in next 2 weeks", "No notable price moves", "Top holdings"]) {
-      expect(page).not.toContain(old);
-    }
-    expect(page).toContain("Sample cards. Figures are illustrative.");
-    expect(page).not.toContain("prev close");
-    // 카드 헤더(#63): 샘플마다 첫 번째 줄에 맞춘 고정 문구(AAPL은 1등 + 2 more)
+    // 카드 헤더(#63): 첫 번째 줄에 맞춘 고정 문구(AAPL은 1등 + 2 more)
     expect([...html.matchAll(/data-header-status="([^"]+)"[^>]*>(.*?)<\//g)].map((m) => [m[1], m[2]])).toEqual([
       ["checked_found", "3 new filings"],
       ["checked_none", "Quiet day"],
       ["checked_none", "Quiet day"],
     ]);
+    // 알아두기(#66): 주식의 조용한 날에만(ETF에는 없다)
+    expect([...html.matchAll(/data-quiet-fact[^>]*>(.*?)<\/p>/g)].map((m) => plain(m[1]))).toEqual([
+      "Did you know: Coca-Cola makes beverage concentrates and syrups for bottling partners (Annual report)",
+    ]);
+    // 잠긴 자리(#69, ETF 없음)·세 번째 줄 잠금(#67)은 /plus 링크. 탭 폼이면 랜딩 방문이 탭 합계에 섞인다
+    expect(html).not.toContain("<form");
+    expect(links(html).filter(([h]) => h === "/plus").map(([, t]) => t)).toEqual([
+      "2 related updates in Plus",
+      "Earnings summary in Plus",
+      "Related updates in Plus",
+      "Insider and big holder filings in Plus",
+      "About Plus",
+    ]);
+    // 카드마다 하단 확인 줄(잠긴 줄은 범위에 넣지 않는다, 실제 카드와 같은 모양)
+    expect(page.match(/Checked 7:30 AM ET · SEC filings/g)).toHaveLength(3);
+    for (const old of ["No major news today", "No events in next 2 weeks", "No notable price moves", "Top holdings", "No related filings found", "prev close"]) {
+      expect(page).not.toContain(old);
+    }
+    expect(page).toContain("Sample cards. Figures are illustrative.");
   });
 
   test("랜딩에 가격 숫자·가격 사실 문구가 없다(#55 스토리 24, #62)", () => {
     expect(page).not.toMatch(/\d%|52-week|prev close|days in a row|Price fact|price-fact|closing prices|Prices are daily closes/i);
-    expect(html).not.toContain("data-tone"); // 등락률 요소 0개(샘플·Step 02 미니 카드)
-    expect(page).toContain("Related updates on every card"); // Plus 목록의 가격 사실 줄 자리
-    expect(page).toContain("Same-day filings from a competitor, customer, supplier or peer.");
+    expect(html).not.toContain("data-tone"); // 등락률 요소 0개(샘플·Step 미니 카드)
   });
 
-  test("판정 기준은 ADR-0002(모든 콜 당일 시가 → 종가)", () => {
-    expect(page).not.toContain("against the previous close");
-    expect(page).toContain("against the day's open");
+  test("1단계 기능 설명(#70): 카드 헤더, 알아두기, 추정 실적일, 연관 소식(무료는 본문 없음), 내 종목 3개·교체, 7:45 AM ET, 커버 범위", () => {
+    expect(page).toContain("says up top what it found: new filings or a quiet day.");
+    expect(page).toContain("On a quiet day, it may add one background fact from the company's annual report.");
+    expect(page).toContain("The next earnings date, estimated from past filings and marked (est.), with a countdown.");
+    expect(page).toContain(
+      "Same-day filings from a competitor, customer, supplier or peer. The relationship and the fact — never what it means for your stock. Free cards don't show the filings themselves.",
+    );
+    expect(page).toContain("From the S&P 500 and popular ETFs, with up to three swaps a day.");
+    expect(page).toContain("New cards are ready by 7:45 AM ET.");
+    expect(page).not.toMatch(/are in Plus|only the count/); // 판매 전 Plus를 지금 있는 것처럼, 0건·지연·ETF에 안 맞는 말(#70 검수)
+  });
+
+  test("Plus(#70): 판매 전·계획 기능 + Notify me만. /plus 설명 화면과 같은 문장, 약관·방침과 같은 말", () => {
+    const plus = plain(html.slice(html.indexOf('id="plus"'), html.indexOf('id="get"')));
+    expect(plus).toContain("Free to use. No payments."); // 약관 service 절: The Service is free … we do not take any payments
+    expect(plus).toContain(
+      "Plus is not available yet. Planned: any number of covered stocks, earnings summaries, insider and big holder filings, related company filings, and past cards from the last 90 days. All from SEC filings.",
+    );
+    expect(plus).toContain("Sign in and tap Notify me on the About Plus page. We'll email your sign-in address once when Plus launches."); // 방침 use 절
+  });
+
+  test("흰 Plus 섹션의 링크는 어두운 포커스 링(흰 링은 안 보인다)", () => {
+    const plus = html.slice(html.indexOf('id="plus"'), html.indexOf('id="get"'));
+    expect(targets(plus)).toHaveLength(1);
+    for (const t of targets(plus)) expect(t).toContain("focus-visible:outline-background");
   });
 
   test("copy-reviewer 1차 교체 문구(03_orchestrator_decisions)", () => {
     // 첫 번째 줄 생성기는 날짜를 쓰지 않는다: 샘플·미리보기 모두 같은 줄
     expect(page).not.toContain("effective Jan 1");
     expect(page.match(/Apple named a new CFO \+2 more \(SEC filing\)/g)).toHaveLength(2);
-    expect(page).toContain("The next earnings date, estimated from past filings and marked (est.), with a countdown.");
     expect(page).toContain("Settings required");
-    expect(page).toContain("long only, daily prices only.");
     expect(page).toContain("The next cards are ready at 7:45 AM ET.");
     for (const old of ["Start free trial", "Settings to tune", "closing prices only", "Tomorrow's cards"]) expect(page).not.toContain(old);
   });
 
-  test("가짜 아레나 전적에는 카드마다 Sample 표시", () => {
-    const agents = html.split("<article").filter((a) => a.includes("Hits – misses"));
-    expect(agents).toHaveLength(2);
-    for (const a of agents) expect(a).toMatch(/>Sample<\/span>/);
-  });
-
-  test("아레나 카드 머리: 좁은 폭(320px)에서 Sample 알약이 다음 줄로 내려간다(이름과 겹치지 않게)", () => {
-    // 브라우저 없이 폭을 잴 수 없어 구조로 고정: 머리 줄은 flex-wrap, 알약은 아바타·이름 묶음 밖의 형제이고
-    // 묶음의 기본 폭(basis-48 = 192px)이 아바타 56 + 간격 16 + "Aggressive" 18px 굵게 약 101px보다 크다
-    for (const a of html.split("<article").filter((x) => x.includes("Hits – misses"))) {
-      const head = a.match(/^[^>]*><div class="([^"]*)">(.*?)<span[^>]*>Sample<\/span><\/div>/);
-      expect(head, a.slice(0, 200)).not.toBeNull();
-      expect(head![1].split(" ")).toContain("flex-wrap");
-      expect(head![2]).toMatch(/^<div class="[^"]*\bbasis-48\b[^"]*">.*<\/div><\/div>$/); // 묶음이 알약 앞에서 닫힌다
-    }
-  });
-
-  test("흰 요금 섹션의 버튼은 어두운 포커스 링(흰 링은 안 보인다)", () => {
-    const pricing = html.slice(html.indexOf('id="pricing"'), html.indexOf('id="get"'));
-    expect(targets(pricing)).toHaveLength(2);
-    for (const t of targets(pricing)) expect(t).toContain("focus-visible:outline-background");
-  });
-
   test("앱 다운로드 CTA 대신 웹 카드(/cards), 자리표시·설계 메모 없음", () => {
     expect(page).not.toMatch(/App Store|Get the app|iPhone only|\[/);
-    // 머리·첫 화면·Free·Plus·마지막 섹션 5곳. 하나라도 다른 곳으로 가면 실패
-    const toCards = [...html.matchAll(/<a[^>]*href="\/cards"[^>]*>([^<]*)<\/a>/g)].map((m) => m[1]);
-    expect(toCards).toEqual(Array(5).fill("Open the latest cards"));
-    const labelled = [...html.matchAll(/<a[^>]*href="([^"]*)"[^>]*>Open the latest cards<\/a>/g)].map((m) => m[1]);
-    expect(labelled).toEqual(Array(5).fill("/cards"));
+    // 머리·첫 화면·마지막 섹션 3곳. 하나라도 다른 곳으로 가면 실패
+    expect(links(html).filter(([, t]) => t === "Open the latest cards")).toEqual(Array(3).fill(["/cards", "Open the latest cards"]));
+    expect(links(html).filter(([h]) => h === "/cards")).toHaveLength(3);
     expect(page).toContain("market_in_30sec");
   });
 
@@ -396,7 +429,7 @@ describe("랜딩 / (#27 사용자 시안)", () => {
     expect(hrefs(cards)).toContain("/"); // 카드 화면의 브랜드는 랜딩으로
     const legal = [LegalLayout({ children: null }), <Terms key="t" />, <Privacy key="p" />].map((el) => targets(renderToStaticMarkup(el)));
     expect(hrefs(renderToStaticMarkup(LegalLayout({ children: null })))).toContain("/"); // 법률 페이지 머리의 브랜드도 랜딩으로
-    const all = [...targets(html), ...targets(renderToStaticMarkup(<SiteFooter />)), ...targets(cards), ...legal.flat()];
+    const all = [...targets(html), ...targets(footerHtml), ...targets(cards), ...legal.flat()];
     expect(all.length).toBeGreaterThan(10);
     for (const t of all) expect(t, t).toMatch(/class="[^"]*\b(min-)?h-1[12]\b/);
   });
@@ -617,7 +650,7 @@ describe("내 종목·둘러보기(#38)", () => {
 
   test("결과 문구는 role=status로 내 종목 칸에", () => {
     for (const [code, copy] of [
-      ["free_swap_limit", "Free plan can swap stocks 3 times a day. Plus has no limit."],
+      ["free_swap_limit", "Free plan can swap stocks 3 times a day. Swaps reset tomorrow."],
       ["free_my_stock_limit", "Free plan can pick 3 stocks. Remove one to add another."],
       ["failed", "My stocks could not be updated"],
     ]) {
@@ -741,6 +774,9 @@ describe("이용약관 /terms(#62)", () => {
     expect(service).toMatch(/does not provide stock prices or real-time quotes/);
     expect(service).toMatch(/do not take any payments/);
     expect(service).toMatch(/free/);
+    // 매일 카드는 고른 종목·기본 종목에만(커버 범위 전체 아님, #70 검수)
+    expect(service).toContain("morning cards for the stocks users have picked and for a set of default stocks");
+    expect(service).not.toContain("for each stock in its coverage");
   });
 
   test("최소 연령 18세, 준거법 California, 중재 조항 없음", () => {
@@ -930,6 +966,21 @@ describe("잠긴 자리·Notify me(#69)", () => {
     ]);
   });
 
+  test("랜딩 샘플(sample, #70): 잠긴 자리·세 번째 줄 잠금은 같은 글자·같은 모양의 /plus 링크, 탭 폼 없음(랜딩 방문이 탭 합계에 섞이지 않게)", () => {
+    const locked = card({ lines: [...card().lines.slice(0, 2), { status: "locked", count: 2 }], lockedSlot: "big_holders" });
+    const html = renderToStaticMarkup(<StockCard card={locked} sample />);
+    expect(forms(html)).toEqual([]);
+    expect(lines(html)[2]).toEqual(["locked", "2 related updates in Plus"]);
+    const anchors = [...html.matchAll(/<a\b([^>]*)>(.*?)<\/a>/g)];
+    expect(anchors.map((m) => [m[1].match(/href="([^"]*)"/)?.[1], text(m[2])])).toEqual([
+      ["/plus", "2 related updates in Plus"],
+      ["/plus", "Insider and big holder filings in Plus"],
+    ]);
+    // 실제 카드의 탭 버튼과 같은 클래스(터치 영역 44px 포함)
+    const real = forms(renderToStaticMarkup(<StockCard card={locked} />)).map((f) => f.buttonTag.match(/class="([^"]*)"/)?.[1]);
+    expect(anchors.map((m) => m[1].match(/class="([^"]*)"/)?.[1])).toEqual(real);
+  });
+
   test("ETF 카드(lockedSlot 없음)·잠금 없는 카드에는 폼이 없다", () => {
     expect(forms(renderToStaticMarkup(<StockCard card={card()} />))).toEqual([]);
   });
@@ -947,7 +998,7 @@ describe("잠긴 자리·Notify me(#69)", () => {
   });
 
   const notify = (over: Partial<NotifyMeView> = {}) => renderToStaticMarkup(<NotifyMe view={{ signedIn: true, waitlisted: false, failed: false, ...over }} />);
-  const PLANNED = "Plus is not available yet. Planned: earnings summaries, insider and big holder filings, and related company filings. All from SEC filings.";
+  const PLANNED = "Plus is not available yet. Planned: any number of covered stocks, earnings summaries, insider and big holder filings, related company filings, and past cards from the last 90 days. All from SEC filings.";
   const NOTE = "Tap Notify me and we'll email your sign-in address once when Plus launches.";
 
   test("설명 화면: 카드로 돌아가는 링크, 제목 About Plus(h1), 설명은 상태와 무관하게 같다. 이메일 입력칸 없음", () => {
