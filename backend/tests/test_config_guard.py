@@ -25,6 +25,8 @@ CANARIES = {
         ("test_Anthropic_설정을_읽는다", {"ANTHROPIC_API_KEY": None}, "ANTHROPIC_API_KEY is not set"),
         ("test_Anthropic_설정을_읽는다", {"ANTHROPIC_API_KEY": "sk-ant-Zq9CfgCanaryKey\n"}, "ANTHROPIC_API_KEY must be one line"),
         ("test_Anthropic_설정을_읽는다", {"ANTHROPIC_API_KEY": "sk-ant-Zq9Cfg CanaryKey"}, "ANTHROPIC_API_KEY must be one line"),
+        # 키 자리에 한글 자리표시자: 막지 않으면 http.client가 헤더를 latin-1로 바꾸다 이유 없는 UnicodeEncodeError를 낸다
+        ("test_Anthropic_설정을_읽는다", {"ANTHROPIC_API_KEY": "sk-ant-Zq9CfgCanary키"}, "ANTHROPIC_API_KEY must be one line"),
         ("test_SEC_설정을_읽는다", {"SEC_USER_AGENT": None}, "SEC_USER_AGENT is not set"),
         ("test_SEC_설정을_읽는다", {"SEC_USER_AGENT": "M30 Canary ua-canary-Q7 no email"}, "SEC_USER_AGENT must be one line"),
         ("test_SEC_설정을_읽는다", {"SEC_USER_AGENT": "M30 Canary ua-canary-Q7@x.invalid\r\nX-Injected: 1"},
@@ -32,7 +34,7 @@ CANARIES = {
         ("test_Discord_설정을_읽는다", {"DISCORD_WEBHOOK_URL": "http://discord.com/api/webhooks/1/Zq9CfgCanaryHook"},
          "DISCORD_WEBHOOK_URL must be one line"),
     ],
-    ids=["db_missing", "llm_missing", "llm_newline", "llm_space", "sec_missing", "sec_no_email", "sec_newline", "discord_http"],
+    ids=["db_missing", "llm_missing", "llm_newline", "llm_space", "llm_non_ascii", "sec_missing", "sec_no_email", "sec_newline", "discord_http"],
 )
 def test_설정_읽기가_거부해도_환경의_비밀값과_거부한_값이_traceback_지역_변수에_남지_않는다(probe, change, message):
     env = {k: v for k, v in os.environ.items() if k not in CANARIES} | CANARIES

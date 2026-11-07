@@ -12,6 +12,8 @@ DB_URL_VAR = "SUPABASE_DB_URL"
 LOCAL_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
 
 # 모델 ID는 이 파일에만 둔다. 개발 중엔 전부 haiku. #6·#7·#11이 여기에 상수를 더한다
+# 모델별 "사고 끄기" thinking.type: 모델마다 받는 값이 달라 Sonnet 5.5는 disabled에 400(2026-11-06). 새 모델은 실제 API로 확인해 더한다
+THINKING_OFF = {"claude-haiku-5-5": "disabled", "claude-sonnet-5-5": "between_tools"}
 CLASSIFY_MODEL = "claude-haiku-5-5"
 NEWSLINE_MODEL = "claude-haiku-5-5"  # 첫 번째 줄. 출시 전 claude-sonnet-5-5 (HANDOFF 3-6)
 REVIEW_MODEL = "claude-haiku-5-5"  # 사실/예측 판정. 출시 전 claude-sonnet-5-5 (HANDOFF 3-6)
