@@ -2,7 +2,7 @@
  * 이용약관·개인정보처리방침이 같이 쓰는 값과 틀(#62). 본문은 각 page.tsx(정적, DB를 읽지 않는다).
  * 연락 이메일은 사용자 결정(2026-11-04)으로 이 폴더(법률 페이지) 밖에 쓰지 않는다(tests/guards.test.ts).
  */
-export const CONTACT_EMAIL = "tlsrudgk13@gmail.com"; // 연락·삭제 요청 주소(공개 사이트와 공개 레포에 남는다)
+export const CONTACT_EMAIL = "pauldevapps@gmail.com"; // 연락·삭제 요청 주소(공개 사이트와 공개 레포에 남는다)
 export const OPERATOR = "Paul Sin"; // 운영자 표기: 개인(LLC 설립 전, HANDOFF 3-9)
 export const LEGAL_UPDATED = "November 6, 2026"; // 두 페이지 본문을 바꾸면 같이 바꾼다
 
