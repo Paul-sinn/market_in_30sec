@@ -501,6 +501,12 @@ def test_데이터_상태_문구_줄에는_출처_공시를_둘_수_없다(aapl_
                             (ACCESSION,))
 
 
+def test_축소판에는_출처_공시를_둘_수_없다(aapl_filing):
+    with pytest.raises(errors.CheckViolation):
+        aapl_filing.execute(f"insert into public.stock_card ({CARD_COLS}, news_line_accession)"
+                            " values ('AAPL', '2026-10-16', 'fallback', 1.3, 'checked_found', %s)", (ACCESSION,))
+
+
 def test_재발행한_행의_고친_문장을_다시_고치면_카드도_따라_바뀐다(admin, held):
     second = "Apple named a new chief financial officer (SEC filing)"
     as_service_role(admin, "update public.hold_queue set edited_text = %s, state = 'republished'", (HUMAN,))
