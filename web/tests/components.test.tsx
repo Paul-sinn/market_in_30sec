@@ -823,9 +823,9 @@ describe("개인정보처리방침 /privacy(#62)", () => {
     ]) {
       expect(s, fact).toContain(fact);
     }
-    // 로그인하지 않아도: 서버 기록, 요청 제한 IP 약 1분, 잠긴 기능 탭은 날짜별 합계만
+    // 로그인하지 않아도: 서버 기록, 요청 제한 IP는 메모리에 잠깐(시간 단정 없음: 1분 구간이 다음 요청 때 비워짐), 잠긴 기능 탭은 날짜별 합계만
     expect(s).toMatch(/server logs/);
-    expect(s).toMatch(/about a minute/);
+    expect(s).toMatch(/holds your IP address briefly in server memory and does not save it/);
     expect(s).toMatch(/daily totals/);
   });
 
@@ -836,6 +836,7 @@ describe("개인정보처리방침 /privacy(#62)", () => {
     expect(s).toContain("Delete my account");
     expect(s).toMatch(/within 30 days/i);
     for (const item of ["profile", "your stocks and their history", "morning summaries", "Notify me"]) expect(s, item).toContain(item);
+    expect(s).toMatch(/Security logs kept by our sign-in provider/); // Supabase Auth 기록은 계정 삭제 cascade 밖
     expect(hrefs(raw)).toContain("/cards");
   });
 
@@ -851,15 +852,15 @@ describe("개인정보처리방침 /privacy(#62)", () => {
   test("서비스 제공자 Supabase·Vercel·Google·GitHub, AI에는 개인정보를 보내지 않음, 저장 지역은 단정하지 않는다", () => {
     const s = section(html, "share");
     for (const p of ["Supabase", "Vercel", "Google", "GitHub"]) expect(s, p).toContain(p);
-    expect(s).toMatch(/AI .*only public filings.*never your personal information/);
+    expect(s).toMatch(/AI .*only public filings and government releases.*never your personal information/);
     expect(section(html, "keep")).toMatch(/Supabase.*Vercel/);
     expect(page).not.toMatch(/United States|U\.S\. region|\bEU\b|region/); // 사용자 결정: 지역 미확인
   });
 
-  test("권리·아동(13세 미만)·연락처", () => {
+  test("권리·아동(약관과 같은 18세 미만)·연락처", () => {
     expect(section(html, "rights")).toMatch(/California/);
     expect(section(html, "rights")).toMatch(/not discriminate/);
-    expect(section(html, "children")).toMatch(/under 13/);
+    expect(section(html, "children")).toMatch(/under 18/);
     expect(mailtos(html.match(/<section id="contact".*?<\/section>/)![0])).toEqual([[EMAIL, EMAIL]]);
   });
 });

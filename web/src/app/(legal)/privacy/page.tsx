@@ -44,7 +44,10 @@ export default function Privacy() {
             Our hosting and database providers keep server logs — IP address, browser type and the pages requested — for a
             limited time to run and secure the Service.
           </li>
-          <li>To limit request rates, your IP address is kept in server memory for about a minute.</li>
+          <li>
+            To limit request rates, our app holds your IP address briefly in server memory and does not save it to our
+            database.
+          </li>
           <li>Taps on locked Plus features are counted only as daily totals and are not linked to you.</li>
         </ul>
       </Section>
@@ -70,7 +73,10 @@ export default function Privacy() {
           We use these providers to run the Service: Supabase (database and sign-in), Vercel (website hosting), Google
           (sign-in) and GitHub (runs the daily job that builds cards and morning summaries).
         </p>
-        <p>The AI that writes card sentences receives only public filings, never your personal information.</p>
+        <p>
+          The AI that writes card sentences receives only public filings and government releases, never your personal
+          information.
+        </p>
         <p>We may disclose information if the law requires it.</p>
       </Section>
 
@@ -95,7 +101,8 @@ export default function Privacy() {
         </p>
         <p>
           Within 30 days, we will delete your account and everything linked to it — your profile, your stocks and their
-          history, your morning summaries and your Notify me sign-up — and reply to confirm.
+          history, your morning summaries and your Notify me sign-up — and reply to confirm. Security logs kept by our
+          sign-in provider, such as sign-in times and IP addresses, may remain for a limited time after that.
         </p>
         <p>
           You can sign out at any time on the <PageLink href="/cards">cards page</PageLink>.
@@ -112,8 +119,7 @@ export default function Privacy() {
 
       <Section id="children" title="Children">
         <p>
-          The Service is not directed at children under 13. If we learn that we hold data from a child under 13, we will
-          delete it.
+          The Service is not for anyone under 18. If we learn that we hold data from someone under 18, we will delete it.
         </p>
       </Section>
 
