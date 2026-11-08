@@ -6,14 +6,14 @@ import { Brand } from "@/components/brand";
 export default function CardsLayout({ children }: LayoutProps<"/cards">) {
   return (
     <>
-      <header className="border-b border-surface">
-        <div className="mx-auto flex min-h-16 max-w-7xl items-center px-8">
-          <Link href="/" className="flex min-h-12 items-center gap-3">
+      <header>
+        <div className="mx-auto flex min-h-16 max-w-7xl items-center px-5 pt-2 sm:px-8">
+          <Link href="/" className="flex min-h-12 items-center gap-2">
             <Brand />
           </Link>
         </div>
       </header>
-      <main className="mx-auto w-full max-w-7xl flex-1 px-8 py-12">{children}</main>
+      <main className="mx-auto w-full max-w-7xl flex-1 px-5 pt-4 pb-8 sm:px-8 sm:py-12">{children}</main>
     </>
   );
 }

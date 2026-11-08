@@ -7,7 +7,7 @@ export const OPERATOR = "Paul Sin"; // 운영자 표기: 개인(LLC 설립 전, 
 export const LEGAL_UPDATED = "November 7, 2026"; // 두 페이지 본문을 바꾸면 같이 바꾼다
 
 // 본문 링크: 밑줄(색만으로 구분하지 않게) + 터치 영역 44px
-const LINK = "inline-flex min-h-11 items-center underline underline-offset-4 hover:text-hover";
+const LINK = "inline-flex min-h-11 items-center font-bold underline underline-offset-4 hover:text-accent-ink";
 
 export const Email = () => (
   <a href={`mailto:${CONTACT_EMAIL}`} className={LINK}>
@@ -25,10 +25,10 @@ export const PageLink = ({ href, children }: { href: string; children: React.Rea
 /** 제목(h1) + 마지막 수정일 + 본문. 본문 폭은 읽기 좋은 65자 */
 export function LegalDoc({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <article className="flex max-w-prose flex-col gap-10 text-base">
+    <article className="flex max-w-prose flex-col gap-10 rounded-card bg-surface p-6 shadow-card sm:p-10">
       <div className="flex flex-col gap-3">
-        <h1 className="text-h2 font-medium">{title}</h1>
-        <p className="text-dim">Last updated: {LEGAL_UPDATED}</p>
+        <h1 className="text-h2 font-extrabold">{title}</h1>
+        <p className="text-muted">Last updated: {LEGAL_UPDATED}</p>
       </div>
       {children}
     </article>
@@ -39,7 +39,7 @@ export function LegalDoc({ title, children }: { title: string; children: React.R
 export function Section({ id, title, children }: { id: string; title: string; children: React.ReactNode }) {
   return (
     <section id={id} className="flex flex-col gap-3">
-      <h2 className="text-xl leading-heading font-bold">{title}</h2>
+      <h2 className="text-xl leading-heading font-extrabold">{title}</h2>
       {children}
     </section>
   );

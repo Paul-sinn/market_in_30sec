@@ -27,6 +27,7 @@
 | 2026-10-21 | 프로세스 출력 입구에 CLI 출력 줄 추가(공개 레포 = Actions 로그 공개, 코드·건수·티커만), qa 프로세스 확인은 `lsof -ti tcp:<포트>`만, 에이전트별 scratchpad 폴더, 디자인 기준 = 사용자 시안 | backend-conventions, qa, m30-dev, web-conventions | #19 R3·#26 스펙(레포 public), #27 qa의 `pgrep -fl` 환경 노출 위험, #6 scratchpad 충돌, 사용자 시안 |
 | 2026-11-03 | 피봇 동기화: 카드 헤더·알아두기·실적 추정일·세 번째 줄 연관 소식(가격 사실은 플래그 on일 때만)·잠긴 자리 문구 규칙, ADR-0005(관계와 사실만, 인과·기사 내용 없음), 가격 표시 플래그 off 규칙, 테스트 입구에 분기 작업 실행 추가, 웹 쓰기 허용 모듈·공개는 #70에서만, 부모 스펙 #55(다음 티켓 frontier) | card-copy-rules, backend-conventions, web-conventions, ios-conventions, m30-dev, qa, copy-reviewer, architect, backend-dev | 피봇 결정(`docs/pivot-2026-11.md`, `docs/grill-decisions-2026-11.md`, 스펙 #55)이 하네스(10-29)보다 새로웠음 |
 | 2026-11-03 | 회고(harness:evolve): ① 비밀값 셸 로딩은 "빈 값이면 아무것도 안 함" 형태 한 벌(backend-conventions 4장, 웹·qa는 참조) ② 비밀값을 숨긴 오류도 정해진 이유 코드는 남긴다 ③ m30-dev 마무리: 행동 규칙이 되는 교훈은 스킬·정의에도 반영하고 실수 기록에 `(X에 규칙화)` ④ m30-dev 0단계 8: 티켓 브랜치는 최신 main에서, 다른 세션이 작업 중이면 브랜치를 바꾸지 않고 worktree | backend-conventions, web-conventions, qa, m30-dev, CLAUDE.md | ① 검사 중 비밀값 출력 3회(10-20·10-21·10-29) ② #26 교훈이 실수 기록·README에만 있었음 ③ ②가 생긴 원인 ④ 11-03 두 세션이 한 폴더를 같이 씀 |
+| 2026-11-07 | 디자인 기준을 #27 어두운 시안에서 #93 밝고 둥근 초보 친화 스타일로(크림·흰 카드·피치·Nunito, 회사 이름 먼저, 줄 라벨), 랜딩 샘플 = 실제 카드 | web-conventions | 사용자 결정: 대상이 투자 용어를 모르는 초보라 진입 장벽이 낮아 보여야 함 |
 
 ## 원격 Supabase 규칙
 

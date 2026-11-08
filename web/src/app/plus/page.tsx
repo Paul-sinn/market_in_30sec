@@ -8,7 +8,7 @@ import { isWaitlisted } from "@/server/waitlist";
 /** 잠긴 자리·세 번째 줄 잠금 설명 + Notify me(#69). 등록 여부는 유저 값이라 공용 카드 캐시 밖에서 요청마다 읽는다(카드에는 유저 상태가 없다) */
 export default function PlusPage({ searchParams }: PageProps<"/plus">) {
   return (
-    <Suspense fallback={<div aria-busy="true" className="h-56 bg-surface motion-safe:animate-pulse" />}>
+    <Suspense fallback={<div aria-busy="true" className="h-56 rounded-card bg-surface motion-safe:animate-pulse" />}>
       <Plus searchParams={searchParams} />
     </Suspense>
   );

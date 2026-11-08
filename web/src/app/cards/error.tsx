@@ -6,11 +6,11 @@ import { LOAD_FAILED, TRY_AGAIN } from "@/lib/copy";
 export default function ErrorPage({ retry }: { error: unknown; retry: () => void }) {
   return (
     <div className="flex flex-col items-start gap-6">
-      <h1 className="text-h2 font-medium">{LOAD_FAILED}</h1>
+      <h1 className="text-h2 font-extrabold">{LOAD_FAILED}</h1>
       <button
         type="button"
         onClick={() => retry()}
-        className="inline-flex min-h-12 cursor-pointer items-center border border-foreground px-8 text-sm font-bold tracking-widest uppercase"
+        className="inline-flex min-h-12 cursor-pointer items-center rounded-full bg-accent px-6 font-bold shadow-card transition hover:brightness-95"
       >
         {TRY_AGAIN}
       </button>

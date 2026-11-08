@@ -1,4 +1,4 @@
-import { Inter } from "next/font/google";
+import { Nunito } from "next/font/google";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -21,9 +21,10 @@ import { StockCard } from "@/components/stock-card";
 import { TimezoneField } from "@/components/timezone-field";
 import { myDashboardView, type CardView, type GlanceView, type MyDashboardView, type PastCardsView } from "@/lib/card-view";
 import { SIGN_IN, SIGN_IN_FAILED, SIGN_OUT } from "@/lib/copy";
+import { SAMPLES } from "@/lib/samples";
 
-// next/font/google은 빌드 때 글꼴을 받는다. 레이아웃 렌더 테스트에서는 변수 이름만 준다(Inter 말고 다른 글꼴을 부르면 실패)
-vi.mock("next/font/google", () => ({ Inter: vi.fn(() => ({ variable: "font-sans-var" })) }));
+// next/font/google은 빌드 때 글꼴을 받는다. 레이아웃 렌더 테스트에서는 변수 이름만 준다(Nunito 말고 다른 글꼴을 부르면 실패, #93)
+vi.mock("next/font/google", () => ({ Nunito: vi.fn(() => ({ variable: "font-sans-var" })) }));
 
 const card = (over: Partial<CardView> = {}): CardView => ({
   ticker: "AAPL",
@@ -41,10 +42,12 @@ const card = (over: Partial<CardView> = {}): CardView => ({
 });
 
 const text = (html: string) => html.replace(/<[^>]+>/g, "");
+/** 줄 라벨(#93, What happened 등 웹 고정 문구)을 뺀 줄 안 HTML */
+const noLabel = (html: string) => html.replace(/<p data-line-label[^>]*>.*?<\/p>/g, "");
 
-/** 줄마다 [상태, 보이는 문구] */
+/** 줄마다 [상태, 보이는 문구(라벨 제외)] */
 const lines = (html: string) =>
-  [...html.matchAll(/<li[^>]*data-status="([^"]+)"[^>]*>(.*?)<\/li>/g)].map((m) => [m[1], text(m[2])]);
+  [...html.matchAll(/<li[^>]*data-status="([^"]+)"[^>]*>(.*?)<\/li>/g)].map((m) => [m[1], text(noLabel(m[2]))]);
 
 const change = (html: string) => {
   const m = html.match(/data-tone="([^"]+)"[^>]*>(.*?)<\//);
@@ -207,17 +210,18 @@ describe("StockCard", () => {
     }
   });
 
-  test("머리 순서: 티커 → 종목명 → 헤더 → (가격 표시 on일 때만) 등락률 → 종가 라벨(#63)", () => {
-    expect(head(renderToStaticMarkup(<StockCard card={card()} />))).toBe("AAPLApple Inc.1 new filing+1.3%Thu 10/15 close");
+  test("머리 순서: 종목명(제목) → 티커 칩 → 헤더 → (가격 표시 on일 때만) 등락률 → 종가 라벨(#63, #93 이름 먼저)", () => {
+    expect(head(renderToStaticMarkup(<StockCard card={card()} />))).toBe("Apple Inc.AAPL1 new filing+1.3%Thu 10/15 close");
+    expect(renderToStaticMarkup(<StockCard card={card()} />)).toMatch(/<h2[^>]*>Apple Inc\.<\/h2>/);
     const off = card();
     delete off.change;
-    expect(head(renderToStaticMarkup(<StockCard card={off} />))).toBe("AAPLApple Inc.1 new filing");
+    expect(head(renderToStaticMarkup(<StockCard card={off} />))).toBe("Apple Inc.AAPL1 new filing");
   });
 
-  test("헤더가 null인 카드(#63 전)는 머리에 티커·종목명만(가격 표시 on이면 등락률은 그대로)", () => {
+  test("헤더가 null인 카드(#63 전)는 머리에 종목명·티커만(가격 표시 on이면 등락률은 그대로)", () => {
     const html = renderToStaticMarkup(<StockCard card={card({ header: null })} />);
     expect(cardHeader(html)).toBeNull();
-    expect(head(html)).toBe("AAPLApple Inc.+1.3%Thu 10/15 close");
+    expect(head(html)).toBe("Apple Inc.AAPL+1.3%Thu 10/15 close");
   });
 
   test("알아두기(#66): 첫 번째 줄 <li> 안, 줄 글자 아래 보조 문단 Did you know: … (Annual report). 줄 수는 그대로", () => {
@@ -232,8 +236,19 @@ describe("StockCard", () => {
     const fact = items[0].match(/<p data-quiet-fact[^>]*class="([^"]+)"[^>]*>(.*?)<\/p>/);
     expect(fact?.[2]).toBe("Did you know: Apple makes phones, computers and wearables (Annual report)");
     expect(fact?.[1].split(" ")).toEqual(expect.arrayContaining(["text-sm", "text-muted"])); // 본문 14px, surface 위 5.2:1
-    expect(text(items[0]).startsWith("No new SEC filings found")).toBe(true); // 줄 글자 먼저(읽는 순서)
+    expect(text(noLabel(items[0])).startsWith("No new SEC filings found")).toBe(true); // 라벨 다음 줄 글자 먼저(읽는 순서)
     expect(html.match(/data-quiet-fact/g)).toHaveLength(1);
+  });
+
+  test("줄마다 쉬운 라벨(#93): What happened / What's next / Related, 줄 <li> 안 문구 앞. 줄 문구(DB)는 그대로", () => {
+    const html = renderToStaticMarkup(<StockCard card={card({ lines: [...card().lines.slice(0, 2), { status: "locked", count: 2 }] })} />);
+    const items = [...html.matchAll(/<li\b[^>]*>(.*?)<\/li>/g)].map((m) => m[1]);
+    expect(items.map((i) => text(i.match(/^<p data-line-label[^>]*>(.*?)<\/p>/)?.[1] ?? "").replaceAll("&#x27;", "'"))).toEqual(["What happened", "What's next", "Related"]);
+    expect(lines(html)).toEqual([
+      ["checked_found", "Apple reported Q3 results (SEC filing)"],
+      ["checked_found", "Earnings Thu 10/29 after close (D-13)"],
+      ["locked", "2 related updates in Plus"],
+    ]);
   });
 
   test("알아두기가 없으면(키 없음) data-quiet-fact 없음", () => {
@@ -252,6 +267,13 @@ describe("Dashboard", () => {
     expect(text(html)).not.toContain("No cards yet");
   });
 
+  test("거래일 제목 바로 아래 초보용 한 줄 설명(#93, SEC 공시가 뭔지). 카드가 없어도 같다", () => {
+    for (const tradingDay of ["Fri, Oct 16, 2026", null]) {
+      const html = renderToStaticMarkup(<Dashboard data={{ tradingDay, glance: null, cards: [] }} />);
+      expect(html).toMatch(/<\/h1><p[^>]*>Companies file reports with the SEC, a U\.S\. government agency, when certain big events happen\. Each trading day, we read those filings and sum up each stock and ETF we cover in a few short lines\.<\/p>/);
+    }
+  });
+
   test("카드 없음은 고정 문구", () => {
     const html = renderToStaticMarkup(<Dashboard data={{ tradingDay: null, glance: null, cards: [] }} />);
     expect(html).toMatch(/<h1[^>]*>No cards yet<\/h1>/);
@@ -264,11 +286,11 @@ test("모든 페이지(루트 레이아웃) 하단에 Not investment advice. 하
     RootLayout({ children: <p>page</p>, params: Promise.resolve({}) } as unknown as LayoutProps<"/">),
   );
   expect(html).toMatch(/<p>page<\/p>.*<footer[^>]*>.*Not investment advice.*<\/footer>/);
-  // Inter: html에 next/font 변수 클래스, body가 그 변수를 쓰는 font-sans, CSS의 font-sans가 같은 변수 이름(--font-inter)
-  expect(vi.mocked(Inter)).toHaveBeenCalledWith(expect.objectContaining({ variable: "--font-inter" }));
+  // Nunito(#93): html에 next/font 변수 클래스, body가 그 변수를 쓰는 font-sans, CSS의 font-sans가 같은 변수 이름(--font-nunito)
+  expect(vi.mocked(Nunito)).toHaveBeenCalledWith(expect.objectContaining({ variable: "--font-nunito" }));
   expect(html.match(/<html[^>]*class="([^"]*)"/)?.[1].split(" ")).toContain("font-sans-var");
   expect(html.match(/<body[^>]*class="([^"]*)"/)?.[1].split(" ")).toContain("font-sans");
-  expect(readFileSync(join(__dirname, "..", "src", "app", "globals.css"), "utf8")).toMatch(/--font-sans: var\(--font-inter\),/);
+  expect(readFileSync(join(__dirname, "..", "src", "app", "globals.css"), "utf8")).toMatch(/--font-sans: var\(--font-nunito\),/);
   const footer = html.slice(html.indexOf("<footer"));
   expect(hrefs(footer).length).toBeGreaterThan(0);
   for (const h of hrefs(footer)) expect(h, h).toMatch(/^\/((#[a-z]+)?|terms(#[a-z-]+)?|privacy(#[a-z-]+)?)$/); // 어느 경로에서 눌러도 같은 곳
@@ -301,7 +323,7 @@ test("하단 Product: 랜딩 앵커 셋(#70, 웹에 없는 알림·위젯·아�
 const hrefs = (html: string) => [...html.matchAll(/<a[^>]*href="([^"]*)"/g)].map((m) => m[1]);
 const targets = (html: string) => [...html.matchAll(/<(a|button)\b[^>]*>/g)].map((m) => m[0]);
 
-describe("랜딩 / (#27 사용자 시안, #70 1단계 기능)", () => {
+describe("랜딩 / (#27 사용자 시안, #70 1단계 기능, #93 실제 샘플 카드)", () => {
   const html = renderToStaticMarkup(<Landing />);
   const plain = (h: string) => text(h).replaceAll("&#x27;", "'").replaceAll("&amp;", "&").replaceAll("&quot;", '"');
   const page = plain(html);
@@ -318,7 +340,10 @@ describe("랜딩 / (#27 사용자 시안, #70 1단계 기능)", () => {
   });
 
   test("지금 제공하지 않는 것을 약속하지 않는다(#70): 가격·체험·결제, 아레나, Apple 로그인, 위젯·푸시·아침 알림, 무제한, 미리보기 안내", () => {
-    for (const t of [page, plain(footerHtml)]) {
+    // 샘플 카드 줄은 DB 문구 그대로(#93 실제 카드, SCHD 줄의 "$7.2B"는 공시 사실)라 랜딩이 쓴 문구만 본다
+    const ours = (SAMPLES as CardView[]).flatMap((c) => c.lines).reduce((t, l) => ("text" in l ? t.replaceAll(l.text, "") : t), page);
+    expect(ours).not.toContain("$7.2B");
+    for (const t of [ours, plain(footerHtml)]) {
       expect(t).not.toMatch(/\$|trial|billed|\/ year|yearly|monthly|per month|subscribe|upgrade|checkout|pricing/i);
       expect(t).not.toMatch(/arena|agents?\b|mock trad|virtual money|verdict|hits – misses/i);
       expect(t).not.toMatch(/with Apple|Apple or Google|App Store|iPhone/i);
@@ -332,43 +357,34 @@ describe("랜딩 / (#27 사용자 시안, #70 1단계 기능)", () => {
     expect(page).toContain("Sign in with Google");
   });
 
-  test("샘플 카드: 무료로 보이는 실제 카드 문구(#62·#63·#66·#67·#69). 잠금은 같은 글자의 /plus 링크, 탭 폼 없음", () => {
-    expect(lines(html).map(([s, t]) => [s, t.replace(/Did you know: .*$/, "")])).toEqual([
-      ["checked_found", "Apple named a new CFO +2 more (SEC filing)"],
-      ["checked_found", "Earnings Thu 10/15 after close (est.) (D-2)"],
-      ["locked", "2 related updates in Plus"],
-      ["checked_none", "No new SEC filings found"], // ETF 조용한 날: 헤더 Quiet day와 같은 첫 번째 줄
-      ["unsupported", "Not covered yet"],
-      ["unsupported", "Not covered yet"], // ETF는 연관 소식이 없어 모든 viewer에게 미지원
+  test("샘플 카드 = 2026-11-06 실제 카드(#93, 행 → 화면 모델 대조는 landing-samples.test.ts). 잠금은 같은 글자의 /plus 링크, 탭 폼 없음", () => {
+    expect(lines(html)).toEqual([
+      ["checked_found", "Microsoft said director Emma Walmsley will not stand for re-election at its annual meeting (SEC filing)"],
+      ["checked_found", "Earnings Wed 1/27 after close (est.) (D-82)"],
+      ["checked_found", "ConocoPhillips reported third-quarter cash from operations of $7.2B and raised its quarterly dividend (SEC filing)"], // ETF: 상위 편입 종목 공시
+      ["unsupported", "Not covered yet"], // ETF: 실적 없음, 배당 출처 없음
       ["checked_none", "No new SEC filings found"],
-      ["checked_none", "No confirmed events found"],
-      ["locked", "Related updates in Plus"], // 0건·지연은 건수 없이
-    ]);
-    // 카드 헤더(#63): 첫 번째 줄에 맞춘 고정 문구(AAPL은 1등 + 2 more)
+      ["checked_found", "Earnings Wed 11/18 after close (est.) (D-12)"],
+    ]); // 그날은 세 번째 줄(#67) 전이라 카드마다 두 줄
+    // 카드 헤더(#63)
     expect([...html.matchAll(/data-header-status="([^"]+)"[^>]*>(.*?)<\//g)].map((m) => [m[1], m[2]])).toEqual([
-      ["checked_found", "3 new filings"],
-      ["checked_none", "Quiet day"],
+      ["checked_found", "1 new filing"],
+      ["checked_found", "1 new filing"],
       ["checked_none", "Quiet day"],
     ]);
-    // 알아두기(#66): 주식의 조용한 날에만(ETF에는 없다)
-    expect([...html.matchAll(/data-quiet-fact[^>]*>(.*?)<\/p>/g)].map((m) => plain(m[1]))).toEqual([
-      "Did you know: Coca-Cola makes beverage concentrates and syrups for bottling partners (Annual report)",
-    ]);
-    // 잠긴 자리(#69, ETF 없음)·세 번째 줄 잠금(#67)은 /plus 링크. 탭 폼이면 랜딩 방문이 탭 합계에 섞인다
+    expect(html).not.toContain("data-quiet-fact"); // 그날 알아두기 1번 행이 없었다
+    // 잠긴 자리(#69, ETF 없음)는 /plus 링크. 탭 폼이면 랜딩 방문이 탭 합계에 섞인다
     expect(html).not.toContain("<form");
     expect(links(html).filter(([h]) => h === "/plus").map(([, t]) => t)).toEqual([
-      "2 related updates in Plus",
-      "Earnings summary in Plus",
-      "Related updates in Plus",
+      "Insider and big holder filings in Plus",
       "Insider and big holder filings in Plus",
       "About Plus",
     ]);
-    // 카드마다 하단 확인 줄(잠긴 줄은 범위에 넣지 않는다, 실제 카드와 같은 모양)
-    expect(page.match(/Checked 7:30 AM ET · SEC filings/g)).toHaveLength(3);
-    for (const old of ["No major news today", "No events in next 2 weeks", "No notable price moves", "Top holdings", "No related filings found", "prev close"]) {
-      expect(page).not.toContain(old);
-    }
-    expect(page).toContain("Sample cards. Figures are illustrative.");
+    // 카드마다 하단 확인 줄(그날 실제 확인 시각·범위)
+    expect(page.match(/Checked 4:17 AM ET · SEC filings/g)).toHaveLength(3);
+    expect(page).toContain("Checked 4:17 AM ET · SEC filings of 10 top holdings");
+    for (const old of ["Apple named a new CFO", "Coca-Cola makes", "Figures are illustrative", "Sample cards.", "prev close"]) expect(page).not.toContain(old);
+    expect(page).toContain("Real cards from Fri, Nov 6, 2026.");
   });
 
   test("랜딩에 가격 숫자·가격 사실 문구가 없다(#55 스토리 24, #62)", () => {
@@ -397,16 +413,17 @@ describe("랜딩 / (#27 사용자 시안, #70 1단계 기능)", () => {
     expect(plus).toContain("Sign in and tap Notify me on the About Plus page. We'll email your sign-in address once when Plus launches."); // 방침 use 절
   });
 
-  test("흰 Plus 섹션의 링크는 어두운 포커스 링(흰 링은 안 보인다)", () => {
+  test("밝은 Plus 칸(#93): 반전 바탕 없음, 링크는 기본 진한 포커스 링 그대로(덮어쓰지 않는다)", () => {
     const plus = html.slice(html.indexOf('id="plus"'), html.indexOf('id="get"'));
     expect(targets(plus)).toHaveLength(1);
-    for (const t of targets(plus)) expect(t).toContain("focus-visible:outline-background");
+    expect(plus).not.toMatch(/\bbg-foreground\b/);
+    expect(html).not.toMatch(/focus-visible:outline-/);
   });
 
   test("copy-reviewer 1차 교체 문구(03_orchestrator_decisions)", () => {
     // 첫 번째 줄 생성기는 날짜를 쓰지 않는다: 샘플·미리보기 모두 같은 줄
     expect(page).not.toContain("effective Jan 1");
-    expect(page.match(/Apple named a new CFO \+2 more \(SEC filing\)/g)).toHaveLength(2);
+    expect(page.match(/Microsoft said director Emma Walmsley will not stand for re-election at its annual meeting \(SEC filing\)/g)).toHaveLength(2); // 샘플 + How it works 01 미니 카드(#93 실제 줄)
     expect(page).toContain("Settings required");
     expect(page).toContain("The next cards are ready at 7:45 AM ET.");
     for (const old of ["Start free trial", "Settings to tune", "closing prices only", "Tomorrow's cards"]) expect(page).not.toContain(old);
@@ -550,7 +567,7 @@ describe("내 종목·둘러보기(#38)", () => {
     expect(text(html).indexOf("Pick your stocks")).toBeLessThan(text(html).indexOf("Browse"));
     expect(forms(html)).toEqual([SEARCH_FORM]); // 검색어가 없으면 목록 없음(커버 범위 약 550개를 다 그리지 않는다)
     expect(text(pick(html))).not.toMatch(/No matching stocks|Type more/);
-    expect(headings(html)).toEqual(["h1 Fri, Oct 16, 2026", "h2 My stocks", "h2 Browse", "h2 AAPL", "h2 MSFT", "h2 NVDA"]);
+    expect(headings(html)).toEqual(["h1 Fri, Oct 16, 2026", "h2 My stocks", "h2 Browse", "h2 Apple Inc.", "h2 Microsoft", "h2 NVIDIA"]); // 카드 제목은 회사 이름(#93)
   });
 
   test("고르기: 검색 폼은 GET /cards#pick, 라벨 있는 검색칸, 결과마다 넣기 버튼(#58)", () => {
@@ -617,7 +634,7 @@ describe("내 종목·둘러보기(#38)", () => {
 
   test("내 종목 있음: 위 My stocks(카드 또는 Summary arrives tomorrow morning + 빼기), 아래 Browse(나머지 카드), 고르기는 접힘", () => {
     const html = render(view(["TQQQ", "MSFT"], 2));
-    expect(headings(html)).toEqual(["h1 Fri, Oct 16, 2026", "h2 My stocks", "h2 TQQQ", "h2 MSFT", "h2 Browse", "h2 AAPL", "h2 NVDA"]);
+    expect(headings(html)).toEqual(["h1 Fri, Oct 16, 2026", "h2 My stocks", "h2 ProShares UltraPro QQQ", "h2 Microsoft", "h2 Browse", "h2 Apple Inc.", "h2 NVIDIA"]);
     const mine = text(html.slice(0, html.indexOf("Browse")));
     expect(mine).toContain("ProShares UltraPro QQQ");
     expect(mine).toContain("Summary arrives tomorrow morning"); // TQQQ는 이 날 카드가 없다
@@ -712,7 +729,7 @@ describe("시장 한눈에(#11)", () => {
 
   test("거래일 제목 바로 아래, 카드 목록 위(로그인 전)", () => {
     const html = renderToStaticMarkup(<Dashboard data={{ tradingDay: "Fri, Oct 16, 2026", glance, cards: [card()] }} />);
-    expect(headings(html)).toEqual(["h1 Fri, Oct 16, 2026", "h2 Market at a glance", "h2 AAPL"]);
+    expect(headings(html)).toEqual(["h1 Fri, Oct 16, 2026", "h2 Market at a glance", "h2 Apple Inc."]);
   });
 
   test("로그인: 거래일 제목 → 시장 한눈에 → My stocks → Browse. 로그인 전·무료·Plus 모두 같은 블록", () => {
@@ -724,7 +741,7 @@ describe("시장 한눈에(#11)", () => {
     const mine = (swapsLeft: number | null) =>
       myDashboardView(data.cards, coverage, { stocks: [{ ...coverage[1], locked: false }], swapsLeft }, undefined);
     const [out, free, plus] = [undefined, mine(3), mine(null)].map((m) => renderToStaticMarkup(<Dashboard data={data} mine={m} />));
-    expect(headings(free)).toEqual(["h1 Fri, Oct 16, 2026", "h2 Market at a glance", "h2 My stocks", "h2 MSFT", "h2 Browse", "h2 AAPL"]);
+    expect(headings(free)).toEqual(["h1 Fri, Oct 16, 2026", "h2 Market at a glance", "h2 My stocks", "h2 Microsoft", "h2 Browse", "h2 Apple Inc."]);
     expect(section(out)).toBeDefined();
     expect(section(free)).toBe(section(out));
     expect(section(plus)).toBe(section(out));
@@ -893,9 +910,10 @@ describe("지난 카드 /cards/[ticker](#68)", () => {
   const render = (v: PastCardsView) => renderToStaticMarkup(<PastCards view={v} />);
   const headings = (html: string) => [...html.matchAll(/<h([12])\b[^>]*>(.*?)<\/h\1>/g)].map((m) => `h${m[1]} ${text(m[2])}`);
 
-  test("Plus: 뒤로(My stocks → /cards#my-stocks), Past cards 라벨, h1 티커 + 종목명, 날짜(h2)마다 카드 최신순, 잠금 안내 없음", () => {
+  test("Plus: 뒤로(My stocks → /cards#my-stocks), Past cards 라벨, h1 종목명 + 티커 칩(#93), 날짜(h2)마다 카드 최신순, 잠금 안내 없음", () => {
     const html = render(view());
-    expect(headings(html)).toEqual(["h1 AAPL", "h2 Fri, Oct 16, 2026", "h2 AAPL", "h2 Thu, Oct 15, 2026", "h2 AAPL"]);
+    expect(headings(html)).toEqual(["h1 Apple Inc.", "h2 Fri, Oct 16, 2026", "h2 Apple Inc.", "h2 Thu, Oct 15, 2026", "h2 Apple Inc."]);
+    expect(text(html).indexOf("Apple Inc.")).toBeLessThan(text(html).indexOf("AAPL")); // 티커 칩은 이름 다음
     expect([...html.matchAll(/<a\b[^>]*href="([^"]*)"[^>]*>(.*?)<\/a>/g)].map((m) => [m[1], text(m[2])])).toEqual([["/cards#my-stocks", "My stocks"]]);
     const t = text(html);
     expect(t.indexOf("Past cards")).toBeLessThan(t.indexOf("Apple Inc."));
@@ -905,7 +923,7 @@ describe("지난 카드 /cards/[ticker](#68)", () => {
 
   test("무료: 오늘 카드 + Past 90 days in Plus(글자뿐, 결제·누르는 곳 없음: 링크·버튼은 뒤로 하나 + 세 번째 줄 잠금 탭(#69))", () => {
     const html = render(view({ locked: true, days: [{ day: "Fri, Oct 16, 2026", card: quiet }] }));
-    expect(headings(html)).toEqual(["h1 AAPL", "h2 Fri, Oct 16, 2026", "h2 AAPL"]);
+    expect(headings(html)).toEqual(["h1 Apple Inc.", "h2 Fri, Oct 16, 2026", "h2 Apple Inc."]);
     expect(text(html).indexOf("Related updates in Plus")).toBeLessThan(text(html).indexOf("Past 90 days in Plus"));
     expect(targets(html)).toHaveLength(2);
     expect(html).toMatch(/<p[^>]*>Past 90 days in Plus<\/p>/); // 잠금 안내 자체는 링크·버튼이 아니다
@@ -914,12 +932,12 @@ describe("지난 카드 /cards/[ticker](#68)", () => {
 
   test("오늘 카드 없음은 Summary arrives tomorrow morning 자리, 날이 하나도 없으면 No cards yet", () => {
     const pending = render(view({ locked: true, days: [{ day: "Fri, Oct 16, 2026", card: null }] }));
-    expect(headings(pending)).toEqual(["h1 AAPL", "h2 Fri, Oct 16, 2026", "h2 AAPL"]);
+    expect(headings(pending)).toEqual(["h1 Apple Inc.", "h2 Fri, Oct 16, 2026", "h2 Apple Inc."]);
     expect(text(pending)).toContain("Summary arrives tomorrow morning");
     expect(text(pending)).toContain("Past 90 days in Plus");
     const empty = render(view({ days: [] }));
     expect(text(empty)).toContain("No cards yet");
-    expect(headings(empty)).toEqual(["h1 AAPL"]);
+    expect(headings(empty)).toEqual(["h1 Apple Inc."]);
   });
 
   test("뒤로 링크는 터치 영역 44px 이상, 휴대폰 폭에서 가로 스크롤이 생기지 않는 구조(고정 폭·줄바꿈 금지 없음)", () => {

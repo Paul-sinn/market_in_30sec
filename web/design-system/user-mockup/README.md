@@ -1,3 +1,5 @@
+> **2026-11-07 #93 — 대체됨.** 이 어두운 시안(#27)은 더 이상 디자인 기준이 아니다. 기준은 #93 밝은 스타일, 토큰은 `web/src/app/globals.css`.
+
 # Landing page — design reference
 
 This is a design mockup created in a visual design tool, exported as a
