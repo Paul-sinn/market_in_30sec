@@ -49,7 +49,7 @@ test('"use client" 파일은 서버 모듈을 import하지 않는다', () => {
   expect(client.filter((f) => /from ["']@\/server/.test(f.code)).map((f) => f.path)).toEqual([]);
 });
 
-test("등락률 토큰: up은 초록, down은 빨강(어두운 테마 하나, #27)", () => {
+test("등락률 토큰: up은 초록, down은 빨강(밝은 테마 하나, #93)", () => {
   const css = readFileSync(join(SRC, "app", "globals.css"), "utf8");
   const rgb = (name: string) =>
     [...css.matchAll(new RegExp(`--color-${name}: #([0-9a-f]{6});`, "gi"))].map((m) => m[1].match(/../g)!.map((h) => parseInt(h, 16)));

@@ -21,15 +21,15 @@ description: "30초 종목 리포트 웹 SaaS(web/, Next.js App Router)의 구�
 | DB에 문구가 없는 화면 상태(카드 헤더, 등락률 지연·미지원, 세 번째 줄 잠금 건수, 잠긴 자리·`Notify me`, 축소판, 카드 없음, 휴장일)는 고정 문구표 한 곳(`web/src/lib/copy.ts`)에 둔다. GLOSSARY·HANDOFF 3-3에 있는 문구(`Update delayed`, `Not covered yet`, `Market closed today` 등)를 그대로 쓰고, 없는 문구를 새로 만들면 보고에 적어 copy-reviewer 검수를 받는다 | 같은 상태가 화면마다 다른 말로 나오지 않게 한다 |
 | 등락률(가격 표시 플래그 on일 때만): DB 값(소수 첫째 자리)을 다시 계산하지 않고 형식만 입힌다. `+1.2%` / 진짜 마이너스 `−1.2%`(U+2212) / 보합 `0.0%`. 상승 초록·하락 빨강·보합 중립색, 색만으로 구분하지 않게 부호를 항상 붙인다 | HANDOFF 3-3, 접근성(색만으로 의미 전달 금지) |
 | 카드 하단에 확인 시각·출처 범위: `Checked 7:30 AM ET · SEC filings` (`checked_at`을 America/New_York으로, `source_scope` 그대로). 확인된 줄(checked_found·checked_none)만 넣고 시각은 그중 가장 이른 것, 확인된 줄이 없으면 하단을 그리지 않는다 | HANDOFF 3-3: 확인한 범위를 드러낸다. 실패한 출처가 "Checked"로 읽히면 안 된다(#24) |
-| 등락률 옆 라벨은 종가 날짜 `Thu 10/15 close`(DB `stock_card.previous_trading_day`를 포맷, 웹은 달력을 계산하지 않음, #16). 값이 없는 옛 카드와 랜딩 샘플은 `prev close`(사용자 시안, #27). 발행 중단(`publish_suspended`) 카드는 `exposeCards` 한 곳에서 뺀다. DB 읽기 실패는 `src/app/cards/error.tsx`의 `Cards could not be loaded` + `Try again`, 에러 내용은 화면에 그리지 않는다 | 등락률은 직전 거래일 기준이라 카드 날짜와 다르다. 실패를 "카드 없음"으로 보이지 않게(#24) |
+| 등락률 옆 라벨은 종가 날짜 `Thu 10/15 close`(DB `stock_card.previous_trading_day`를 포맷, 웹은 달력을 계산하지 않음, #16). 값이 없는 옛 카드는 `prev close`(#27). 발행 중단(`publish_suspended`) 카드는 `exposeCards` 한 곳에서 뺀다. DB 읽기 실패는 `src/app/cards/error.tsx`의 `Cards could not be loaded` + `Try again`, 에러 내용은 화면에 그리지 않는다 | 등락률은 직전 거래일 기준이라 카드 날짜와 다르다. 실패를 "카드 없음"으로 보이지 않게(#24) |
 | 시장 한눈에(`market_glance`)는 줄 컬럼만 select하고 `market_news_hold_*`·`market_news_item`은 읽지 않는다. 가격 표시 플래그 off면 어제 마감 줄 없이 2줄. 그날 행이 없으면 줄마다 `Update delayed`, 무료·Plus·로그인 전 모두 같다(#11) | 보류 칸은 검수에 걸린 AI 초안이다. 읽지 않으면 화면에 닿을 길이 없다 |
 | 줄을 숨기지 않는다. 조용한 날·지연·미지원도 문구를 그린다 | 카드 높이가 날마다 바뀌지 않고, "확인 못 함"이 "없음"으로 보이지 않게 한다 |
 | 방향 의견·등급 표현 없음. 아레나 화면은 만들지 않는다(보류) | ADR-0001 |
 | 모든 페이지 하단에 `Not investment advice`(+ #62 뒤로 이용약관·개인정보처리방침 링크) | HANDOFF 3-3, 3-9 |
 | 공개(배포 보호 해제)는 #70(P9b)에서만 한다. 그 전까지 배포 보호(Basic Auth + `m30_auth` 쿠키)를 유지한다 | 2026-11-03 피봇: 1단계(#56~#69)가 끝나야 공개한다. 법률 검토는 결제 전(HANDOFF 3-9) |
 | 시세 데이터는 가격 표시 플래그 on일 때만 그린다. 무료 시세 API 데이터는 어떤 경우에도 그리지 않는다 | HANDOFF 4장: Tiingo Commercial은 Internal Use Only, 무료 API는 구독 전 성능 검사용 |
-| 디자인 기준은 사용자 시안 `web/design-system/user-mockup/landing.dc.html`(2026-10-20, #27). 어두운 테마 하나, 색·글꼴(Inter)·간격·라벨 스타일은 시안 값을 Tailwind 테마 토큰으로 옮겨 쓰고 컴포넌트에 hex를 직접 쓰지 않는다. 시안에 없는 화면은 시안의 토큰·패턴으로 만든다. `ui-ux-pro-max` 스킬은 접근성·UX 점검(대비, 포커스, 터치 크기, 모바일 레이아웃)에 쓴다(`--stack nextjs`) | 사용자 지시: 디자인은 사용자 시안, UI/UX 점검은 ui-ux-pro-max. 토큰 한 곳이면 디자인 변경이 한 파일이다 |
-| 모바일 우선. 가로 스크롤 없음, 글자 크기는 시안 값(본문 14px·설명 16px·라벨 11px 이상), 대비 4.5:1, 링크·버튼 높이 44px 이상, 보이는 포커스 표시. 테마는 시안의 어두운 테마 하나 | 기준은 "폰에서 30초 안에 읽히는가". 크기는 사용자 시안이 정한다(#27) |
+| 디자인 기준은 #93(사용자 결정 2026-11-07, #27 어두운 시안을 대체): 주식 용어를 모르는 초보용 밝고 둥근 스타일. 밝은 테마 하나(크림 배경·흰 카드·파스텔 피치 강조 하나 + 틴트), 큰 둥근 모서리(`rounded-card` 24px·`rounded-cell` 16px), 부드러운 그림자(`shadow-card`), 둥근 글꼴 Nunito(`next/font`), 대문자·넓은 자간 라벨 없이 문장형. 카드는 회사 이름 먼저 크게 + 티커 칩, 헤더는 알약, 줄마다 쉬운 라벨(`LINE_LABELS`), 잠금은 점선 알약 버튼. 값은 `web/src/app/globals.css` 토큰만 쓰고 컴포넌트에 hex·임의 값을 쓰지 않는다. 새 화면은 같은 토큰·패턴으로 만든다. `ui-ux-pro-max` 스킬은 화면을 만들거나 바꿀 때 먼저 부르고 접근성·UX 점검(대비, 포커스, 터치 크기, 모바일 레이아웃)에 쓴다(`--stack nextjs`) | 사용자 결정: 대상은 투자 용어를 모르는 초보라 진입 장벽이 낮아 보여야 한다. 토큰 한 곳이면 디자인 변경이 한 파일이다 |
+| 모바일 우선(390px 폰이 기준, X 스크린샷). 가로 스크롤 없음, 글자 크기는 본문 16px·보조 14px·칩·하단 12px 이상, 대비 4.5:1(토큰별 표는 globals.css 주석·`_workspace/issue-93/01_web-dev_report.md`), 링크·버튼 높이 44px 이상, 보이는 포커스 표시(진한 foreground 2px). 테마는 밝은 테마 하나 | 기준은 "폰에서 30초 안에 읽히는가"(#93) |
 
 ## 2. 디렉터리
 

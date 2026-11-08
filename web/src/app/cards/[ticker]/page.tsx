@@ -9,7 +9,7 @@ import { getPastCards } from "@/server/past-cards";
 /** 지난 카드(#68). 공용 캐시를 쓰지 않는다: 내 종목 확인·플랜이 먼저라 요청마다 읽는다(요청 제한 #62는 /cards/… 그대로) */
 export default function PastCardsPage({ params }: PageProps<"/cards/[ticker]">) {
   return (
-    <Suspense fallback={<div aria-busy="true" className="h-56 bg-surface motion-safe:animate-pulse" />}>
+    <Suspense fallback={<div aria-busy="true" className="h-56 rounded-card bg-surface motion-safe:animate-pulse" />}>
       <Past params={params} />
     </Suspense>
   );

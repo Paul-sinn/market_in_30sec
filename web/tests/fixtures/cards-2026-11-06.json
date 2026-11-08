@@ -1,0 +1,112 @@
+{
+  "_source": "원격 stock_card 2026-11-06 (#93). getDashboard가 읽는 열·조인 모양 그대로, 공시 본문 없음",
+  "day": "2026-11-06",
+  "rows": [
+    {
+      "ticker": "MSFT",
+      "change_pct": null,
+      "change_status": "unsupported",
+      "previous_trading_day": "2026-11-05",
+      "publish_suspended": false,
+      "news_line_text": "Microsoft said director Emma Walmsley will not stand for re-election at its annual meeting (SEC filing)",
+      "news_line_status": "checked_found",
+      "news_line_checked_at": "2026-11-06T09:17:16.109469+00:00",
+      "news_line_source_scope": "SEC filings",
+      "event_line_text": "Earnings Wed 1/27 after close (est.) (D-82)",
+      "event_line_status": "checked_found",
+      "event_line_checked_at": "2026-11-06T09:17:16.109469+00:00",
+      "event_line_source_scope": "SEC filings",
+      "related_line_text": null,
+      "related_line_status": null,
+      "related_line_checked_at": null,
+      "related_line_source_scope": null,
+      "news_line_filing_count": 1,
+      "related_line_filing_count": null,
+      "leverage_tag": null,
+      "coverage": {
+        "name": "Microsoft",
+        "holdings_ticker": null
+      },
+      "news_filing": {
+        "filing_classification": [
+          {
+            "ticker": "MSFT",
+            "kind": "leadership"
+          }
+        ]
+      }
+    },
+    {
+      "ticker": "SCHD",
+      "change_pct": null,
+      "change_status": "unsupported",
+      "previous_trading_day": "2026-11-05",
+      "publish_suspended": false,
+      "news_line_text": "ConocoPhillips reported third-quarter cash from operations of $7.2B and raised its quarterly dividend (SEC filing)",
+      "news_line_status": "checked_found",
+      "news_line_checked_at": "2026-11-06T09:17:16.109469+00:00",
+      "news_line_source_scope": "SEC filings of 10 top holdings",
+      "event_line_text": "Not covered yet",
+      "event_line_status": "unsupported",
+      "event_line_checked_at": "2026-11-06T09:17:16.109469+00:00",
+      "event_line_source_scope": null,
+      "related_line_text": null,
+      "related_line_status": null,
+      "related_line_checked_at": null,
+      "related_line_source_scope": null,
+      "news_line_filing_count": 1,
+      "related_line_filing_count": null,
+      "leverage_tag": null,
+      "coverage": {
+        "name": "Schwab U.S. Dividend Equity ETF",
+        "holdings_ticker": "SCHD"
+      },
+      "news_filing": {
+        "filing_classification": [
+          {
+            "ticker": "COP",
+            "kind": "earnings"
+          }
+        ]
+      }
+    },
+    {
+      "ticker": "NVDA",
+      "change_pct": null,
+      "change_status": "unsupported",
+      "previous_trading_day": "2026-11-05",
+      "publish_suspended": false,
+      "news_line_text": "No new SEC filings found",
+      "news_line_status": "checked_none",
+      "news_line_checked_at": "2026-11-06T09:17:16.109469+00:00",
+      "news_line_source_scope": "SEC filings",
+      "event_line_text": "Earnings Wed 11/18 after close (est.) (D-12)",
+      "event_line_status": "checked_found",
+      "event_line_checked_at": "2026-11-06T09:17:16.109469+00:00",
+      "event_line_source_scope": "SEC filings",
+      "related_line_text": null,
+      "related_line_status": null,
+      "related_line_checked_at": null,
+      "related_line_source_scope": null,
+      "news_line_filing_count": null,
+      "related_line_filing_count": null,
+      "leverage_tag": null,
+      "coverage": {
+        "name": "NVIDIA",
+        "holdings_ticker": null
+      },
+      "news_filing": null
+    }
+  ],
+  "estimates": [
+    {
+      "ticker": "MSFT",
+      "estimate_day": "2027-01-27"
+    },
+    {
+      "ticker": "NVDA",
+      "estimate_day": "2026-11-18"
+    }
+  ],
+  "quietFacts": []
+}

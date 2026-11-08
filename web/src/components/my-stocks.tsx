@@ -7,7 +7,7 @@ import { PendingCard, StockCard } from "./stock-card";
 
 // 일반 폼 POST(/my-stocks)라 JS 없이 돌고 브라우저에는 Supabase가 없다. 개수·교체 제한은 DB가 정하므로 버튼을 막지 않는다
 const BUTTON =
-  "inline-flex min-h-11 shrink-0 cursor-pointer items-center justify-center border border-foreground px-4 text-sm font-bold tracking-widest uppercase";
+  "inline-flex min-h-11 shrink-0 cursor-pointer items-center justify-center rounded-full bg-tint px-4 text-sm font-bold transition-colors hover:bg-accent-soft";
 
 function ChangeForm({ change, ticker, label }: { change: "add" | "remove"; ticker: string; label: string }) {
   return (
@@ -28,13 +28,13 @@ export function MyStocksSection({ view, grid }: { view: MyDashboardView; grid: s
   return (
     <section aria-labelledby="my-stocks" className="mb-12">
       <div className="mb-4 flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
-        <h2 id="my-stocks" className="text-xl font-medium">
+        <h2 id="my-stocks" className="text-2xl font-extrabold">
           {MY_STOCKS}
         </h2>
         {view.swapsLeft !== null && <p className="text-sm text-muted">{SWAPS_LEFT(view.swapsLeft)}</p>}
       </div>
       {view.notice && (
-        <p role="status" className="mb-4 bg-surface px-4 py-3 text-sm">
+        <p role="status" className="mb-4 rounded-cell bg-surface px-4 py-3 text-sm shadow-card">
           {view.notice}
         </p>
       )}
@@ -45,7 +45,7 @@ export function MyStocksSection({ view, grid }: { view: MyDashboardView; grid: s
               <div className="grow">{s.card ? <StockCard card={s.card} /> : <PendingCard ticker={s.ticker} name={s.name} />}</div>
               <div className="flex flex-wrap justify-end gap-2">
                 {/* 프리페치 없음: 프리페치도 /cards/… 요청 제한(#62)에 세어져 내 종목이 많으면 한도를 먹는다 */}
-                <Link href={`/cards/${s.ticker}`} prefetch={false} className="inline-flex min-h-11 items-center px-4 text-sm font-bold tracking-widest uppercase">
+                <Link href={`/cards/${s.ticker}`} prefetch={false} className="inline-flex min-h-11 items-center rounded-full px-4 text-sm font-bold underline underline-offset-4 hover:bg-tint">
                   {PAST_CARDS}
                   <span className="sr-only"> {s.ticker}</span>
                 </Link>
@@ -57,8 +57,8 @@ export function MyStocksSection({ view, grid }: { view: MyDashboardView; grid: s
       )}
       {/* id = 검색 폼 주소의 #pick: 검색 뒤 새 페이지가 이 칸으로 간다. 검색은 GET이라 JS 없이 돌고 서버가 거른다(#58) */}
       <details id="pick" open={view.mine.length === 0 || view.query !== ""} className="mt-4">
-        <summary className="min-h-11 cursor-pointer py-3 text-sm font-bold tracking-widest uppercase">{PICK_STOCKS}</summary>
-        <form method="get" action="/cards#pick" role="search" className="mb-4">
+        <summary className="inline-flex min-h-11 cursor-pointer items-center rounded-full bg-accent px-5 font-bold">{PICK_STOCKS}</summary>
+        <form method="get" action="/cards#pick" role="search" className="mt-4 mb-4">
           <label htmlFor="pick-q" className="mb-2 block text-sm text-muted">
             {SEARCH_STOCKS}
           </label>
@@ -75,7 +75,7 @@ export function MyStocksSection({ view, grid }: { view: MyDashboardView; grid: s
               spellCheck={false}
               enterKeyHint="search"
               aria-describedby={note ? "pick-note" : undefined}
-              className="min-h-11 min-w-0 grow border border-muted bg-surface px-3 text-base"
+              className="min-h-11 min-w-0 grow rounded-full border border-muted bg-surface px-4 text-base"
             />
             <button type="submit" className={BUTTON}>
               {SEARCH}
@@ -90,7 +90,7 @@ export function MyStocksSection({ view, grid }: { view: MyDashboardView; grid: s
         {view.pickable.length > 0 && (
           <ul className="grid gap-2 md:grid-cols-2 xl:grid-cols-3">
             {view.pickable.map((s) => (
-              <li key={s.ticker} className="flex items-center gap-3 bg-surface py-2 pr-2 pl-4">
+              <li key={s.ticker} className="flex items-center gap-3 rounded-cell bg-surface py-2 pr-2 pl-4 shadow-card">
                 <span className="font-bold">{s.ticker}</span>
                 <span className="min-w-0 grow wrap-break-word text-muted">{s.name}</span>
                 <ChangeForm change="add" ticker={s.ticker} label={ADD} />

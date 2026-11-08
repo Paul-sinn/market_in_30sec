@@ -7,7 +7,7 @@
 - `/my-stocks`(POST) 내 종목 넣기·빼기(#38)
 - `/terms` 이용약관, `/privacy` 개인정보처리방침(#62, 정적 페이지, DB를 읽지 않는다). 본문은 `src/app/(legal)/*/page.tsx`, 같이 쓰는 값(연락처·운영자·수정일)은 `src/app/(legal)/legal.tsx`. 하단 Legal·Support 링크가 가리킨다(`/terms#contact`, `/privacy#delete`, 절 id 고정). 모든 페이지 하단 고지는 루트 레이아웃 하나(`app/layout.tsx`)가 그린다
 
-Next.js App Router + TypeScript + Tailwind. 규칙은 `.claude/skills/web-conventions/SKILL.md`. 디자인 기준은 사용자 시안 `design-system/user-mockup/landing.dc.html`, 그 값을 옮긴 토큰은 `src/app/globals.css` 한 곳(카드 화면 메모: `design-system/market_in_30sec/pages/dashboard.md`). 글꼴 Inter는 `next/font`가 빌드 때 받아 자체 제공한다.
+Next.js App Router + TypeScript + Tailwind. 규칙은 `.claude/skills/web-conventions/SKILL.md`. 디자인 기준은 #93(2026-11-07, 밝고 둥근 초보 친화 스타일. #27 어두운 시안 `design-system/user-mockup/`을 대체), 토큰은 `src/app/globals.css` 한 곳(카드 화면 메모: `design-system/market_in_30sec/pages/dashboard.md`). 글꼴 Nunito는 `next/font`가 빌드 때 받아 자체 제공한다. 랜딩 샘플 카드는 2026-11-06 실제 카드(`src/lib/samples.ts`, 행 대조 `tests/landing-samples.test.ts`).
 
 DB는 서버 전용 모듈만 만진다: 카드·시장 한눈에·커버 범위 읽기 `src/server/cards.ts`(줄 노출 판단은 `src/server/exposure.ts`, 아래 "줄 노출" 절), 유저 데이터(프로필 보장·내 종목 읽기·넣기·빼기)는 `src/server/my-stocks.ts` 한 곳(웹의 유일한 쓰기 지점), 로그인 `src/server/auth.ts`. 브라우저 번들에는 Supabase 클라이언트도 키도 없다(ADR-0003).
 

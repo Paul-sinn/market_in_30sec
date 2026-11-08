@@ -78,3 +78,12 @@ export const NOTIFY_ME = "Notify me"; // 대기 등록 버튼(GLOSSARY Waitlist)
 export const ON_THE_LIST = "You're on the list"; // 이미 등록함
 export const SIGN_IN_TO_NOTIFY = "Sign in to use Notify me"; // 로그인 전 버튼(POST /auth/sign-in)
 export const NOTIFY_FAILED = "Notify me could not be saved"; // 등록 저장 실패(LOAD_FAILED와 같은 형식)
+
+// 초보 친화 화면(#93, copy-reviewer 검수 대상)
+/** 카드 줄 위 작은 라벨(첫 번째·두 번째·세 번째 줄). 랜딩 "The card" 설명의 말과 같다. 줄 문구(DB)는 그대로, 라벨만 웹 고정 문구 */
+export const LINE_LABELS = ["What happened", "What's next", "Related"] as const;
+/** 카드 대시보드 거래일 제목 아래 한 줄 설명(SEC 공시가 뭔지) */
+export const DASHBOARD_INTRO =
+  "Companies file reports with the SEC, a U.S. government agency, when certain big events happen. Each trading day, we read those filings and sum up each stock and ETF we cover in a few short lines.";
+/** 랜딩 샘플 카드 아래(지어낸 예시가 아니라 그날 실제 카드). day = formatTradingDay 값("Fri, Nov 6, 2026") */
+export const REAL_CARDS_FROM = (day: string) => `Real cards from ${day}.`;

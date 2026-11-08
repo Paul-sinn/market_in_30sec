@@ -71,7 +71,7 @@ export type StoredCard = {
   firstQuietFact: string | null; // 알아두기 1번(#66, 둘러보기·로그인 전). 모든 viewer에게 같은 공용 데이터. 노출은 exposeCards
   lockedSlot: LockedSlot | null; // 잠긴 자리(#69). viewer와 무관한 카드 속성. null = ETF, 지난 카드(getCardHistory는 늘 null)
 };
-type DashboardRow = Row & { news_filing: { filing_classification: { ticker: string; kind: string | null }[] } | null };
+export type DashboardRow = Row & { news_filing: { filing_classification: { ticker: string; kind: string | null }[] } | null };
 
 /** 카드가 있는 가장 최근 거래일("2099-12-31") = 대시보드·지난 카드의 오늘. 카드가 없으면 null */
 async function latestTradingDay(client: ReturnType<typeof db>): Promise<string | null> {
@@ -110,17 +110,6 @@ export async function getDashboard(): Promise<{ tradingDay: string | null; day: 
   if (quiet.data.length >= MAX_ROWS) throw new Error(`quiet_fact has ${MAX_ROWS}+ rows for seq 1; paginate the read`);
   if (estimates.error) throw new Error(`earnings_estimate read failed: ${estimates.error.message}`);
   if (estimates.data.length >= MAX_ROWS) throw new Error(`earnings_estimate has ${MAX_ROWS}+ rows for ${day}; paginate the read`);
-  const first = new Map(quiet.data.map((f) => [f.ticker, f.text]));
-  const estimateDay = new Map(estimates.data.map((e) => [e.ticker, e.estimate_day]));
-  const slot = (r: DashboardRow) =>
-    lockedSlotOf(
-      {
-        etf: r.coverage.holdings_ticker !== null,
-        topFilingEarnings: r.news_filing?.filing_classification.some((c) => c.ticker === r.ticker && c.kind === "earnings") ?? false,
-        estimateDay: estimateDay.get(r.ticker) ?? null,
-      },
-      day,
-    );
   const g = glance.data;
   return {
     tradingDay: formatTradingDay(day),
@@ -130,8 +119,32 @@ export async function getDashboard(): Promise<{ tradingDay: string | null; day: 
       g && glanceLines.map((l) => ({ text: g[`${l}_text`], status: g[`${l}_status`], checked_at: g[`${l}_checked_at`], source_scope: g[`${l}_source_scope`] })),
       glanceLines.length,
     ),
-    cards: data.map((r) => toStoredCard(r, first.get(r.ticker) ?? null, slot(r))),
+    cards: dashboardCards(
+      data,
+      new Map(quiet.data.map((f) => [f.ticker, f.text])),
+      new Map(estimates.data.map((e) => [e.ticker, e.estimate_day])),
+      day,
+    ),
   };
+}
+
+/** 대시보드 행 → 저장된 카드(노출 판단 전). firstQuietFact·estimateDay는 티커 → 알아두기 1번·실적 추정일, day = 그 거래일.
+ * getDashboard와 랜딩 샘플 테스트(tests/landing-samples.test.ts: 실제 행 → exposeCards = 랜딩 SAMPLES)가 같이 쓴다 */
+export function dashboardCards(rows: DashboardRow[], firstQuietFact: ReadonlyMap<string, string>, estimateDay: ReadonlyMap<string, string>, day: string): StoredCard[] {
+  return rows.map((r) =>
+    toStoredCard(
+      r,
+      firstQuietFact.get(r.ticker) ?? null,
+      lockedSlotOf(
+        {
+          etf: r.coverage.holdings_ticker !== null,
+          topFilingEarnings: r.news_filing?.filing_classification.some((c) => c.ticker === r.ticker && c.kind === "earnings") ?? false,
+          estimateDay: estimateDay.get(r.ticker) ?? null,
+        },
+        day,
+      ),
+    ),
+  );
 }
 
 /** 한 종목의 지난 카드(#68). today = 최신 거래일(카드가 없으면 null), day = 그 카드의 거래일("2099-12-30") */

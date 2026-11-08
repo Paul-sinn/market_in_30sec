@@ -1,82 +1,60 @@
 @import "tailwindcss";
 
 /*
- * 디자인 토큰. 기준은 사용자 시안 design-system/user-mockup/landing.dc.html(#27)의 인라인 값이다.
- * 컴포넌트는 아래 이름만 쓴다(hex·임의 값 클래스 금지, tests/guards.test.ts). 어두운 테마 하나.
- * 대비(WCAG): muted는 surface 위 5.2:1, dim은 background 위 6.0:1이지만 surface 위 4.46:1이라 background에만 쓴다.
+ * 디자인 토큰(#93, 사용자 결정 2026-11-07: 밝고 둥근 초보 친화 스타일. #27 어두운 시안을 대체).
+ * 밝은 테마 하나. 컴포넌트는 아래 이름만 쓴다(hex·임의 값 클래스 금지, tests/guards.test.ts).
+ * 대비(WCAG): foreground·muted는 background·surface·tint·accent-soft 어디서나 4.5:1 이상(muted 최저 tint 위 5.5:1).
+ * muted를 accent 위에 쓰지 않는다(3.7:1). accent-ink는 글자 강조용(최저 accent-soft 위 4.7:1). 표: _workspace/issue-93/01_web-dev_report.md
  */
 @theme {
-  /* Tailwind 기본 색·글꼴·글자 크기를 지워 토큰 밖 값(text-slate-500, text-2xl 등)이 생기지 않게 한다 */
+  /* Tailwind 기본 색·글꼴·글자 크기를 지워 토큰 밖 값(text-slate-500, text-4xl 등)이 생기지 않게 한다 */
   --color-*: initial;
   --font-*: initial;
   --text-*: initial;
 
-  --color-background: #181818; /* 페이지 */
-  --color-surface: #303030; /* 카드·패널. background 위 구분선(border-surface)도 이 색 */
-  --color-border: #484848; /* surface 안 구분선 */
-  --color-foreground: #ffffff; /* 본문. 밝은 섹션(요금)의 배경 */
-  --color-muted: #a3a3a3; /* 보조 글자(surface·background 둘 다) */
-  --color-dim: #969696; /* 보조 글자(background 위만) */
-  --color-accent: #da291c; /* 브랜드 빨강. 흰 글자 4.9:1 */
-  --color-up: #3dc07d; /* 상승. surface 위 5.7:1 */
-  --color-down: #f47c7c; /* 하락. surface 위 5.0:1 */
-  --color-hover: #d2d2d2; /* 메뉴 링크 hover, 밝은 섹션의 카드 테두리 */
-  --color-ink-muted: #666666; /* 밝은 섹션의 보조 글자(흰 바탕 5.7:1) */
-  --color-ink-line: #ebebeb; /* 밝은 섹션의 줄 구분선·알약 배경 */
-  --color-black: #030303; /* 첫 화면 그라데이션 끝, 폰 테두리 */
-  --color-graphite: #3c3c3c; /* 첫 화면 그라데이션 시작 */
-  --color-dusk-1: #1b2240; /* 잠금화면 목업 배경 */
-  --color-dusk-2: #474c82;
-  --color-dusk-3: #d49671;
-  --color-push-meta: #4a4a4a; /* 알림 목업의 앱 이름·시각 */
-  --color-agent-a: #ff8a3d; /* 아레나 공격형 아바타 */
-  --color-agent-a-ink: #2b1300;
-  --color-agent-s: #5aa9ff; /* 아레나 안정형 아바타 */
-  --color-agent-s-ink: #00172e;
+  --color-background: #fff8ef; /* 페이지 크림. 카드 안 줄 칸 바탕 */
+  --color-surface: #ffffff; /* 카드·패널 */
+  --color-tint: #f5ede3; /* 중립 칩(티커, 조용한 날 알약), 스켈레톤 */
+  --color-border: #efe3d3; /* 장식 구분선(머리·하단 경계) */
+  --color-foreground: #2e241c; /* 본문 글자, 포커스 링. surface 위 15.2:1 */
+  --color-muted: #6b5d50; /* 보조 글자. surface 6.4 · background 6.0 · tint 5.5 · accent-soft 5.4 */
+  --color-accent: #ffb48f; /* 파스텔 피치: 주 버튼·로고 바탕(글자는 foreground 8.8:1) */
+  --color-accent-soft: #ffe9dc; /* 보조 틴트: 새 공시 알약, Plus 칸 */
+  --color-accent-ink: #b4471a; /* 강조 글자(숫자·번호). surface 5.4 · background 5.2 · accent-soft 4.7 */
+  --color-up: #18804a; /* 상승(가격 표시 on일 때만). surface 위 5.0:1 */
+  --color-down: #c93838; /* 하락. surface 위 5.1:1 */
 
-  --font-sans: var(--font-inter), -apple-system, system-ui, sans-serif;
+  --font-sans: var(--font-nunito), ui-rounded, system-ui, sans-serif;
 
-  /* 줄 높이를 따로 적지 않은 크기는 body의 1.5를 물려받는다(시안 기본값) */
-  --text-micro: 0.5rem; /* 8px 알림 목업 앱 아이콘 */
-  --text-label: 0.6875rem; /* 11px 대문자 라벨(tracking-widest = 1.1px) */
-  --text-xs: 0.75rem; /* 12px */
-  --text-nav: 0.8125rem; /* 13px 메뉴·번호(tracking-wider = 0.65px) */
-  --text-sm: 0.875rem; /* 14px 본문 기본 */
-  --text-md: 0.9375rem; /* 15px */
-  --text-base: 1rem; /* 16px */
+  --text-xs: 0.75rem; /* 12px 칩·하단 확인 줄 */
+  --text-sm: 0.875rem; /* 14px */
+  --text-base: 1rem; /* 16px 본문 기본(카드 줄) */
   --text-lg: 1.125rem; /* 18px */
-  --text-xl: 1.25rem; /* 20px */
-  --text-mark: 0.75rem; /* 12px "30s" 로고 */
-  --text-mark--letter-spacing: 0.4px;
-  --text-h2: 2.25rem; /* 36px */
+  --text-xl: 1.25rem; /* 20px 카드 회사 이름 */
+  --text-2xl: 1.5rem; /* 24px */
+  --text-mark: 0.75rem; /* 12px 로고 "30s" */
+  --text-h2: clamp(1.75rem, 4vw, 2.25rem); /* 28~36px */
   --text-h2--line-height: 1.2;
-  --text-h2--letter-spacing: -0.01em;
-  --text-price: 3.5rem; /* 56px */
-  --text-price--line-height: 1.1;
-  --text-price--letter-spacing: -0.02em;
-  --text-clock: 4.5rem; /* 72px */
-  --text-clock--line-height: 1;
-  --text-clock--letter-spacing: -2px;
-  --text-stat: 5rem; /* 80px */
+  --text-stat: clamp(2.5rem, 6vw, 3.5rem); /* 40~56px 숫자 통계 */
   --text-stat--line-height: 1;
-  --text-stat--letter-spacing: -0.02em;
-  --text-display: clamp(2.5rem, 6vw, 5rem); /* 40~80px 첫 화면 제목 */
+  --text-display: clamp(2.5rem, 8vw, 4.5rem); /* 40~72px 첫 화면 제목 */
   --text-display--line-height: 1.05;
-  --text-display--letter-spacing: -1.6px;
+  --text-display--letter-spacing: -0.02em;
 
-  --leading-heading: 1.2;
+  --leading-heading: 1.25;
 
-  --radius-icon: 5px;
-  --radius-push: 20px;
-  --radius-phone: 44px;
+  --radius-card: 1.5rem; /* 24px 카드·패널 */
+  --radius-cell: 1rem; /* 16px 카드 안 칸 */
+
+  --shadow-card: 0 1px 2px rgb(92 64 38 / 0.06), 0 8px 24px rgb(92 64 38 / 0.08); /* 따뜻한 부드러운 그림자 */
 }
 
 @layer base {
   :root {
-    color-scheme: dark;
+    color-scheme: light;
   }
 
-  /* 키보드 포커스: 모든 링크·버튼·펼침(summary)·입력칸(고르기 검색, #58)에 2px 외곽선. 흰 바탕(요금 섹션)에서는 focus-visible:outline-background로 덮어쓴다 */
+  /* 키보드 포커스: 모든 링크·버튼·펼침(summary)·입력칸(고르기 검색, #58)에 2px 외곽선. 밝은 테마라 진한 foreground가 어느 바탕에서나 보인다 */
   :where(a, button, summary, input):focus-visible {
     outline: 2px solid var(--color-foreground);
     outline-offset: 2px;
