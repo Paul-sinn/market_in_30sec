@@ -1,4 +1,4 @@
-"""live: 실제 SEC N-PORT로 SPY·QQQ·SCHD 편입 종목을 받는다(#10 B 게이트). 기본 실행에서 빠진다(pyproject addopts "-m 'not live'").
+"""live: 실제 SEC N-PORT로 SPY·QQQ·SCHD와 멀티 시리즈 신탁 IVV·JEPI 편입 종목을 받는다(#10 B 게이트, #59 헤더 우선 시리즈 찾기). 기본 실행에서 빠진다(pyproject addopts "-m 'not live'").
 통과해야 production.py가 NoHoldingsSource 대신 EdgarHoldingsSource를 쓴다. 단언은 불리언만(실패 설명에 보고 원문이 찍히지 않게).
 #58 게이트: 실제 SPY 보고 + 티커 목록으로 커버 범위 주식을 만든다(원격 아침 실행 전에 사람이 돌린다. 잘못 들어간 행은 지워지지 않는다).
 측정값(요청 수·시간·못 찾은 회사 이름·한 회사 여러 티커)은 로컬 출력에만 찍는다(-s). 실행: SEC_USER_AGENT는 명령 줄 안에서만
@@ -18,7 +18,7 @@ from m30.pipeline.collect import valid_holdings
 from m30.pipeline.compute import TOP_HOLDINGS
 
 pytestmark = [pytest.mark.live, pytest.mark.skipif(not os.environ.get(SEC_UA_VAR), reason=f"{SEC_UA_VAR} is not set")]
-FUNDS = ("SPY", "QQQ", "SCHD")
+FUNDS = ("SPY", "QQQ", "SCHD", "IVV", "JEPI")  # IVV·JEPI = 그 시리즈 최신 보고가 신탁 목록 309·65번째(#59 실측, 옛 한도 60 밖)
 
 
 class Counted:
@@ -43,7 +43,7 @@ def top_companies(report):
         :TOP_HOLDINGS]
 
 
-def test_실제_SEC_N_PORT로_SPY·QQQ·SCHD의_편입_종목을_받고_상위_10개_회사의_CIK를_찾는다():
+def test_실제_SEC_N_PORT로_SPY·QQQ·SCHD와_멀티_시리즈_신탁_IVV·JEPI의_편입_종목을_받고_상위_10개_회사의_CIK를_찾는다():
     get = Counted(EdgarClient(load_edgar_settings()).get)
     source = EdgarHoldingsSource(get)  # 운영처럼 한 인스턴스: 두 목록은 처음 한 번만 받는다
     results = {}
