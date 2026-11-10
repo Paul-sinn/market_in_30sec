@@ -248,7 +248,7 @@ def test_같은_거래일을_다시_운영_실행해도_커버_범위와_카드�
     summary, _ = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
 
     assert store.list_coverage() == coverage
-    assert len(coverage) == 16  # 실험 15행 + GOOG(SPY가 Alphabet 두 종류를 가진다. 13행 티커 목록이라 AMD 등은 못 찾음)
+    assert len(coverage) == 12 + len(LISTED)  # 주식: 실험 11행 + GOOG(SPY가 Alphabet 두 종류를 가진다. 13행 티커 목록이라 AMD 등은 못 찾음). ETF: 설정 목록 전부(#59)
     assert [content(c) for c in store.list_cards(FRI)] == cards
     assert summary.cards_saved == 15
 
