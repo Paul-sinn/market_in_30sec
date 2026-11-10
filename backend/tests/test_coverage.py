@@ -110,6 +110,18 @@ def test_ETF_설정_목록은_SPY·QQQ와_기본_종목_ETF를_포함하고_편�
     assert {e.holdings_ticker for e in etfs.values()} <= etfs.keys()
 
 
+def test_ETF_설정_목록은_인기_ETF_55개이고_레버리지·인버스만_배율과_같은_지수의_일반_ETF를_편입_출처로_가진다():
+    etfs = load_etfs()
+
+    assert len(etfs) == 55  # #59 확정: 일반 44 + 레버리지·인버스 11
+    assert {e.ticker: (e.leverage, e.holdings_ticker) for e in etfs if e.leverage is not None} == {
+        "TQQQ": (Decimal("3"), "QQQ"), "SQQQ": (Decimal("-3"), "QQQ"), "QLD": (Decimal("2"), "QQQ"),
+        "UPRO": (Decimal("3"), "SPY"), "SPXL": (Decimal("3"), "SPY"), "SSO": (Decimal("2"), "SPY"), "SH": (Decimal("-1"), "SPY"),
+        "SOXL": (Decimal("3"), "SOXX"), "SOXS": (Decimal("-3"), "SOXX"), "TECL": (Decimal("3"), "XLK"), "FAS": (Decimal("3"), "XLF"),
+    }
+    assert [e.ticker for e in etfs if e.leverage is None and e.holdings_ticker != e.ticker] == []  # 일반 ETF = 자기 보고
+
+
 ETF_TOML = """
 [[etf]]
 ticker = "SPY"
@@ -191,8 +203,8 @@ def test_커버_범위_주식은_저장된_SPY_최신_N_PORT의_보통주_회사
     summary, refresh = run(store)
 
     assert stocks(store) == SP500_STOCKS  # 파생(CONTRA HOLOGIC)은 없다
-    assert refresh == CoverageRefresh(None, etfs=4, stocks=12, added=12, unmatched=0, sp500_period_end=date(2026, 6, 30))
-    assert {c.ticker for c in store.list_coverage() if c.holdings_ticker} == {"SPY", "QQQ", "TQQQ", "SCHD"}
+    assert refresh == CoverageRefresh(None, etfs=55, stocks=12, added=12, unmatched=0, sp500_period_end=date(2026, 6, 30))
+    assert {c.ticker for c in store.list_coverage() if c.holdings_ticker} == {e.ticker for e in load_etfs()}  # 설정 목록 그대로
     assert summary.failures == ()
 
 
@@ -224,7 +236,7 @@ def test_더_늦은_기준일의_SPY_보고가_저장되면_다음_실행에서_
 
     # 녹화 목록에서 BMY CIK의 티커는 BMY → CELG-RI(권리) 순. SPY는 한 종류만 가진다
     assert stocks(store) == sorted(SP500_STOCKS + [("BMY", "Bristol-Myers Squibb", "0000014272")])
-    assert refresh == CoverageRefresh(None, etfs=4, stocks=13, added=1, unmatched=0, sp500_period_end=date(2026, 9, 30))
+    assert refresh == CoverageRefresh(None, etfs=55, stocks=13, added=1, unmatched=0, sp500_period_end=date(2026, 9, 30))
 
 
 SMALL_LISTING = json.loads(recorded("company_tickers.json"))  # 13행: AMD·Broadcom·Lilly·Micron이 없다
@@ -254,27 +266,27 @@ def test_갱신은_저장된_CIK가_아니라_SPY_보유_회사_이름을_지금
     refresh = refresh_coverage(store, get)
 
     assert stocks(store) == SP500_STOCKS
-    assert refresh == CoverageRefresh(None, etfs=4, stocks=12, added=12, unmatched=1, sp500_period_end=date(2026, 6, 30))
+    assert refresh == CoverageRefresh(None, etfs=55, stocks=12, added=12, unmatched=1, sp500_period_end=date(2026, 6, 30))
     assert get.urls == [TICKERS_URL]  # 티커·이름 두 규칙이 같은 응답 하나를 쓴다
     assert store.latest_holdings("SPY").holdings[0].cik is None  # 저장된 보고는 고치지 않는다
 
 
-SQQQ = '\n[[etf]]\nticker = "SQQQ"\nname = "ProShares UltraPro Short QQQ"\nholdings = "QQQ"\nleverage = "-3"\n'
+QID = '\n[[etf]]\nticker = "QID"\nname = "ProShares UltraShort QQQ"\nholdings = "QQQ"\nleverage = "-2"\n'  # 실제 목록 밖
 
 
 def test_인버스_ETF는_설정의_음수_배율로_기존_인버스_태그를_단다(store, tmp_path):
     path = tmp_path / "etfs.toml"
-    path.write_text(ETF_TOML + SQQQ, encoding="utf-8")
+    path.write_text(ETF_TOML + QID, encoding="utf-8")
     assert refresh_coverage(store, sec_day(), path) == CoverageRefresh(None, etfs=4, stocks=0, added=0, unmatched=0)
-    store.add_default_tickers(FRI, ["SQQQ"])
+    store.add_default_tickers(FRI, ["QID"])
 
-    run(store)  # 원래 목록(SQQQ 없음)으로 갱신해도 SQQQ 행은 남는다(추가만)
+    run(store)  # 원래 목록(QID 없음)으로 갱신해도 QID 행은 남는다(추가만)
 
     cards = {c.ticker: c for c in store.list_cards(FRI)}
-    assert (cards["SQQQ"].leverage_tag, cards["TQQQ"].leverage_tag) == ("\u22123x inverse · resets daily", "3x · resets daily")
-    assert cards["SQQQ"].news_line.source_scope == cards["QQQ"].news_line.source_scope  # 편입 종목은 같은 지수의 일반 ETF
-    assert next(c for c in store.list_coverage() if c.ticker == "SQQQ") == Coverage(
-        "SQQQ", "ProShares UltraPro Short QQQ", leverage=Decimal("-3"), holdings_ticker="QQQ")
+    assert (cards["QID"].leverage_tag, cards["TQQQ"].leverage_tag) == ("\u22122x inverse · resets daily", "3x · resets daily")
+    assert cards["QID"].news_line.source_scope == cards["QQQ"].news_line.source_scope  # 편입 종목은 같은 지수의 일반 ETF
+    assert next(c for c in store.list_coverage() if c.ticker == "QID") == Coverage(
+        "QID", "ProShares UltraShort QQQ", leverage=Decimal("-2"), holdings_ticker="QQQ")
 
 
 def my_stock_rows(admin):
@@ -333,7 +345,7 @@ def test_커버_범위가_넓어져도_생성_대상은_활성_종목과_기본_
     run(store)
 
     covered = {c.ticker for c in store.list_coverage()}
-    assert len(covered) == 16
+    assert len(covered) == 12 + 55  # 녹화 SPY 보고의 주식 + ETF 설정 목록(#59)
     # 유저 0명: 카드 = 기본 종목 ∩ 커버 범위(JPM·XOM·KO·PFE는 녹화 SPY 보고에 없다). 커버 범위만 넓어진 AMD·AVGO·GOOG 등은 카드 없음
     assert sorted(c.ticker for c in store.list_cards(FRI)) == sorted(set(DEFAULT_TICKERS) & covered) == [
         "AAPL", "AMZN", "GOOGL", "META", "MSFT", "NVDA", "QQQ", "SCHD", "SPY", "TQQQ", "TSLA"]
@@ -373,8 +385,9 @@ def test_저장된_SPY_보고가_없으면_ETF_행만_갱신하고_주식_행은
 
     _, refresh = run(store)  # 빈 DB 첫 실행과 같다: 편입 단계가 이 실행에서 SPY 보고를 저장한다
 
-    assert refresh == CoverageRefresh(None, etfs=4, stocks=0, added=0, unmatched=0, sp500_period_end=None)
-    assert store.list_coverage() == sorted(REMOTE_START, key=lambda c: c.ticker)  # SPY 이름은 설정 값으로 돌아왔다
+    assert refresh == CoverageRefresh(None, etfs=55, stocks=0, added=0, unmatched=0, sp500_period_end=None)
+    # SPY 이름은 설정 값으로 돌아왔다. 실험 행에 없던 설정 목록 ETF(#59)는 더해졌다
+    assert store.list_coverage() == sorted({*REMOTE_START, *load_etfs()}, key=lambda c: c.ticker)
     assert store.latest_holdings("SPY") is not None  # 다음 실행부터 주식 행이 생긴다
 
 

@@ -1,4 +1,4 @@
-# 커버 범위 ETF 목록(HANDOFF 3-1, #58). 확정은 사람 티켓 #59 — 이 파일만 고친다(코드 변경 없음).
+# 커버 범위 ETF 목록(HANDOFF 3-1, #58). #59에서 인기 ETF 55개로 확정(2026-11-07). 바꿀 때는 이 파일만 고친다(코드 변경 없음).
 # 줄을 지워도 DB 행은 남는다(커버 범위는 추가만). 이름·배율·편입 출처를 고치면 다음 아침 실행에 반영된다.
 # ticker   : 대문자 티커(SEC 표기, 예 BRK-B 형식)
 # name     : 카드 머리글 이름. 법인 꼬리 없이
@@ -7,6 +7,7 @@
 # leverage : 레버리지·인버스만. 배율 문자열, 부호 = 방향("3", "-3", "1.5"). 일반 ETF는 적지 않는다
 # SPY는 지우지 않는다: 커버 범위 주식의 출처다(m30.coverage.SP500_FUND)
 # N-PORT가 없는 상품(1940년법 펀드가 아닌 금·비트코인 신탁)과 보통주가 없는 채권 ETF는 첫 번째 줄이 늘 Not covered yet이다
+# 뺀 것(#59): 해외·중소형(VXUS·IWM·IJH, 상위 10개 회사가 S&P 500 밖 → 0/10), 채권(보통주 없음), 금·비트코인 신탁(N-PORT 없음), SPLG(SEC 목록에 없음 = SPYM으로 바뀜)
 # 고친 뒤: cd backend && uv run pytest -q tests/test_coverage.py
 
 [[etf]]
@@ -15,9 +16,221 @@ name = "SPDR S&P 500 ETF"
 holdings = "SPY"
 
 [[etf]]
+ticker = "VOO"
+name = "Vanguard S&P 500 ETF"
+holdings = "VOO"
+
+[[etf]]
+ticker = "IVV"
+name = "iShares Core S&P 500 ETF"
+holdings = "IVV"
+
+[[etf]]
+ticker = "SPYM"
+name = "SPDR Portfolio S&P 500 ETF"
+holdings = "SPYM"
+
+[[etf]]
+ticker = "VTI"
+name = "Vanguard Total Stock Market ETF"
+holdings = "VTI"
+
+[[etf]]
+ticker = "RSP"
+name = "Invesco S&P 500 Equal Weight ETF"
+holdings = "RSP"
+
+[[etf]]
+ticker = "DIA"
+name = "SPDR Dow Jones Industrial Average ETF"
+holdings = "DIA"
+
+[[etf]]
 ticker = "QQQ"
 name = "Invesco QQQ"
 holdings = "QQQ"
+
+[[etf]]
+ticker = "QQQM"
+name = "Invesco NASDAQ 100 ETF"
+holdings = "QQQM"
+
+[[etf]]
+ticker = "VUG"
+name = "Vanguard Growth ETF"
+holdings = "VUG"
+
+[[etf]]
+ticker = "VTV"
+name = "Vanguard Value ETF"
+holdings = "VTV"
+
+[[etf]]
+ticker = "SCHG"
+name = "Schwab U.S. Large-Cap Growth ETF"
+holdings = "SCHG"
+
+[[etf]]
+ticker = "MGK"
+name = "Vanguard Mega Cap Growth ETF"
+holdings = "MGK"
+
+[[etf]]
+ticker = "IWF"
+name = "iShares Russell 1000 Growth ETF"
+holdings = "IWF"
+
+[[etf]]
+ticker = "IWD"
+name = "iShares Russell 1000 Value ETF"
+holdings = "IWD"
+
+[[etf]]
+ticker = "SPYG"
+name = "SPDR Portfolio S&P 500 Growth ETF"
+holdings = "SPYG"
+
+[[etf]]
+ticker = "VO"
+name = "Vanguard Mid-Cap ETF"
+holdings = "VO"
+
+[[etf]]
+ticker = "SCHD"
+name = "Schwab U.S. Dividend Equity ETF"
+holdings = "SCHD"
+
+[[etf]]
+ticker = "VYM"
+name = "Vanguard High Dividend Yield ETF"
+holdings = "VYM"
+
+[[etf]]
+ticker = "VIG"
+name = "Vanguard Dividend Appreciation ETF"
+holdings = "VIG"
+
+[[etf]]
+ticker = "DGRO"
+name = "iShares Core Dividend Growth ETF"
+holdings = "DGRO"
+
+[[etf]]
+ticker = "HDV"
+name = "iShares Core High Dividend ETF"
+holdings = "HDV"
+
+[[etf]]
+ticker = "SPYD"
+name = "SPDR Portfolio S&P 500 High Dividend ETF"
+holdings = "SPYD"
+
+[[etf]]
+ticker = "NOBL"
+name = "ProShares S&P 500 Dividend Aristocrats ETF"
+holdings = "NOBL"
+
+[[etf]]
+ticker = "JEPI"
+name = "JPMorgan Equity Premium Income ETF"
+holdings = "JEPI"
+
+[[etf]]
+ticker = "JEPQ"
+name = "JPMorgan Nasdaq Equity Premium Income ETF"
+holdings = "JEPQ"
+
+[[etf]]
+ticker = "QYLD"
+name = "Global X NASDAQ 100 Covered Call ETF"
+holdings = "QYLD"
+
+[[etf]]
+ticker = "XLK"
+name = "Technology Select Sector SPDR Fund"
+holdings = "XLK"
+
+[[etf]]
+ticker = "XLF"
+name = "Financial Select Sector SPDR Fund"
+holdings = "XLF"
+
+[[etf]]
+ticker = "XLE"
+name = "Energy Select Sector SPDR Fund"
+holdings = "XLE"
+
+[[etf]]
+ticker = "XLV"
+name = "Health Care Select Sector SPDR Fund"
+holdings = "XLV"
+
+[[etf]]
+ticker = "XLY"
+name = "Consumer Discretionary Select Sector SPDR Fund"
+holdings = "XLY"
+
+[[etf]]
+ticker = "XLP"
+name = "Consumer Staples Select Sector SPDR Fund"
+holdings = "XLP"
+
+[[etf]]
+ticker = "XLI"
+name = "Industrial Select Sector SPDR Fund"
+holdings = "XLI"
+
+[[etf]]
+ticker = "XLU"
+name = "Utilities Select Sector SPDR Fund"
+holdings = "XLU"
+
+[[etf]]
+ticker = "XLC"
+name = "Communication Services Select Sector SPDR Fund"
+holdings = "XLC"
+
+[[etf]]
+ticker = "XLB"
+name = "Materials Select Sector SPDR Fund"
+holdings = "XLB"
+
+[[etf]]
+ticker = "XLRE"
+name = "Real Estate Select Sector SPDR Fund"
+holdings = "XLRE"
+
+[[etf]]
+ticker = "VGT"
+name = "Vanguard Information Technology ETF"
+holdings = "VGT"
+
+[[etf]]
+ticker = "SMH"
+name = "VanEck Semiconductor ETF"
+holdings = "SMH"
+
+[[etf]]
+ticker = "SOXX"
+name = "iShares Semiconductor ETF"
+holdings = "SOXX"
+
+[[etf]]
+ticker = "IBB"
+name = "iShares Biotechnology ETF"
+holdings = "IBB"
+
+[[etf]]
+ticker = "ITA"
+name = "iShares U.S. Aerospace & Defense ETF"
+holdings = "ITA"
+
+[[etf]]
+ticker = "ARKK"
+name = "ARK Innovation ETF"
+holdings = "ARKK"
+
+# 레버리지·인버스: 편입 종목은 같은 지수의 일반 ETF
 
 [[etf]]
 ticker = "TQQQ"
@@ -26,6 +239,61 @@ holdings = "QQQ"
 leverage = "3"
 
 [[etf]]
-ticker = "SCHD"
-name = "Schwab U.S. Dividend Equity ETF"
-holdings = "SCHD"
+ticker = "SQQQ"
+name = "ProShares UltraPro Short QQQ"
+holdings = "QQQ"
+leverage = "-3"
+
+[[etf]]
+ticker = "QLD"
+name = "ProShares Ultra QQQ"
+holdings = "QQQ"
+leverage = "2"
+
+[[etf]]
+ticker = "UPRO"
+name = "ProShares UltraPro S&P500"
+holdings = "SPY"
+leverage = "3"
+
+[[etf]]
+ticker = "SPXL"
+name = "Direxion Daily S&P 500 Bull 3X Shares"
+holdings = "SPY"
+leverage = "3"
+
+[[etf]]
+ticker = "SSO"
+name = "ProShares Ultra S&P500"
+holdings = "SPY"
+leverage = "2"
+
+[[etf]]
+ticker = "SH"
+name = "ProShares Short S&P500"
+holdings = "SPY"
+leverage = "-1"
+
+[[etf]]
+ticker = "SOXL"
+name = "Direxion Daily Semiconductor Bull 3X Shares"
+holdings = "SOXX"
+leverage = "3"
+
+[[etf]]
+ticker = "SOXS"
+name = "Direxion Daily Semiconductor Bear 3X Shares"
+holdings = "SOXX"
+leverage = "-3"
+
+[[etf]]
+ticker = "TECL"
+name = "Direxion Daily Technology Bull 3X Shares"
+holdings = "XLK"
+leverage = "3"
+
+[[etf]]
+ticker = "FAS"
+name = "Direxion Daily Financial Bull 3X Shares"
+holdings = "XLF"
+leverage = "3"

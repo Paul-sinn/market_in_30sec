@@ -18,7 +18,7 @@ from m30.adapters import AccessDeniedError, Source, SourceError, TransientSource
 from m30.adapters.edgar import SUBMISSIONS_URL, TICKERS_URL
 from m30.adapters.unavailable import NoPriceSource
 from m30.db.store import CardStore, connect
-from m30.coverage import DEFAULT_TICKERS
+from m30.coverage import DEFAULT_TICKERS, load_etfs
 from m30.models import FundHoldings, LineStatus
 from m30.adapters.nport import MF_TICKERS_URL, EdgarHoldingsSource
 from m30.pipeline.lines import NEWS_SCOPE, NO_FILINGS, NOT_COVERED, PRICE_SCOPE, UPDATE_DELAYED
@@ -43,7 +43,7 @@ from production_probe import (
 )
 from test_gov import BEA, BEA_GDP, BEA_INCOME, FEED_URLS
 from test_edgar import RecordedGet
-from test_nport import OTHER_SERIES, QQQ_8, QQQ_CIK, SCHD_8, SCHWAB_CIK, SPY_8, SPY_CIK, txt_url
+from test_nport import OTHER_SERIES, QQQ_8, QQQ_CIK, SCHD_8, SCHWAB_CIK, SPY_8, SPY_CIK, hdr_url, txt_url
 from test_tiingo import body, row, source
 
 FRI = date(2026, 10, 16)
@@ -71,6 +71,7 @@ def lines(card):
 
 # 녹화 N-PORT 보고(test_nport) 상위 10개 회사 중 실험 커버 범위에 있는 것. 손으로 센 값
 QQQ_TOP = FundHoldings(LineStatus.CHECKED_FOUND, ("AAPL", "AMZN", "GOOGL", "MSFT", "NVDA", "TSLA"), 6, 4)  # Micron·AMD·Intel·Broadcom
+LISTED = {e.ticker: e.holdings_ticker for e in load_etfs()}  # 실제 ETF 설정 목록(#59, 55개) = 운영 실행이 넣는 ETF 행
 ETF_FUNDS = {
     "QQQ": QQQ_TOP,
     "SCHD": FundHoldings(LineStatus.CHECKED_FOUND, ("KO",), 1, 9),
@@ -87,11 +88,11 @@ def test_운영_실행은_실제_공시·편입_보고와_미연결_출처만_�
     summary, refresh = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=get, llm=NoCallLLM(), prices=NoPriceSource())
 
     # 저장된 SPY 보고가 아직 없다(이 실행의 편입 단계가 저장한다): ETF 행만 갱신하고 주식 행은 그대로
-    assert refresh == CoverageRefresh(None, etfs=4, sp500_period_end=None)
-    assert {c.ticker: c.cik for c in store.list_coverage()} == COMPANY_CIKS | dict.fromkeys(ETFS)
-    # 편입 종목을 읽을 ETF(#10 D2). TQQQ는 QQQ의 편입 종목을 쓴다
-    assert {c.ticker: c.holdings_ticker for c in store.list_coverage() if c.holdings_ticker} == {
-        "SPY": "SPY", "QQQ": "QQQ", "TQQQ": "QQQ", "SCHD": "SCHD"}
+    assert refresh == CoverageRefresh(None, etfs=55, sp500_period_end=None)
+    assert {c.ticker: c.cik for c in store.list_coverage()} == COMPANY_CIKS | dict.fromkeys(LISTED)
+    # 편입 종목을 읽을 ETF(#10 D2) = 설정 목록(#59) 그대로. TQQQ는 QQQ의 편입 종목을 쓴다
+    assert {c.ticker: c.holdings_ticker for c in store.list_coverage() if c.holdings_ticker} == LISTED
+    assert LISTED["TQQQ"] == "QQQ"
     assert summary.funds == ETF_FUNDS
     cards = store.list_cards(FRI)
     assert len(cards) == summary.cards_saved == 15
@@ -107,11 +108,13 @@ def test_운영_실행은_실제_공시·편입_보고와_미연결_출처만_�
     assert summary.llm_calls == 0
     assert run_failed(summary) is False
     assert store.list_raw_indicators(FRI) == []
-    # 편입 보고는 fund 순(QQQ·SCHD·SPY, TQQQ는 QQQ)으로 한 번씩. 편입 어댑터는 두 목록을 자기 인스턴스에서 처음 필요할 때 받는다
+    # 편입 보고는 fund 순(QQQ·SCHD·SPY, TQQQ는 QQQ)으로 한 번씩. 편입 어댑터는 두 목록을 자기 인스턴스에서 처음 필요할 때 받는다.
+    # 멀티 시리즈 신탁(펀드 목록에 시리즈가 있음)은 헤더로 시리즈를 찾고 전체 파일은 그 보고만, SPY(UIT)는 헤더 없이 첫 보고(#59)
     assert get.urls == [
         TICKERS_URL,
-        MF_TICKERS_URL, SUBMISSIONS_URL.format(cik=QQQ_CIK), txt_url(QQQ_CIK, QQQ_8), TICKERS_URL,
-        SUBMISSIONS_URL.format(cik=SCHWAB_CIK), txt_url(SCHWAB_CIK, OTHER_SERIES), txt_url(SCHWAB_CIK, SCHD_8),
+        MF_TICKERS_URL, SUBMISSIONS_URL.format(cik=QQQ_CIK), hdr_url(QQQ_CIK, QQQ_8), txt_url(QQQ_CIK, QQQ_8), TICKERS_URL,
+        SUBMISSIONS_URL.format(cik=SCHWAB_CIK), hdr_url(SCHWAB_CIK, OTHER_SERIES), hdr_url(SCHWAB_CIK, SCHD_8),
+        txt_url(SCHWAB_CIK, SCHD_8),
         SUBMISSIONS_URL.format(cik=SPY_CIK), txt_url(SPY_CIK, SPY_8),
     ] + [SUBMISSIONS_URL.format(cik=cik) for cik in sorted(COMPANY_CIKS.values())] * 2  # 8-K 수집, 실적 추정(#57, 빈 목록 → 헤더 없음)
 
@@ -245,7 +248,7 @@ def test_같은_거래일을_다시_운영_실행해도_커버_범위와_카드�
     summary, _ = run_production(store, FRI, gov_get=RecordedGet(quiet_gov()), get=RecordedGet(quiet_day()), llm=NoCallLLM(), prices=NoPriceSource())
 
     assert store.list_coverage() == coverage
-    assert len(coverage) == 16  # 실험 15행 + GOOG(SPY가 Alphabet 두 종류를 가진다. 13행 티커 목록이라 AMD 등은 못 찾음)
+    assert len(coverage) == 12 + len(LISTED)  # 주식: 실험 11행 + GOOG(SPY가 Alphabet 두 종류를 가진다. 13행 티커 목록이라 AMD 등은 못 찾음). ETF: 설정 목록 전부(#59)
     assert [content(c) for c in store.list_cards(FRI)] == cards
     assert summary.cards_saved == 15
 
@@ -280,7 +283,7 @@ def test_SEC_티커_목록을_못_받으면_커버_범위를_건드리지_않고
 
     assert refresh == CoverageRefresh("sec_tickers_failed")
     # 첫 실행이 저장한 SPY 보고로 GOOG를 더할 차례였지만 아무 행도 쓰지 않았다. 카드는 지난 행으로
-    assert {c.ticker: c.cik for c in store.list_coverage()} == COMPANY_CIKS | dict.fromkeys(ETFS)
+    assert {c.ticker: c.cik for c in store.list_coverage()} == COMPANY_CIKS | dict.fromkeys(LISTED)
     assert summary.cards_saved == 15
     assert run_failed(summary) is False
 
@@ -349,14 +352,14 @@ COMPANY_NAMES = ("Advanced Micro Devices", "Alphabet", "Broadcom", "Lilly", "Mic
     "situation, reports, exit_code, lines",
     [
         ("quiet", (), 0, ["2026-10-16 cards_saved=15 resumed=- ", "prices=none",
-                          "coverage: refreshed etfs=4 stocks=0 added=0 unmatched=0 sp500=none",  # 저장된 SPY 보고 없음
+                          "coverage: refreshed etfs=55 stocks=0 added=0 unmatched=0 sp500=none",  # 저장된 SPY 보고 없음
                           "glance: close=delayed indicator=checked_none market_news=checked_none review=-",
                           "holdings: QQQ=checked_found(unmatched 4) SCHD=checked_found(unmatched 9)"
                           " SPY=checked_found(unmatched 3) TQQQ=checked_found(unmatched 4)"]),
         # SPY 보통주 회사 11개 중 8개 티커(Alphabet 둘), 새로 넣은 건 GOOG 하나. 못 찾은 회사 4개는 수만
-        ("quiet", (SPY_REPORT,), 0, ["coverage: refreshed etfs=4 stocks=8 added=1 unmatched=4 sp500=2026-06-30"]),
+        ("quiet", (SPY_REPORT,), 0, ["coverage: refreshed etfs=55 stocks=8 added=1 unmatched=4 sp500=2026-06-30"]),
         ("denied", (), 1, ["ACCESS DENIED (not retried): earnings, sec_filings", "cards_saved=15",
-                           "coverage: refreshed etfs=4 stocks=0 added=0 unmatched=0 sp500=none"]),
+                           "coverage: refreshed etfs=55 stocks=0 added=0 unmatched=0 sp500=none"]),
         ("no_tickers", (), 1, ["cards_saved=0", "coverage: NOT REFRESHED reason=sec_tickers_failed, stored rows used"]),
     ],
     ids=["정상", "SPY_보고_있음", "SEC_403", "빈_DB에_티커_목록_실패"],
@@ -443,8 +446,9 @@ def test_운영_CLI는_EDGAR_대상_CIK·요청_수와_실행_시간을_코드·
     [line] = [line for line in out.splitlines() if line.startswith("edgar:")]
     found = EDGAR_LINE.fullmatch(line)
     # 8-K 단계 = 실험 회사 11개(연관 종목 행 없음). 요청 = 티커 목록 1 + 8-K submissions 11 + 실적 추정 submissions 11
-    # + 편입 보고(펀드 티커 목록 1 + 회사 티커 목록 1(SPY는 단일 시리즈 신탁) + 신탁 submissions 3 + NPORT-P 4: SCHD는 두 번째 보고)
-    assert found and found.groups() == ("11", "0", "32")
+    # + 편입 보고(펀드 티커 목록 1 + 회사 티커 목록 1(SPY는 단일 시리즈 신탁) + 신탁 submissions 3
+    # + 헤더 3(QQQ 1, SCHD 2: 두 번째 보고. SPY는 헤더 없음) + NPORT-P 3)
+    assert found and found.groups() == ("11", "0", "34")
     assert line in webhook_message(out).splitlines()  # Discord에도 같은 줄
     assert {"related_drafts: -", "related_review: -"} <= set(out.splitlines())
 

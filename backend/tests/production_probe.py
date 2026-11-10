@@ -20,10 +20,10 @@ import psycopg
 
 from m30 import notify
 from m30.adapters import AccessDeniedError, SourceError, TransientSourceError, tiingo
-from m30.adapters.edgar import SUBMISSION_TEXT_URL, SUBMISSIONS_URL, TICKERS_URL
+from m30.adapters.edgar import HEADER, SUBMISSION_TEXT_URL, SUBMISSIONS_URL, TICKERS_URL
 from m30.adapters.gov import BEA_ICS_URL, BLS_ICS_URL
 from m30.adapters.gov_news import BEA_RSS_URL, BLS_FEED_URL, CENSUS_RSS_URL, FED_RSS_URL
-from m30.adapters.nport import MF_TICKERS_URL
+from m30.adapters.nport import HEADER_URL, MF_TICKERS_URL
 from m30.models import Coverage
 
 RESPONSES = Path(__file__).resolve().parent / "edgar_responses"
@@ -64,13 +64,16 @@ def empty_submissions(cik):
 
 
 def nport_responses():
-    """ETF 편입 보고: 펀드 티커 목록 + 신탁 3개 submissions + NPORT-P 전체 제출 파일 4개(녹화)."""
+    """ETF 편입 보고: 펀드 티커 목록 + 신탁 3개 submissions + NPORT-P 전체 제출 파일 4개(녹화) + 그 헤더
+    (= 전체 파일의 <SEC-HEADER> 부분, test_nport.header와 같다)."""
     responses = {MF_TICKERS_URL: (RESPONSES / "company_tickers_mf.json").read_bytes()}
     for cik, accessions in NPORT.items():
         responses[SUBMISSIONS_URL.format(cik=cik)] = (RESPONSES / f"CIK{cik}.json").read_bytes()
         for a in accessions:
-            url = SUBMISSION_TEXT_URL.format(cik_number=int(cik), accession_digits=a.replace("-", ""), accession=a)
-            responses[url] = (RESPONSES / f"{a}.txt").read_bytes()
+            parts = {"cik_number": int(cik), "accession_digits": a.replace("-", ""), "accession": a}
+            text = (RESPONSES / f"{a}.txt").read_bytes()
+            responses[SUBMISSION_TEXT_URL.format(**parts)] = text
+            responses[HEADER_URL.format(**parts)] = HEADER.search(text.decode()).group(0).encode()
     return responses
 
 

@@ -16,10 +16,10 @@ from pathlib import Path
 import pytest
 
 from m30.adapters import SourceError
-from m30.adapters.edgar import SUBMISSION_TEXT_URL, SUBMISSIONS_URL, TICKERS_URL
+from m30.adapters.edgar import HEADER, SUBMISSION_TEXT_URL, SUBMISSIONS_URL, TICKERS_URL
 from m30.adapters.holdings import Holding
-from m30.adapters.nport import MF_TICKERS_URL, EdgarHoldingsSource, fund_series, issuer_ciks, issuer_key
-from test_edgar import RecordedGet
+from m30.adapters.nport import HEADER_URL, MF_TICKERS_URL, EdgarHoldingsSource, fund_series, issuer_ciks, issuer_key
+from test_edgar import RecordedGet, client
 
 RESPONSES = Path(__file__).resolve().parent / "edgar_responses"
 SPY_CIK, QQQ_CIK, SCHWAB_CIK = "0000884394", "0001067839", "0001454889"
@@ -35,8 +35,18 @@ def txt_url(cik, accession):
     return SUBMISSION_TEXT_URL.format(cik_number=int(cik), accession_digits=accession.replace("-", ""), accession=accession)
 
 
+def hdr_url(cik, accession):
+    return HEADER_URL.format(cik_number=int(cik), accession_digits=accession.replace("-", ""), accession=accession)
+
+
+def header(accession):
+    """헤더(.hdr.sgml) 응답 자리 = 녹화 전체 제출 파일의 <SEC-HEADER> 부분. 실제 .hdr.sgml은 나머지 줄도 태그 형식이지만
+    시리즈 부분(<SERIES-ID>S…)은 같은 태그다(#59 main 점검이 실제 헤더에서 같은 패턴으로 찾았다)."""
+    return HEADER.search(recorded(f"{accession}.txt").decode()).group(0).encode()
+
+
 def sec(**changes):
-    """녹화 응답 전부: 목록 둘 + 신탁 submissions 셋 + 보고 넷. changes: 주소 → 바꿀 응답."""
+    """녹화 응답 전부: 목록 둘 + 신탁 submissions 셋 + 보고 넷 + 멀티 시리즈 보고 셋의 헤더. changes: 주소 → 바꿀 응답."""
     return RecordedGet({
         MF_TICKERS_URL: recorded("company_tickers_mf.json"),
         TICKERS_URL: recorded("company_tickers_holdings.json"),
@@ -45,6 +55,7 @@ def sec(**changes):
         txt_url(QQQ_CIK, QQQ_8): recorded(f"{QQQ_8}.txt"),
         txt_url(SCHWAB_CIK, SCHD_8): recorded(f"{SCHD_8}.txt"),
         txt_url(SCHWAB_CIK, OTHER_SERIES): recorded(f"{OTHER_SERIES}.txt"),
+        **{hdr_url(cik, a): header(a) for cik, a in ((QQQ_CIK, QQQ_8), (SCHWAB_CIK, SCHD_8), (SCHWAB_CIK, OTHER_SERIES))},
     } | changes)
 
 
@@ -57,13 +68,13 @@ def test_펀드_목록에_없는_UIT는_회사_목록의_CIK로_가장_최근_NP
     assert report.holdings[0] == Holding("Advanced Micro Devices Inc", "0000002488", Decimal("1.469416714247"), "EC")
     assert report.holdings[8] == Holding("Eli Lilly & Co", "0000059478", Decimal("1.471872349457"), "EC")  # &amp;를 푼 이름
     assert report.holdings[7] == Holding("CONTRA HOLOGIC INCORPO", None, Decimal("0.000003300899"), "DE")  # 회사 목록에 없음
-    # 티커 목록(UIT 대체 경로·발행 회사 이름)은 한 번만 받는다. 시리즈가 없으니 첫 NPORT-P를 쓴다(N-30D 행은 건너뜀)
+    # 티커 목록(UIT 대체 경로·발행 회사 이름)은 한 번만 받는다. 시리즈가 없으니 헤더 없이 첫 NPORT-P를 쓴다(N-30D 행은 건너뜀)
     assert get.urls == [MF_TICKERS_URL, TICKERS_URL, SUBMISSIONS_URL.format(cik=SPY_CIK), txt_url(SPY_CIK, SPY_8)]
     assert report.raw.startswith('<?xml version="1.0" encoding="UTF-8"?><edgarSubmission')
     assert report.raw.endswith("</edgarSubmission>")
 
 
-def test_멀티_시리즈_신탁은_시리즈가_다른_보고를_건너뛰고_그_ETF_시리즈의_가장_최근_보고를_쓴다():
+def test_멀티_시리즈_신탁은_헤더로_시리즈가_다른_보고를_건너뛰고_그_ETF_시리즈의_가장_최근_보고만_전체_파일로_받는다():
     get = sec()
 
     report = EdgarHoldingsSource(get).latest_report("SCHD")
@@ -72,8 +83,8 @@ def test_멀티_시리즈_신탁은_시리즈가_다른_보고를_건너뛰고_�
     assert report.holdings[4] == Holding("Coca-Cola Co/The", "0000021344", Decimal("4.159971454108"), "EC")
     assert report.holdings[7] == Holding("Merck & Co Inc", "0000310158", Decimal("4.759978574771"), "EC")
     # 펀드 목록에 있으니 회사 티커 목록은 발행 회사 이름을 찾을 때(보고를 고른 뒤) 처음 받는다
-    assert get.urls == [MF_TICKERS_URL, SUBMISSIONS_URL.format(cik=SCHWAB_CIK), txt_url(SCHWAB_CIK, OTHER_SERIES),
-                        txt_url(SCHWAB_CIK, SCHD_8), TICKERS_URL]
+    assert get.urls == [MF_TICKERS_URL, SUBMISSIONS_URL.format(cik=SCHWAB_CIK), hdr_url(SCHWAB_CIK, OTHER_SERIES),
+                        hdr_url(SCHWAB_CIK, SCHD_8), txt_url(SCHWAB_CIK, SCHD_8), TICKERS_URL]
 
 
 def test_펀드_목록의_시리즈가_있는_신탁은_서식이_정확히_NPORT_P인_첫_행의_시리즈를_확인하고_쓴다():
@@ -83,7 +94,7 @@ def test_펀드_목록의_시리즈가_있는_신탁은_서식이_정확히_NPOR
 
     assert (report.accession, report.period_end) == (QQQ_8, date(2026, 6, 30))  # 40-17G 행은 건너뜀
     assert report.holdings[0] == Holding("Broadcom Inc.", "0001730168", Decimal("2.809874873774"), "EC")
-    assert get.urls[:3] == [MF_TICKERS_URL, SUBMISSIONS_URL.format(cik=QQQ_CIK), txt_url(QQQ_CIK, QQQ_8)]
+    assert get.urls[:4] == [MF_TICKERS_URL, SUBMISSIONS_URL.format(cik=QQQ_CIK), hdr_url(QQQ_CIK, QQQ_8), txt_url(QQQ_CIK, QQQ_8)]
 
 
 def with_recent(cik, *rows):
@@ -103,14 +114,66 @@ def test_정정_보고_NPORT_P_A는_최신이어도_쓰지_않는다():
     assert txt_url(SPY_CIK, amended) not in get.urls
 
 
-def test_최근_60건_안에_그_시리즈_보고가_없으면_미지원이고_61번째는_받지_않는다():
-    rows = [(f"0001410368-26-{n:06d}", "NPORT-P") for n in range(1, 62)]
+def test_멀티_시리즈_신탁에서_그_시리즈_최신_보고가_365번째여도_헤더로_찾고_전체_파일은_그_보고만_받는다():
+    others = [(f"0001410368-26-{n:06d}", "NPORT-P") for n in range(1, 365)]  # 앞에 다른 시리즈 364건 = #59 실측 최대(iShares IWD)
+    get = sec(**{SUBMISSIONS_URL.format(cik=SCHWAB_CIK): with_recent(SCHWAB_CIK, *others, (SCHD_8, "NPORT-P"))},
+              **{hdr_url(SCHWAB_CIK, a): header(OTHER_SERIES) for a, _ in others})
+
+    report = EdgarHoldingsSource(get).latest_report("SCHD")
+
+    assert (report.accession, report.period_end) == (SCHD_8, date(2026, 8, 31))
+    assert [u for u in get.urls if u.endswith(".txt")] == [txt_url(SCHWAB_CIK, SCHD_8)]
+
+
+def test_최근_500건_헤더에_그_시리즈가_없으면_미지원이고_501번째_헤더와_전체_파일은_받지_않는다():
+    rows = [(f"0001410368-26-{n:06d}", "NPORT-P") for n in range(1, 502)]
     get = sec(**{SUBMISSIONS_URL.format(cik=SCHWAB_CIK): with_recent(SCHWAB_CIK, *rows)},
-              **{txt_url(SCHWAB_CIK, a): recorded(f"{OTHER_SERIES}.txt") for a, _ in rows})  # 전부 다른 시리즈
+              **{hdr_url(SCHWAB_CIK, a): header(OTHER_SERIES) for a, _ in rows})  # 전부 다른 시리즈
 
     assert EdgarHoldingsSource(get).latest_report("SCHD") is None
     assert get.urls.count(TICKERS_URL) == 0
-    assert [u for u in get.urls if u.endswith(".txt")] == [txt_url(SCHWAB_CIK, a) for a, _ in rows[:60]]
+    assert [u for u in get.urls if u.endswith(".hdr.sgml")] == [hdr_url(SCHWAB_CIK, a) for a, _ in rows[:500]]
+    assert not [u for u in get.urls if u.endswith(".txt")]
+
+
+def test_같은_신탁의_두_ETF는_앞_ETF가_받은_헤더를_다시_받지_않는다():
+    get = sec(**{MF_TICKERS_URL: with_mf_rows([1454889, "S000026638", "C000080000", "SCHC"])})  # OTHER_SERIES의 시리즈
+    source = EdgarHoldingsSource(get)
+
+    schd, schc = source.latest_report("SCHD"), source.latest_report("SCHC")
+
+    assert (schd.accession, schc.accession) == (SCHD_8, OTHER_SERIES)
+    assert [u for u in get.urls if u.endswith(".hdr.sgml")] == [hdr_url(SCHWAB_CIK, OTHER_SERIES), hdr_url(SCHWAB_CIK, SCHD_8)]
+
+
+NEWER = "0001410368-26-120001"  # SCHD 보고보다 최신인 Schwab 접수(가짜)
+SCHD_HEADER = header(SCHD_8).decode()
+
+
+@pytest.mark.parametrize(
+    "newer_header",
+    [header(SPY_8),  # SERIES 부분이 없는 헤더(단일 시리즈 신탁 것)
+     SCHD_HEADER.replace("<SERIES-ID>S000034163", "<SERIES-ID>S00003416").encode(),  # 숫자 8개
+     SCHD_HEADER.replace("<SERIES-ID>S000034163", "<SERIES-ID>S0000341630").encode(),  # 숫자 10개
+     b"not a header"],
+    ids=["SERIES_없음", "숫자_모자람", "숫자_넘침", "헤더_아님"],
+)
+def test_헤더에_그_시리즈_ID가_정확히_없으면_전체_파일을_받지_않고_다음_접수로(newer_header):
+    get = sec(**{SUBMISSIONS_URL.format(cik=SCHWAB_CIK): with_recent(SCHWAB_CIK, (NEWER, "NPORT-P"), (SCHD_8, "NPORT-P")),
+                 hdr_url(SCHWAB_CIK, NEWER): newer_header})
+
+    assert EdgarHoldingsSource(get).latest_report("SCHD").accession == SCHD_8
+    assert txt_url(SCHWAB_CIK, NEWER) not in get.urls
+
+
+def test_헤더는_그_시리즈인데_본문_시리즈가_다르면_그_보고는_쓰지_않고_다음_접수로():
+    get = sec(**{SUBMISSIONS_URL.format(cik=SCHWAB_CIK): with_recent(SCHWAB_CIK, (NEWER, "NPORT-P"), (SCHD_8, "NPORT-P")),
+                 hdr_url(SCHWAB_CIK, NEWER): header(SCHD_8), txt_url(SCHWAB_CIK, NEWER): recorded(f"{OTHER_SERIES}.txt")})
+
+    report = EdgarHoldingsSource(get).latest_report("SCHD")
+
+    assert (report.accession, report.period_end) == (SCHD_8, date(2026, 8, 31))
+    assert [u for u in get.urls if u.endswith(".txt")] == [txt_url(SCHWAB_CIK, NEWER), txt_url(SCHWAB_CIK, SCHD_8)]
 
 
 @pytest.mark.parametrize(
@@ -233,3 +296,11 @@ def test_보고_원본의_NUL은_대체_문자로_바꾸고_모든_요청은_SEC
 
     assert "\x00" not in report.raw and "SCHWAB�TRUST" in report.raw
     assert all(u.startswith(("https://www.sec.gov/", "https://data.sec.gov/")) for u in get.urls)
+
+
+def test_헤더_주소는_EdgarClient의_HTTPS_SEC_호스트_검사를_통과한다(monkeypatch):
+    edgar_client, opener = client(monkeypatch, body=header(SCHD_8))
+
+    assert edgar_client.get(hdr_url(SCHWAB_CIK, SCHD_8)) == header(SCHD_8)
+    assert [r.full_url for r in opener.requests] == [
+        "https://www.sec.gov/Archives/edgar/data/1454889/000141036826108609/0001410368-26-108609.hdr.sgml"]

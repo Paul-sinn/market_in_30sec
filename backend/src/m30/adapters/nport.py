@@ -15,8 +15,13 @@ from m30.adapters.holdings import Holding, HoldingsReport
 
 MF_TICKERS_URL = "https://www.sec.gov/files/company_tickers_mf.json"  # 펀드 심볼 → (CIK, 시리즈)
 NPORT_FORM = "NPORT-P"  # 정확히 이것만. NPORT-P/A(정정)는 보지 않는다
-# shortcut: 멀티 시리즈 신탁(Schwab)은 갱신일마다 다른 시리즈 보고까지 받는다(최대 이만큼). ETF가 수십 개로 늘면 .hdr.sgml(헤더)만 먼저 읽는다
-SERIES_SCAN_MAX = 60
+HEADER_URL = "https://www.sec.gov/Archives/edgar/data/{cik_number}/{accession_digits}/{accession}.hdr.sgml"  # 접수 헤더만(몇 KB)
+# 시리즈를 찾으려고 헤더를 볼 NPORT-P 수(최신부터). 2026-11-07 실측(#59): 커버 범위 ETF의 최신 보고 순번 최대 364(iShares IWD,
+# 0부터. 시리즈가 수백 개인 신탁은 다른 시리즈 보고가 그 뒤에 쌓인다) → 여유를 둔다. submissions recent(최대 1000건) 밖은 보지 않는다
+SERIES_SCAN_MAX = 500
+# shortcut: 헤더 캐시는 한 실행(인스턴스) 안에서만. 저장 보고가 기준일 + 140일을 넘고 새 보고가 아직 없는 날마다 다시 훑는다
+# (iShares 약 365건 ≈ 46초), 아침 실행이 길어지면 (접수번호 → 시리즈)를 DB에 저장한다
+SERIES_ID = re.compile(r"<SERIES-ID>\s*(S[0-9]{9})(?![0-9])")
 XML = re.compile(r"<XML>\s*(.*?)\s*</XML>", re.DOTALL)
 DOCTYPE = re.compile(r"<!DOCTYPE", re.IGNORECASE)  # 엔티티 확장(billion laughs)을 막으려고 DTD가 있는 문서는 읽지 않는다
 LEGAL_TAIL = frozenset({"the", "inc", "incorporated", "corp", "corporation", "co", "cos", "company", "companies", "ltd", "limited",
@@ -85,12 +90,14 @@ def issuer_ciks(get: Get) -> dict[str, str]:
 
 
 class EdgarHoldingsSource:
-    """HoldingsSource 구현. ETF → (CIK, 시리즈) → 신탁 submissions의 NPORT-P를 최신부터(최대 SERIES_SCAN_MAX건) 받아
-    시리즈가 같은 첫 보고. 두 목록(펀드·회사 티커)은 인스턴스마다 처음 필요할 때 한 번씩 받는다."""
+    """HoldingsSource 구현. ETF → (CIK, 시리즈) → 신탁 submissions의 NPORT-P를 최신부터(최대 SERIES_SCAN_MAX건) 헤더만 읽어
+    그 시리즈가 있는 접수만 전체 제출 파일을 받고, 본문 시리즈도 같은 첫 보고. 두 목록(펀드·회사 티커)은 인스턴스마다 처음 필요할 때
+    한 번씩, 헤더는 (CIK, 접수번호)마다 한 번 받는다(같은 신탁의 다른 ETF가 다시 받지 않게)."""
 
     def __init__(self, get: Get) -> None:
         self._get = get
         self._lists: dict[str, bytes] = {}
+        self._headers: dict[tuple[str, str], frozenset[str]] = {}
 
     def _list(self, url: str) -> bytes:
         if url not in self._lists:
@@ -110,14 +117,16 @@ class EdgarHoldingsSource:
         return issuer_ciks(self._list)
 
     def latest_report(self, fund: str) -> HoldingsReport | None:
-        """None = SEC가 이 ETF를 모름, NPORT-P가 없음, 최근 SERIES_SCAN_MAX건 안에 그 시리즈 보고가 없음."""
+        """None = SEC가 이 ETF를 모름, NPORT-P가 없음, 최근 SERIES_SCAN_MAX건 헤더·본문에 그 시리즈 보고가 없음."""
         if fund in self._series:
             cik, series = self._series[fund]
         elif (cik := self._tickers.get(fund)) is not None:
-            series = None  # 단일 시리즈 신탁(UIT): 가장 최근 NPORT-P
+            series = None  # 단일 시리즈 신탁(UIT): 가장 최근 NPORT-P. 헤더를 읽지 않는다
         else:
             return None
         for accession in _nport_accessions(self._get(SUBMISSIONS_URL.format(cik=cik)), cik)[:SERIES_SCAN_MAX]:
+            if series is not None and series not in self._header_series(cik, accession):
+                continue
             url = SUBMISSION_TEXT_URL.format(cik_number=int(cik), accession_digits=accession.replace("-", ""), accession=accession)
             # Postgres text는 NUL을 받지 못한다. errors="replace"는 짝 없는 서로게이트를 만들지 않는다
             xml = _nport_xml(self._get(url).decode("utf-8", "replace").replace("\x00", "�"))
@@ -126,6 +135,13 @@ class EdgarHoldingsSource:
                 holdings = tuple(Holding(name, self._issuers.get(issuer_key(name)), pct, cat) for name, pct, cat in rows)
                 return HoldingsReport(fund, accession, period_end, holdings, xml)
         return None
+
+    def _header_series(self, cik: str, accession: str) -> frozenset[str]:
+        """접수 헤더의 SERIES-ID들. 없거나 모양이 다르면 빈 집합(그 접수는 건너뛴다: 전체 파일로 확인하러 가지 않는다)."""
+        if (cik, accession) not in self._headers:
+            url = HEADER_URL.format(cik_number=int(cik), accession_digits=accession.replace("-", ""), accession=accession)
+            self._headers[cik, accession] = frozenset(SERIES_ID.findall(self._get(url).decode("utf-8", "replace")))
+        return self._headers[cik, accession]
 
 
 def _nport_accessions(data: bytes, cik: str) -> list[str]:
